@@ -1,0 +1,13 @@
+# Copy to /home/mobie/evcsd/qc45-integration.properties
+
+# ChargePoint / OCPP 1.6 JSON over WSS
+ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
+ocpp.username=QC45
+ocpp.password=CHANGE_ME
+ocpp.serial=QC45
+
+# Used only if EVCSD exposes no RFID/user value for a locally started session.
+ocpp.defaultIdTag=LOCAL
+
+# evcc / local load management
+modbus.port=1502
