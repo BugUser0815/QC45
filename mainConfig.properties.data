@@ -1,0 +1,432 @@
+ 
+#STATION ID
+stationId=EFACECQC0001
+ 
+# Serial Number
+serialNumber=
+ 
+# Charger Model
+model=Efapower-EV QC45
+ 
+# Firmware Version
+Firmware Version=evcsd-efacec-v3_build_57
+ 
+# Quick Charger or Normal Charger
+QuickCharger=1
+ 
+#Detect AC Cable After Charging Process
+AC.cable.detect=false
+ 
+#Enable Normal Charger Load Balance
+AC.load.balance.enabled=false
+ 
+#AC Connector Fixed  Maximum Power 
+AC.maxPower.fixed=120 
+ 
+#Number of AC Outlets
+ACOutlets=1
+ 
+#AiO FLASH TYPE
+AIOSW=true
+ 
+#Detect cable status Occupied
+Cable.detect.occupied=false
+ 
+#Credit Card Type
+CreditCardReaderType=
+ 
+#Detect DC Cable After Charging Process
+DC.cable.detect=false
+ 
+#DC Connectors Fixed  Maximum Power 
+DC.maxPower.fixed=120 
+ 
+#Gateway IP Address
+Gateway=192.168.0.1
+ 
+#Router ICCID
+ICCID=8935103026110047958
+ 
+#Router ISMI
+ISMI=268030227238205
+ 
+#Level 2 Charge type
+Level2.Charger=false
+ 
+#Charger Local IP Address
+LocalIPAdress=192.168.0.2
+ 
+#DNS IP Address
+NameServers=192.168.0.1
+ 
+#Charger Network Mask
+Netmask=255.255.255.0
+ 
+#RFID card format (integer or hexadecimal)
+OCPP.cardId.Format=x
+ 
+#Always send OCPP authorization. Disables Whitelist.
+OCPP.checkCard.online=true
+ 
+#Store Metervalues While Offline
+OCPP.meterValues.offline=false
+ 
+#Set Pole Mount Configuration
+PoleMount.Charger=false
+ 
+#CHADEMO Protocol Version
+QC.protocol.version=3
+ 
+#Enable QC24S Configurationn
+QC24S.Charger=false
+ 
+#RWE SW Package
+RWEcentralManagement.impl=pt.efacec.es.RWE.RWECcServiceClient
+ 
+#Allow charge stop without authentication
+Stop.By.Any.Button=false
+ 
+#AC Outlet Type
+acType=AC22
+ 
+#Allow charge with no communication to the CS
+allowOfflineCharging=false
+ 
+#HMI Available Languages
+available.languages=Dansk,dk;Deutsch,de;English,en;Francais,fr;Italiano,it;Nederlands,nl;Norsk,no;Portugues,pt;Suomalainen,fi;Svenska,sw;Turkce,tr;Polish,pl;
+ 
+#Lower Level Configuration
+bma.address=127.0.0.1
+ 
+#Lower level config
+bma.port=9001
+ 
+#Deprecated
+brightness=75
+ 
+#Lock/Unloack AC cable after charge
+cableLockAfterCharge=false
+ 
+#Invert RFID tags
+cardId.inverted=false
+ 
+#Define CCS Outlet (bool)
+ccsCharger=true
+ 
+#Lower Level Configuration
+central.statemachine.impl=pt.efacec.es.mobie.agent.central.states.mixed.WaitingForCardState
+ 
+#Central StateMachine Package
+central.statemachine.impl.normal=pt.efacec.es.mobie.agent.central.states.normalcharge.WaitingForCardState
+ 
+#Pole mount ste machine
+central.statemachine.impl.polemount=pt.efacec.es.mobie.agent.central.states.normalcharge.polemount.WaitingForCardState
+ 
+#Client WS implementation
+centralManagement.impl=pt.efacec.es.nms.ocpp.EVCSD_OCPP15
+ 
+#RWE Terminal Endpoint Configuration
+centralManagementEndpointRWE=http://10.0.0.179:9000/QC45
+ 
+#Internal Configuration
+centralModuleStateMachineImplQC24S=pt.efacec.es.mobie.agent.central.states.quick.qc24s.WaitingForCardState
+ 
+#Enable WS Addressing (bool)
+centralmanagement.WSAddressing=true
+ 
+#Enable Communication with the CS
+centralmanagement.enabled=true
+ 
+#CS Protocol Endpoint
+centralmanagement.endpoint=http://10.0.0.179:9000/QC45
+ 
+#null
+chademo.plugCharge=false
+ 
+#Enable CHADEMO outlet (bool)
+chademoCharger=true
+ 
+#Charger Operating  Mode
+chargerModus=3
+ 
+#Charge Time Limit (Minutes)
+chargetimelimit=0
+ 
+#AC Maximum time the cable stays locked after an error (minutes) 
+charging.after.maxtime=60
+ 
+#Maximum time in charge for Normal Chargers (minutes)
+charging.maxtime=14400
+ 
+#AC Maximum time with no energy (minutes)
+charging.noenergy.maxtime=5
+ 
+#Communication Protocol with CS
+communicationProtocol=OCPP15
+ 
+#CS WS Client connection timeout (seconds)
+connection.timeout=30
+ 
+#Screen Contrast
+contrast=20
+ 
+#Enable DC Counter
+counter.dc.enabled=false
+ 
+#Lower level configuration
+csm.port=9000
+ 
+#HMI screens timeout (seconds)
+default.timeout=60
+ 
+#Enable External Terminal Communication
+eTerminalCommEnabled=
+ 
+#Enbale Energy Meter
+energy.meter.enabled=false
+ 
+#Meter Frequency
+energy.meter.get.frequency=300
+ 
+#Meter Serial Device
+energy.meter.serial.device=/dev/ttyUSB0
+ 
+#Flash Card Verison
+flashVersion=N72100028_EVCConfig_V2.0.18.57_20160219
+ 
+#OCPP Heartbeat interval (seconds)
+heartBeat.interval=60
+ 
+#Charger Default Language
+hmi.language=de
+ 
+#Lower Level Configuration
+hmi.screensaver=true
+ 
+#LCD Screen Brightness
+hmi.screensaver.brightness=75
+ 
+#LCD Contrast
+hmi.screensaver.contrast=20
+ 
+#Lower Level Configuration
+hmi.serial.baudrate=115200
+ 
+#HMI Serial Device
+hmi.serial.device=/dev/ttyS0
+ 
+#The maximum session time without charging  (minutes)
+inuse.maxtime=2
+ 
+#ISKRA meter configuration
+iskra.meter.ac.serialID=
+ 
+#ISKRA meter configuration
+iskra.meter.dc.serialID=
+ 
+#ISKRA meter configuration
+iskra.meter.enabled=false
+ 
+#Enable DC charger Load Balance
+load.balance.enabled=false
+ 
+#Enable Load Shed
+load.shed.enabled=false
+ 
+#Load Shed Interval End Time
+load.shed.endTime=
+ 
+#Load Shed Interval Start Time
+load.shed.startTime=
+ 
+#Load shed value (%)
+load.shed.value=0 
+ 
+#Enable OCPP Local Athorization List
+localAuthorizationListEnabled=true
+ 
+#CloudAmber Endpoint
+loop.detector.CloudAmber.endpoint=http://www.cloudamber.co.uk/EVportal/Efacec
+ 
+#Enable Loop Detector
+loop.detector.enabled=false
+ 
+#Enable CloudAmber Loop Detector Report
+loop.detector.report.CloudAmber=false
+ 
+#Enable Loop Detector Report
+loop.detector.report.SIEMENS=false
+ 
+#Enable automatic reboot
+maintenance.reboot.enabled=true
+ 
+#Automatic reboot interval (minutes)
+maintenance.reboot.interval=20160
+ 
+#Charger Maximum Power
+max.power=120 
+ 
+#Charger Maximum Voltage (OCPP2.0)
+max.voltage=230
+ 
+#Maximum AC Outlets Configurable
+maxACOutlets=1
+ 
+#Metervalues samples
+maxMeterSamplesOfflineGroup=5
+ 
+#OCPP metervalues sample interval
+meterValue.sampleInterval=320
+ 
+#OCPP metervalues EACH sample interval
+meterValueEachSample.interval=0
+ 
+#Charger Minimum Voltage (OCPP2.0)
+min.voltage=100
+ 
+#Deprecated
+moduleOffline=false
+ 
+#Modus 1 User ID (tag)
+modus1.user.ID=00000
+ 
+#Allow Simultaneous AC and DC charges
+multipleCharging=true
+ 
+#Number of Phases (OCPP2.0)
+numberofphases=1
+ 
+#RWE Offline Report Timeout
+offlineReportRWE=900000
+ 
+#Offline messages report timeout (seconds)
+offlineReportTimeout=300
+ 
+#Charger Business Hours
+openhours=
+ 
+#Set charger out of service
+outofservice=false
+ 
+#null
+powerfailure.ignore=false
+ 
+#Enable RCD Automatic Rearm
+rcd.autoRearm=true
+ 
+#Record metervalues data without sending the request
+recordMeterValuesOnly=false
+ 
+#Enable OCPP1.5 Reservations
+reservationsEnabled=false
+ 
+#Reset Retries (Proprietary)
+reset.retries=0
+ 
+#Router IP Check interval
+routerIPCheckInterval=300
+ 
+#Lower Level Configuration
+satellistes.mixed=false
+ 
+#Lower level config
+satellite.statemachine.ccs.impl=pt.efacec.es.mobie.agent.statemachines.satellite.states.ccs.IdleState
+ 
+#Lower Level Configuration
+satellite.statemachine.normal.impl=pt.efacec.es.mobie.agent.statemachines.satellite.states.normal.NotChargingState
+ 
+#Lower Level Configuration
+satellite.statemachine.quick.impl=pt.efacec.es.mobie.agent.statemachines.satellite.states.quick.IdleState
+ 
+#Enable Sattelite Information
+satellites.info.enabled=false
+ 
+#Meter Serial Baudrate
+satellites.serial.baudrate=115200
+ 
+#Satellites Serial Device
+satellites.serial.device=/dev/ttyS0
+ 
+#Project Name
+spotOperatorID=
+ 
+#Automatic reboot check timeout (seconds)
+systemMaintainanceTimeout=600
+ 
+#User Interface
+uiInterface=
+ 
+#UIC Card Reader Buzz Duration 
+uicCardReaderCardBuzzDuration=26
+ 
+#UIC Card Reader Buzz Tone
+uicCardReaderCardBuzzTone=18
+ 
+#Enable UIC Card Reader Configuration Mode
+uicCardReaderConfigure=false
+ 
+#Enable UIC Card Reader
+uicCardReaderEnabled=true
+ 
+#UIC Card Reader Buzz Duration Key
+uicCardReaderKeyBuzzDuration=10
+ 
+#UIC Card Reader Buzz Buzz Tone 
+uicCardReaderKeyBuzzTone=17
+ 
+#UIC Card Reader Serial Device
+uicCardReaderSerialDevice=/dev/ttyS201
+ 
+#Show Charging Videos 
+uiclient.chargingVideos=false
+ 
+#Deprecated
+uiclient.enabled=true
+ 
+#Lower Level Configuration
+uiclient.impl=pt.efacec.es.mobie.agent.ui.client.UIClient
+ 
+#Show Info bar at the bottom of the screen (HMI)
+uiclient.show.down.info=false
+ 
+#Show DTC on End Screen
+uiclient.show.dtc=false
+ 
+#Show energy on Charge Screen
+uiclient.show.energy=true
+ 
+#Enable Load Shed
+use.load.shed=false
+ 
+#Send session time instead of charge start time at StartTransactionReq
+useSessionStartTime=false
+ 
+#Screen Timeout (seconds)
+user.expiredtime=40
+ 
+#Use APP to start charging (remote start)
+uses.APP.to.start=true
+ 
+#Enable eTicketCard
+uses.eTicketCard=true
+ 
+#Enable RFID reader
+uses.rfidcard=true
+ 
+#Enable Credit Card Functionality
+usesCreditCard=false
+ 
+#Lower Level Configuration
+warning.timeout=0
+ 
+#Use Whitlist Only
+whiteListOnly=false
+ 
+#OCPP Whitelist Version
+whiteListVersion=0
+ 
+#Enable OCPP WS client authorization
+wsAuthRequired=false
+ 
+#Send IP on OCPP Messages Headers
+wsManualHeader=true

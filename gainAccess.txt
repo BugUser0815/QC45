@@ -1,0 +1,2 @@
+../jre2/bin/java -cp "DBUpdate.jar:lib/derby.jar" dbupdate.DBUpdate
+UPDATE MOBIE.CPUSER SET PASS = 'Baum' WHERE UNAME = 'efacec'
