@@ -232,8 +232,9 @@ public final class OcppClient extends Thread {
         String payload = arrayObject(message, 3);
 
         if ("RemoteStartTransaction".equals(action)) {
-            int connector = fieldInt(payload, "connectorId", 1);
+            int connector = fieldInt(payload, "connectorId", 0);
             String idTag = fieldString(payload, "idTag", defaultIdTag);
+            if (connector < 1 || connector > 3) connector = 2;
             try {
                 station.remoteStart(idTag, connector);
                 idTags.put(Integer.valueOf(connector), idTag);
@@ -344,7 +345,7 @@ public final class OcppClient extends Thread {
         while (pos >= 0 && pos < json.length()) {
             pos = skipWhitespace(json, pos);
             if (current == index) {
-                if (json.charAt(pos) != '"') return "";
+                if (json.charAt(pos) != '\"') return "";
                 return parseString(json, pos)[0];
             }
             pos = skipValue(json, pos);
@@ -402,7 +403,7 @@ public final class OcppClient extends Thread {
         p = skipWhitespace(s, p);
         if (p >= s.length()) return p;
         char c = s.charAt(p);
-        if (c == '"') return Integer.parseInt(parseString(s, p)[1]);
+        if (c == '\"') return Integer.parseInt(parseString(s, p)[1]);
         if (c == '{' || c == '[') {
             char open = c;
             char close = c == '{' ? '}' : ']';
@@ -414,9 +415,9 @@ public final class OcppClient extends Thread {
                 if (quoted) {
                     if (escaped) escaped = false;
                     else if (x == '\\') escaped = true;
-                    else if (x == '"') quoted = false;
+                    else if (x == '\"') quoted = false;
                 } else {
-                    if (x == '"') quoted = true;
+                    if (x == '\"') quoted = true;
                     else if (x == open) depth++;
                     else if (x == close && --depth == 0) return i + 1;
                 }
@@ -440,7 +441,7 @@ public final class OcppClient extends Thread {
                 escaped = false;
             } else if (c == '\\') {
                 escaped = true;
-            } else if (c == '"') {
+            } else if (c == '\"') {
                 return new String[] { b.toString(), String.valueOf(i + 1) };
             } else b.append(c);
         }
@@ -478,7 +479,24 @@ public final class OcppClient extends Thread {
             int port = uri.getPort() > 0 ? uri.getPort() : 443;
             socket = (SSLSocket) SSLSocketFactory.getDefault().createSocket(host, port);
             socket.setSoTimeout(500);
+
+            String[] supported = socket.getSupportedProtocols();
+            System.out.println("[QC45] TLS supported protocols: " + join(supported));
+            boolean tls12 = false;
+            for (int i = 0; i < supported.length; i++) {
+                if ("TLSv1.2".equals(supported[i])) {
+                    tls12 = true;
+                    break;
+                }
+            }
+            if (!tls12) {
+                throw new IOException("TLSv1.2 is not supported by this JVM. Supported: " + join(supported));
+            }
+            socket.setEnabledProtocols(new String[] { "TLSv1.2" });
+            System.out.println("[QC45] TLS enabled protocols: " + join(socket.getEnabledProtocols()));
+
             socket.startHandshake();
+            System.out.println("[QC45] TLS session: " + socket.getSession().getProtocol() + " / " + socket.getSession().getCipherSuite());
             in = new BufferedInputStream(socket.getInputStream());
             out = new BufferedOutputStream(socket.getOutputStream());
 
@@ -624,6 +642,16 @@ public final class OcppClient extends Thread {
         private static String firstLine(String header) {
             int p = header.indexOf("\r\n");
             return p < 0 ? header : header.substring(0, p);
+        }
+
+        private static String join(String[] values) {
+            if (values == null || values.length == 0) return "(none)";
+            StringBuilder b = new StringBuilder();
+            for (int i = 0; i < values.length; i++) {
+                if (i > 0) b.append(',');
+                b.append(values[i]);
+            }
+            return b.toString();
         }
 
         private static final char[] B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
