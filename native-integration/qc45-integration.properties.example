@@ -9,15 +9,13 @@ ocpp.serial=QC45
 # Used only if EVCSD exposes no RFID/user value for a locally started session.
 ocpp.defaultIdTag=LOCAL
 
-# evcc / local load management
+# evcc / local integration
 modbus.port=1502
 
 # ------------------------------------------------------------
-# Independent KOSTAL KSEM grid failback
+# KOSTAL KSEM
+# Shared by LoadManager and GridFailback
 # ------------------------------------------------------------
-failback.enabled=true
-
-# KSEM Modbus/TCP
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
@@ -29,7 +27,32 @@ ksem.legacyLowWord=true
 # Raw KSEM current -> A. Default assumes raw mA.
 ksem.currentScale=0.001
 
-# Stage 1: force both DC and AC budgets to minimum.
+# ------------------------------------------------------------
+# Native load manager
+# ------------------------------------------------------------
+loadmanager.enabled=true
+
+# 35 A SLS with 3 A reserve.
+loadmanager.targetA=32.0
+loadmanager.hysteresisA=0.8
+
+# QC45 connector limits.
+loadmanager.minDcKw=5
+loadmanager.maxDcKw=50
+loadmanager.minAcKw=5
+loadmanager.maxAcKw=22
+
+# Increase slowly, reduce immediately.
+loadmanager.rampUpKwPerLoop=2
+loadmanager.intervalMs=1000
+
+# ------------------------------------------------------------
+# Independent KOSTAL KSEM grid failback
+# ------------------------------------------------------------
+failback.enabled=true
+
+# Stage 1: take control away from LoadManager and force minimum.
+# LoadManager automatically stops writing at/above this threshold.
 failback.reduceA=34.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
