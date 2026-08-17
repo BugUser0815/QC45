@@ -11,3 +11,40 @@ ocpp.defaultIdTag=LOCAL
 
 # evcc / local load management
 modbus.port=1502
+
+# ------------------------------------------------------------
+# Independent KOSTAL KSEM grid failback
+# ------------------------------------------------------------
+failback.enabled=true
+
+# KSEM Modbus/TCP
+ksem.host=10.0.0.70
+ksem.port=502
+ksem.unit=71
+ksem.timeoutMs=1000
+
+# The old proven Python reader used registers[1] from the two-register
+# KSEM current values at 60/100/140. Keep this true initially.
+ksem.legacyLowWord=true
+# Raw KSEM current -> A. Default assumes raw mA.
+ksem.currentScale=0.001
+
+# Stage 1: force both DC and AC budgets to minimum.
+failback.reduceA=34.0
+failback.reduceDelayMs=500
+failback.reduceDcKw=5
+failback.reduceAcKw=5
+
+# Stage 2: latched stop of connectors 1, 2 and 3.
+failback.tripA=35.0
+failback.tripDelayMs=250
+# Above this value trip immediately.
+failback.instantTripA=38.0
+
+# Polling interval. One cycle reads L1/L2/L3 directly from KSEM.
+failback.intervalMs=200
+
+# A failback which cannot see the meter is not a failback.
+# If enabled, KSEM communication loss also causes a latched trip.
+failback.tripOnMeterFailure=true
+failback.meterFailureMs=3000
