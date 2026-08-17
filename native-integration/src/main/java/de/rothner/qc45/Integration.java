@@ -52,6 +52,7 @@ public final class Integration {
         }
 
         double failbackReduceA = decimal(p, "failback.reduceA", 34.0d);
+        double loadManagerGuardA = failbackEnabled ? failbackReduceA : Double.POSITIVE_INFINITY;
 
         LoadManager loadManager = null;
         if (loadManagerEnabled) {
@@ -59,7 +60,7 @@ public final class Integration {
                 station,
                 meter,
                 decimal(p, "loadmanager.targetA", 32.0d),
-                failbackReduceA,
+                loadManagerGuardA,
                 decimal(p, "loadmanager.hysteresisA", 0.8d),
                 integer(p, "loadmanager.minDcKw", 5),
                 integer(p, "loadmanager.maxDcKw", 50),
