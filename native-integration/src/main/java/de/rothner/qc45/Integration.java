@@ -37,6 +37,11 @@ public final class Integration {
         String password = required(p, "ocpp.password");
         String serial = p.getProperty("ocpp.serial", "QC45").trim();
         String defaultIdTag = p.getProperty("ocpp.defaultIdTag", "LOCAL").trim();
+
+        String caFile = p.getProperty("ocpp.tls.caFile", "").trim();
+        boolean insecureTls = bool(p, "ocpp.tls.insecure", false);
+        TlsSupport.configure(caFile, insecureTls);
+
         OcppClient ocpp = new OcppClient(station, url, user, password, serial, defaultIdTag);
 
         Ocpp15LoopbackServer ocpp15Loopback = null;
