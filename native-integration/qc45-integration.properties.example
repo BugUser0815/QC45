@@ -9,6 +9,12 @@ ocpp.serial=QC45
 # Used only if EVCSD exposes no RFID/user value for a locally started session.
 ocpp.defaultIdTag=LOCAL
 
+# TLS trust for the OCPP 1.6 WSS connection.
+# Preferred production setup: point to a PEM file containing the issuing/root CA.
+ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
+# Test only. If true, ALL server certificates are accepted. Never leave enabled.
+ocpp.tls.insecure=false
+
 # ------------------------------------------------------------
 # Legacy EVCSD OCPP 1.5 SOAP loopback compatibility server
 # ------------------------------------------------------------
