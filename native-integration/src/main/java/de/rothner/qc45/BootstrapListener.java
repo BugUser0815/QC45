@@ -9,6 +9,15 @@ public final class BootstrapListener implements ServletContextListener {
 
     public void contextInitialized(ServletContextEvent event) {
         try {
+            FileLog.install("/home/mobie/evcsd/qc45-integration.log");
+        } catch (Throwable e) {
+            try {
+                System.err.println("[QC45] persistent file logging failed: " + e);
+                e.printStackTrace();
+            } catch (Throwable ignored) {}
+        }
+
+        try {
             integration = Integration.start();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
         } catch (Throwable e) {
