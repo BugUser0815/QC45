@@ -3,10 +3,7 @@ package de.rothner.qc45;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-/**
- * Reflection-only adapter around the live EVCSD objects.
- * This intentionally avoids compile-time dependencies on vendor JARs.
- */
+/** Reflection-only adapter around the live EVCSD objects. */
 public final class ReflectionQC45 {
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
@@ -32,7 +29,6 @@ public final class ReflectionQC45 {
     private Object satellite(int connector) throws Exception {
         Object[] sats = (Object[]) centralClass.getMethod("getSatellites").invoke(central());
         if (sats == null) throw new IllegalStateException("Satellites unavailable");
-
         for (int i = 0; i < sats.length; i++) {
             Object sat = sats[i];
             if (sat == null) continue;
@@ -58,6 +54,31 @@ public final class ReflectionQC45 {
         return value instanceof Number ? ((Number) value).longValue() : 0L;
     }
 
+    public String idTag(int connector) {
+        try {
+            Object sat = satellite(connector);
+            try {
+                Object value = sat.getClass().getMethod("getUser").invoke(sat);
+                if (value != null) return String.valueOf(value).trim();
+            } catch (NoSuchMethodException ignored) {
+            }
+
+            Class<?> t = sat.getClass();
+            while (t != null) {
+                try {
+                    Field f = t.getDeclaredField("user");
+                    f.setAccessible(true);
+                    Object value = f.get(sat);
+                    return value == null ? "" : String.valueOf(value).trim();
+                } catch (NoSuchFieldException ignored) {
+                    t = t.getSuperclass();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "";
+    }
+
     public boolean remoteStarted() throws Exception {
         return ((Boolean) centralClass.getMethod("isRemoteStarted").invoke(central())).booleanValue();
     }
@@ -78,7 +99,6 @@ public final class ReflectionQC45 {
     public void setDcBudgetKw(int kw) throws Exception {
         kw = clamp(kw, 1, 50);
         setGlobalMaxPower(kw);
-
         int active = activeDcConnector();
         if (active == 0) {
             setSatelliteLimit(1, kw, false);
@@ -114,18 +134,12 @@ public final class ReflectionQC45 {
         Object sat = satellite(connector);
         Class<?> type = sat.getClass();
         type.getMethod("setMaxPower", Integer.TYPE).invoke(sat, Integer.valueOf(kw));
-
         if (pushCcs) {
             boolean ccs = ((Boolean) type.getMethod("isCCSCharge").invoke(sat)).booleanValue();
             if (ccs) type.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
         }
     }
 
-    /**
-     * Uses NmsListenerImpl.remoteStartCharge("", idTag, connector).
-     * The listener instance is discovered from CentralModule fields first and,
-     * if necessary, from zero-argument static getters returning NmsListenerImpl.
-     */
     public void remoteStart(String idTag, int connector) throws Exception {
         Object listener = findNmsListener();
         Method m = listener.getClass().getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
@@ -134,14 +148,12 @@ public final class ReflectionQC45 {
 
     public void remoteStop(int connector) throws Exception {
         Object sat = satellite(connector);
-        Method m = sat.getClass().getMethod("stopCharging");
-        m.invoke(sat);
+        sat.getClass().getMethod("stopCharging").invoke(sat);
     }
 
     private Object findNmsListener() throws Exception {
         Class<?> nmsClass = Class.forName("pt.efacec.es.mobie.agent.nms.NmsListenerImpl");
         Object cm = central();
-
         Class<?> t = cm.getClass();
         while (t != null) {
             Field[] fields = t.getDeclaredFields();
@@ -166,7 +178,6 @@ public final class ReflectionQC45 {
                 }
             }
         }
-
         throw new IllegalStateException("NmsListenerImpl instance not found");
     }
 
