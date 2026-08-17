@@ -5,19 +5,22 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.Properties;
 
-/** Owns the native OCPP, Modbus, load manager and grid failback services inside the EVCSD JVM. */
+/** Owns the native OCPP, OCPP15 loopback, Modbus, load manager and grid failback services inside the EVCSD JVM. */
 public final class Integration {
     private final ReflectionQC45 station;
     private final ModbusServer modbus;
     private final OcppClient ocpp;
+    private final Ocpp15LoopbackServer ocpp15Loopback;
     private final LoadManager loadManager;
     private final GridFailback failback;
 
     private Integration(ReflectionQC45 station, ModbusServer modbus, OcppClient ocpp,
+                        Ocpp15LoopbackServer ocpp15Loopback,
                         LoadManager loadManager, GridFailback failback) {
         this.station = station;
         this.modbus = modbus;
         this.ocpp = ocpp;
+        this.ocpp15Loopback = ocpp15Loopback;
         this.loadManager = loadManager;
         this.failback = failback;
     }
@@ -35,6 +38,16 @@ public final class Integration {
         String serial = p.getProperty("ocpp.serial", "QC45").trim();
         String defaultIdTag = p.getProperty("ocpp.defaultIdTag", "LOCAL").trim();
         OcppClient ocpp = new OcppClient(station, url, user, password, serial, defaultIdTag);
+
+        Ocpp15LoopbackServer ocpp15Loopback = null;
+        if (bool(p, "ocpp15.loopback.enabled", true)) {
+            ocpp15Loopback = new Ocpp15LoopbackServer(
+                p.getProperty("ocpp15.loopback.bind", "127.0.0.1").trim(),
+                integer(p, "ocpp15.loopback.port", 9000),
+                p.getProperty("ocpp15.loopback.path", "/QC45").trim(),
+                integer(p, "ocpp15.loopback.heartbeatInterval", 60)
+            );
+        }
 
         boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
         boolean failbackEnabled = bool(p, "failback.enabled", true);
@@ -89,8 +102,9 @@ public final class Integration {
             );
         }
 
-        Integration integration = new Integration(station, modbus, ocpp, loadManager, failback);
+        Integration integration = new Integration(station, modbus, ocpp, ocpp15Loopback, loadManager, failback);
 
+        if (ocpp15Loopback != null) ocpp15Loopback.start();
         modbus.start();
         ocpp.start();
         if (loadManager != null) loadManager.start();
@@ -104,6 +118,7 @@ public final class Integration {
         try { if (loadManager != null) loadManager.shutdown(); } catch (Throwable ignored) {}
         try { ocpp.shutdown(); } catch (Throwable ignored) {}
         try { modbus.shutdown(); } catch (Throwable ignored) {}
+        try { if (ocpp15Loopback != null) ocpp15Loopback.shutdown(); } catch (Throwable ignored) {}
         System.out.println("[QC45] native integration stopped");
     }
 
