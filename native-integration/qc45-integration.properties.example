@@ -9,12 +9,26 @@ ocpp.serial=QC45
 # Used only if EVCSD exposes no RFID/user value for a locally started session.
 ocpp.defaultIdTag=LOCAL
 
-# evcc / local integration
+# ------------------------------------------------------------
+# Legacy EVCSD OCPP 1.5 SOAP loopback compatibility server
+# ------------------------------------------------------------
+ocpp15.loopback.enabled=true
+ocpp15.loopback.bind=127.0.0.1
+ocpp15.loopback.port=9000
+ocpp15.loopback.path=/QC45
+ocpp15.loopback.heartbeatInterval=60
+
+# Configure EVCSD itself to use:
+# centralManagementEndpointRWE=http://127.0.0.1:9000/QC45
+# centralmanagement.endpoint=http://127.0.0.1:9000/QC45
+# centralmanagement.enabled=true
+# communicationProtocol=OCPP15
+
+# evcc / local load management
 modbus.port=1502
 
 # ------------------------------------------------------------
-# KOSTAL KSEM
-# Shared by LoadManager and GridFailback
+# KOSTAL KSEM shared by LoadManager and GridFailback
 # ------------------------------------------------------------
 ksem.host=10.0.0.70
 ksem.port=502
@@ -31,28 +45,21 @@ ksem.currentScale=0.001
 # Native load manager
 # ------------------------------------------------------------
 loadmanager.enabled=true
-
-# 35 A SLS with 3 A reserve.
 loadmanager.targetA=32.0
 loadmanager.hysteresisA=0.8
-
-# QC45 connector limits.
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50
 loadmanager.minAcKw=5
 loadmanager.maxAcKw=22
-
-# Increase slowly, reduce immediately.
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
 
 # ------------------------------------------------------------
-# Independent KOSTAL KSEM grid failback
+# Independent grid failback
 # ------------------------------------------------------------
 failback.enabled=true
 
-# Stage 1: take control away from LoadManager and force minimum.
-# LoadManager automatically stops writing at/above this threshold.
+# Stage 1: force both DC and AC budgets to minimum.
 failback.reduceA=34.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
