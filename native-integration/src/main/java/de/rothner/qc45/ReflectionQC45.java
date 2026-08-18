@@ -3,14 +3,20 @@ package de.rothner.qc45;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-/** Reflection-only adapter around the live EVCSD objects. */
+/** Reflection adapter for read/control values; remote commands go through qc45api. */
 public final class ReflectionQC45 {
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
+    private final Qc45ApiClient api;
 
     public ReflectionQC45() throws Exception {
+        this("http://127.0.0.1", "/qc45api/start.jsp", "/qc45api/stop.jsp", 5000);
+    }
+
+    public ReflectionQC45(String apiBaseUrl, String startPath, String stopPath, int apiTimeoutMs) throws Exception {
         centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
         configurationClass = Class.forName("pt.efacec.es.mobie.agent.Configuration");
+        api = new Qc45ApiClient(apiBaseUrl, startPath, stopPath, apiTimeoutMs);
     }
 
     private Object central() throws Exception {
@@ -60,9 +66,7 @@ public final class ReflectionQC45 {
             try {
                 Object value = sat.getClass().getMethod("getUser").invoke(sat);
                 if (value != null) return String.valueOf(value).trim();
-            } catch (NoSuchMethodException ignored) {
-            }
-
+            } catch (NoSuchMethodException ignored) {}
             Class<?> t = sat.getClass();
             while (t != null) {
                 try {
@@ -70,12 +74,9 @@ public final class ReflectionQC45 {
                     f.setAccessible(true);
                     Object value = f.get(sat);
                     return value == null ? "" : String.valueOf(value).trim();
-                } catch (NoSuchFieldException ignored) {
-                    t = t.getSuperclass();
-                }
+                } catch (NoSuchFieldException ignored) { t = t.getSuperclass(); }
             }
-        } catch (Throwable ignored) {
-        }
+        } catch (Throwable ignored) {}
         return "";
     }
 
@@ -84,8 +85,7 @@ public final class ReflectionQC45 {
     }
 
     public int activeDcConnector() throws Exception {
-        int c1 = powerKw(1);
-        int c2 = powerKw(2);
+        int c1 = powerKw(1), c2 = powerKw(2);
         if (c1 > 0 && c2 > 0) return c1 >= c2 ? 1 : 2;
         if (c1 > 0) return 1;
         if (c2 > 0) return 2;
@@ -140,93 +140,13 @@ public final class ReflectionQC45 {
         }
     }
 
-    /**
-     * Proven QC45 RemoteStart path used by the working qc45api/start.jsp:
-     *   CentralModule cm = CentralModule.getCurrentModule();
-     *   NmsListenerImpl listener = new NmsListenerImpl(cm);
-     *   listener.remoteStartCharge("", idTag, connector);
-     *
-     * Do not search for an existing NmsListenerImpl instance; the original
-     * working API constructed a new listener around the live CentralModule.
-     */
+    /** Remote commands deliberately use the same local qc45api endpoints as the proven old bridge. */
     public void remoteStart(String idTag, int connector) throws Exception {
-        Object cm = central();
-        boolean before = false;
-        try { before = remoteStarted(); } catch (Throwable ignored) {}
-
-        System.out.println("[QC45] EVCSD RemoteStart request connector=" + connector
-            + " idTag=" + idTag + " remoteStarted(before)=" + before);
-
-        Class<?> nmsClass = Class.forName("pt.efacec.es.mobie.agent.nms.NmsListenerImpl");
-        Object listener = null;
-
-        java.lang.reflect.Constructor<?>[] constructors = nmsClass.getDeclaredConstructors();
-        for (int i = 0; i < constructors.length; i++) {
-            java.lang.reflect.Constructor<?> c = constructors[i];
-            Class<?>[] p = c.getParameterTypes();
-            if (p.length == 1 && p[0].isAssignableFrom(cm.getClass())) {
-                c.setAccessible(true);
-                listener = c.newInstance(cm);
-                System.out.println("[QC45] EVCSD RemoteStart listener constructed via " + c.toString());
-                break;
-            }
-        }
-        if (listener == null) {
-            throw new IllegalStateException("NmsListenerImpl(CentralModule) constructor not found");
-        }
-
-        Method remoteStart = nmsClass.getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
-        remoteStart.invoke(listener, "", idTag, Integer.valueOf(connector));
-
-        // Mirror the working start.jsp behavior as well. Depending on build,
-        // remoteStartCharge may set this internally; setting it again is harmless.
-        setRemoteStartedState(true);
-
-        boolean after = false;
-        try { after = remoteStarted(); } catch (Throwable ignored) {}
-        System.out.println("[QC45] EVCSD RemoteStart path=NmsListenerImpl(new CentralModule).remoteStartCharge"
-            + " connector=" + connector + " remoteStarted(after)=" + after);
+        api.remoteStart(idTag, connector);
     }
 
     public void remoteStop(int connector) throws Exception {
-        Object sat = satellite(connector);
-        sat.getClass().getMethod("stopCharging").invoke(sat);
-    }
-
-    private boolean setRemoteStartedState(boolean value) throws Exception {
-        Object cm = central();
-
-        try {
-            Method m = centralClass.getMethod("setRemoteStarted", Boolean.TYPE);
-            m.invoke(cm, Boolean.valueOf(value));
-            return true;
-        } catch (NoSuchMethodException ignored) {
-        }
-
-        if (value) {
-            try {
-                Method m = centralClass.getMethod("setRemoteStarted");
-                m.invoke(cm);
-                return true;
-            } catch (NoSuchMethodException ignored) {
-            }
-        }
-
-        Class<?> t = cm.getClass();
-        while (t != null) {
-            try {
-                Field f = t.getDeclaredField("remoteStarted");
-                if (f.getType() == Boolean.TYPE || f.getType() == Boolean.class) {
-                    f.setAccessible(true);
-                    if (f.getType() == Boolean.TYPE) f.setBoolean(cm, value);
-                    else f.set(cm, Boolean.valueOf(value));
-                    return true;
-                }
-            } catch (NoSuchFieldException ignored) {
-            }
-            t = t.getSuperclass();
-        }
-        return false;
+        api.remoteStop(connector);
     }
 
     private static int clamp(int value, int min, int max) {
