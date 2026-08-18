@@ -10,7 +10,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -50,7 +52,8 @@ public final class Ocpp15LoopbackServer {
     }
 
     public synchronized void shutdown() {
-        HttpServer s = server; server = null;
+        HttpServer s = server;
+        server = null;
         if (s != null) s.stop(0);
         System.out.println("[QC45] OCPP15->16 bridge stopped");
     }
@@ -58,12 +61,30 @@ public final class Ocpp15LoopbackServer {
     private final class Handler implements HttpHandler {
         public void handle(HttpExchange exchange) {
             try {
-                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { exchange.sendResponseHeaders(405, -1); return; }
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
+                }
+
                 String request = readUtf8(exchange.getRequestBody());
                 String op = operation(request);
                 String reqId = elementText(request, "MessageID");
                 String reqAction = elementText(request, "Action");
+                String contentType = firstHeader(exchange.getRequestHeaders(), "Content-Type");
+                String soapAction = firstHeader(exchange.getRequestHeaders(), "SOAPAction");
+                String httpAction = actionFromHeaders(contentType, soapAction);
+                boolean hasWsa = reqId.length() > 0 || reqAction.length() > 0;
+
                 if (op.length() == 0) throw new IllegalArgumentException("Unknown OCPP 1.5 SOAP operation");
+
+                if ("authorize".equals(op)) {
+                    System.out.println("[QC45] OCPP15 Authorize request Content-Type=" + contentType
+                        + " SOAPAction=" + soapAction
+                        + " reqAction=" + reqAction
+                        + " reqMessageId=" + reqId
+                        + " hasWsa=" + hasWsa);
+                    System.out.println("[QC45] OCPP15 Authorize SOAP request=" + request);
+                }
 
                 String action16 = action16(op);
                 String json = requestJson(op, request);
@@ -73,22 +94,31 @@ public final class Ocpp15LoopbackServer {
                 System.out.println("[QC45] BRIDGE 1.6->1.5 " + action16 + " result=" + result);
 
                 String body = responseBody(op, result, request);
-                String respAction = responseAction(op, reqAction);
-                String response = envelope(body, respAction, reqId, "urn:uuid:" + UUID.randomUUID().toString());
+                String actionBasis = reqAction.length() > 0 ? reqAction : httpAction;
+                String respAction = responseAction(op, actionBasis);
+                String response = envelope(body, respAction, reqId,
+                    "urn:uuid:" + UUID.randomUUID().toString(), hasWsa);
+
                 if ("authorize".equals(op)) {
                     System.out.println("[QC45] OCPP15 Authorize SOAP response=" + response);
                 }
+
                 byte[] bytes = response.getBytes("UTF-8");
                 Headers h = exchange.getResponseHeaders();
-                h.set("Content-Type", "application/soap+xml; charset=utf-8; action=\"" + respAction + "\"");
+                String responseContentType = "application/soap+xml; charset=utf-8";
+                if (respAction.length() > 0) responseContentType += "; action=\"" + respAction + "\"";
+                h.set("Content-Type", responseContentType);
                 h.set("Cache-Control", "no-store");
                 exchange.sendResponseHeaders(200, bytes.length);
-                OutputStream out = exchange.getResponseBody(); try { out.write(bytes); } finally { out.close(); }
+                OutputStream out = exchange.getResponseBody();
+                try { out.write(bytes); } finally { out.close(); }
             } catch (Throwable e) {
                 System.err.println("[QC45] OCPP15->16 bridge request failed: " + e);
                 e.printStackTrace();
                 try { exchange.sendResponseHeaders(500, -1); } catch (Throwable ignored) {}
-            } finally { try { exchange.close(); } catch (Throwable ignored) {} }
+            } finally {
+                try { exchange.close(); } catch (Throwable ignored) {}
+            }
         }
     }
 
@@ -157,16 +187,15 @@ public final class Ocpp15LoopbackServer {
         if ("meterValues".equals(op)) return tag("meterValuesResponse","");
         if ("firmwareStatusNotification".equals(op)) return tag("firmwareStatusNotificationResponse","");
         if ("diagnosticsStatusNotification".equals(op)) return tag("diagnosticsStatusNotificationResponse","");
-        if ("dataTransfer".equals(op)) { String b=value("status",fieldString(result,"status","Rejected")); String d=fieldString(result,"data",""); if(d.length()>0)b+=value("data",d); return tag("dataTransferResponse",b); }
+        if ("dataTransfer".equals(op)) {
+            String b=value("status",fieldString(result,"status","Rejected"));
+            String d=fieldString(result,"data","");
+            if(d.length()>0)b+=value("data",d);
+            return tag("dataTransferResponse",b);
+        }
         return tag(op+"Response","");
     }
 
-    /**
-     * EFACEC treats a near-current expiryDate as already expired. ChargePoint
-     * currently returns Accepted together with an expiry timestamp at roughly
-     * the authorization instant, so the bridge deliberately forwards only the
-     * authorization status to the legacy OCPP 1.5 client.
-     */
     private static String idTagInfo(String json) {
         String status=fieldString(json,"status","Accepted");
         return "<idTagInfo><status>" + escape(status) + "</status></idTagInfo>";
@@ -174,7 +203,38 @@ public final class Ocpp15LoopbackServer {
 
     private static String action16(String op){ if("bootNotification".equals(op))return"BootNotification";if("heartbeat".equals(op))return"Heartbeat";if("authorize".equals(op))return"Authorize";if("startTransaction".equals(op))return"StartTransaction";if("stopTransaction".equals(op))return"StopTransaction";if("statusNotification".equals(op))return"StatusNotification";if("meterValues".equals(op))return"MeterValues";if("firmwareStatusNotification".equals(op))return"FirmwareStatusNotification";if("diagnosticsStatusNotification".equals(op))return"DiagnosticsStatusNotification";if("dataTransfer".equals(op))return"DataTransfer";return op;}
     private static String operation(String xml){String[] a={"bootNotification","heartbeat","authorize","startTransaction","stopTransaction","statusNotification","meterValues","firmwareStatusNotification","diagnosticsStatusNotification","dataTransfer"};for(String op:a)if(xml.indexOf("<"+op)>=0||xml.indexOf(":"+op)>=0)return op;return"";}
-    private static String responseAction(String op,String req){if(req!=null&&req.length()>0){if(req.endsWith("Request"))return req.substring(0,req.length()-7)+"Response";if(!req.endsWith("Response"))return req+"Response";return req;}return NS+Character.toUpperCase(op.charAt(0))+op.substring(1)+"Response";}
+
+    private static String responseAction(String op,String req){
+        if(req!=null&&req.length()>0){
+            String r=req.trim();
+            if(r.startsWith("\"")&&r.endsWith("\"")&&r.length()>1) r=r.substring(1,r.length()-1);
+            if(r.endsWith("Request")) return r.substring(0,r.length()-7)+"Response";
+            if(r.endsWith("/Authorize") || r.endsWith("Authorize")) return r+"Response";
+            if(!r.endsWith("Response")) return r+"Response";
+            return r;
+        }
+        return NS+Character.toUpperCase(op.charAt(0))+op.substring(1)+"Response";
+    }
+
+    private static String firstHeader(Headers headers, String name) {
+        if (headers == null) return "";
+        List<String> values = headers.get(name);
+        if (values == null || values.size() == 0) return "";
+        String v = values.get(0);
+        return v == null ? "" : v.trim();
+    }
+
+    private static String actionFromHeaders(String contentType, String soapAction) {
+        if (soapAction != null && soapAction.trim().length() > 0) {
+            String s=soapAction.trim();
+            if(s.startsWith("\"")&&s.endsWith("\"")&&s.length()>1)s=s.substring(1,s.length()-1);
+            return s;
+        }
+        if (contentType == null) return "";
+        Matcher m=Pattern.compile("(?i)(?:^|;)\\s*action\\s*=\\s*(?:\"([^\"]*)\"|([^;\\s]*))").matcher(contentType);
+        if(m.find()) return m.group(1)!=null?m.group(1):(m.group(2)!=null?m.group(2):"");
+        return "";
+    }
 
     private static String elementText(String xml,String n){Pattern p=Pattern.compile("(?is)<(?:[A-Za-z0-9_.-]+:)?"+Pattern.quote(n)+"(?:\\s[^>]*)?>(.*?)</(?:[A-Za-z0-9_.-]+:)?"+Pattern.quote(n)+">");Matcher m=p.matcher(xml);if(!m.find())return"";return unescapeXml(m.group(1).replaceAll("<[^>]+>","").trim());}
     private static String first(String xml,String... names){for(String n:names){String v=elementText(xml,n);if(v.length()>0)return v;}return"";}
@@ -189,7 +249,13 @@ public final class Ocpp15LoopbackServer {
     private static int fieldInt(String j,String f,int d){Matcher m=Pattern.compile("\\\""+Pattern.quote(f)+"\\\"\\s*:\\s*(-?\\d+)").matcher(j);return m.find()?Integer.parseInt(m.group(1)):d;}
     private static String fieldString(String j,String f,String d){Matcher m=Pattern.compile("\\\""+Pattern.quote(f)+"\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"").matcher(j);return m.find()?m.group(1).replace("\\\"","\"").replace("\\\\","\\"):d;}
 
-    private static String envelope(String body,String action,String relates,String id){String h="<s:Header><wsa:Action s:mustUnderstand=\"1\">"+escape(action)+"</wsa:Action><wsa:MessageID>"+escape(id)+"</wsa:MessageID>"+(relates.length()>0?"<wsa:RelatesTo>"+escape(relates)+"</wsa:RelatesTo>":"")+"</s:Header>";return"<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:wsa=\""+WSA+"\" xmlns:cs=\""+NS+"\">"+h+"<s:Body>"+body+"</s:Body></s:Envelope>";}
+    private static String envelope(String body,String action,String relates,String id,boolean includeWsa){
+        String h="";
+        if(includeWsa){
+            h="<s:Header><wsa:Action s:mustUnderstand=\"1\">"+escape(action)+"</wsa:Action><wsa:MessageID>"+escape(id)+"</wsa:MessageID>"+(relates.length()>0?"<wsa:RelatesTo>"+escape(relates)+"</wsa:RelatesTo>":"")+"</s:Header>";
+        }
+        return"<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:wsa=\""+WSA+"\" xmlns:cs=\""+NS+"\">"+h+"<s:Body>"+body+"</s:Body></s:Envelope>";
+    }
     private static String tag(String n,String c){return"<cs:"+n+">"+c+"</cs:"+n+">";}
     private static String value(String n,String v){return"<"+n+">"+escape(v)+"</"+n+">";}
     private static String escape(String v){return v==null?"":v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");}
