@@ -1,22 +1,17 @@
 package de.rothner.qc45;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-/** Reflection adapter for read/control values; remote commands go through qc45api. */
+/** Reflection adapter around the live EVCSD objects. */
 public final class ReflectionQC45 {
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
-    private final Qc45ApiClient api;
 
     public ReflectionQC45() throws Exception {
-        this("http://127.0.0.1", "/qc45api/start.jsp", "/qc45api/stop.jsp", 5000);
-    }
-
-    public ReflectionQC45(String apiBaseUrl, String startPath, String stopPath, int apiTimeoutMs) throws Exception {
         centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
         configurationClass = Class.forName("pt.efacec.es.mobie.agent.Configuration");
-        api = new Qc45ApiClient(apiBaseUrl, startPath, stopPath, apiTimeoutMs);
     }
 
     private Object central() throws Exception {
@@ -140,13 +135,88 @@ public final class ReflectionQC45 {
         }
     }
 
-    /** Remote commands deliberately use the same local qc45api endpoints as the proven old bridge. */
+    /** Exact native port of the proven qc45api/start.jsp logic. */
     public void remoteStart(String idTag, int connector) throws Exception {
-        api.remoteStart(idTag, connector);
+        if (idTag == null || idTag.trim().length() == 0) throw new IllegalArgumentException("missing idTag");
+        idTag = idTag.trim();
+        Object cm = central();
+        Object listener = newNmsListener(cm);
+
+        Method m = listener.getClass().getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
+        Object value = m.invoke(listener, "", idTag, Integer.valueOf(connector));
+        boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
+        boolean remote = remoteStarted();
+
+        System.out.println("[QC45] Native RemoteStart connector=" + connector
+            + " idTag=" + idTag + " remoteStartCharge=" + result + " remoteStarted=" + remote);
+
+        if (!result) throw new IllegalStateException("remoteStartCharge returned false");
     }
 
+    /** Exact native port of the proven qc45api/stop.jsp logic. */
     public void remoteStop(int connector) throws Exception {
-        api.remoteStop(connector);
+        Object cm = central();
+        Object target = satellite(connector);
+        Object listener = newNmsListener(cm);
+
+        Object satInfo = target.getClass().getMethod("getSatelliteInfoDB").invoke(target);
+        if (satInfo == null) throw new IllegalStateException("SatelliteInfoDB unavailable");
+        String satelliteUniqueId = String.valueOf(satInfo.getClass().getMethod("getStationId").invoke(satInfo));
+
+        String transactionUniqueId = "";
+        Object tx = target.getClass().getMethod("getActiveTransaction").invoke(target);
+        if (tx != null) {
+            Object txId = tx.getClass().getMethod("getUniqueId").invoke(tx);
+            if (txId != null) transactionUniqueId = String.valueOf(txId);
+        }
+
+        Method abort = listener.getClass().getMethod("abortCharge", String.class, String.class, String.class);
+        Object value = abort.invoke(listener, satelliteUniqueId, transactionUniqueId, "");
+        boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
+
+        setRemoteStartedFalse(cm);
+        boolean remote = remoteStarted();
+
+        System.out.println("[QC45] Native RemoteStop connector=" + connector
+            + " satelliteUniqueId=" + satelliteUniqueId
+            + " transactionUniqueId=" + transactionUniqueId
+            + " abortCharge=" + result
+            + " remoteStarted=" + remote);
+
+        if (!result) throw new IllegalStateException("abortCharge returned false");
+    }
+
+    private Object newNmsListener(Object cm) throws Exception {
+        Class<?> nmsClass = Class.forName("pt.efacec.es.mobie.agent.nms.NmsListenerImpl");
+        Constructor<?>[] constructors = nmsClass.getDeclaredConstructors();
+        for (int i = 0; i < constructors.length; i++) {
+            Constructor<?> c = constructors[i];
+            Class<?>[] p = c.getParameterTypes();
+            if (p.length == 1 && p[0].isAssignableFrom(cm.getClass())) {
+                c.setAccessible(true);
+                return c.newInstance(cm);
+            }
+        }
+        throw new IllegalStateException("NmsListenerImpl(CentralModule) constructor not found");
+    }
+
+    private void setRemoteStartedFalse(Object cm) throws Exception {
+        try {
+            centralClass.getMethod("setRemoteStarted", Boolean.TYPE).invoke(cm, Boolean.FALSE);
+            return;
+        } catch (NoSuchMethodException ignored) {}
+
+        Class<?> t = cm.getClass();
+        while (t != null) {
+            try {
+                Field f = t.getDeclaredField("remoteStarted");
+                f.setAccessible(true);
+                if (f.getType() == Boolean.TYPE) f.setBoolean(cm, false);
+                else f.set(cm, Boolean.FALSE);
+                return;
+            } catch (NoSuchFieldException ignored) { t = t.getSuperclass(); }
+        }
+        throw new IllegalStateException("Unable to clear remoteStarted");
     }
 
     private static int clamp(int value, int min, int max) {
