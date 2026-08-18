@@ -2,7 +2,6 @@ package de.rothner.qc45;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 
 /** Reflection-only adapter around the live EVCSD objects. */
 public final class ReflectionQC45 {
@@ -141,40 +140,52 @@ public final class ReflectionQC45 {
         }
     }
 
-    /** Start through EVCSD's NMS path when available, with a direct SatelliteModule fallback. */
+    /**
+     * Proven QC45 RemoteStart path used by the working qc45api/start.jsp:
+     *   CentralModule cm = CentralModule.getCurrentModule();
+     *   NmsListenerImpl listener = new NmsListenerImpl(cm);
+     *   listener.remoteStartCharge("", idTag, connector);
+     *
+     * Do not search for an existing NmsListenerImpl instance; the original
+     * working API constructed a new listener around the live CentralModule.
+     */
     public void remoteStart(String idTag, int connector) throws Exception {
+        Object cm = central();
         boolean before = false;
         try { before = remoteStarted(); } catch (Throwable ignored) {}
+
         System.out.println("[QC45] EVCSD RemoteStart request connector=" + connector
             + " idTag=" + idTag + " remoteStarted(before)=" + before);
 
-        boolean stateSetterFound = setRemoteStartedState(true);
-        System.out.println("[QC45] EVCSD remoteStarted setter found=" + stateSetterFound);
+        Class<?> nmsClass = Class.forName("pt.efacec.es.mobie.agent.nms.NmsListenerImpl");
+        Object listener = null;
 
-        boolean invoked = false;
-        try {
-            Object listener = findNmsListener();
-            Method m = listener.getClass().getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
-            m.invoke(listener, "", idTag, Integer.valueOf(connector));
-            invoked = true;
-            System.out.println("[QC45] EVCSD RemoteStart path=NmsListenerImpl.remoteStartCharge");
-        } catch (Throwable e) {
-            System.err.println("[QC45] NmsListener remoteStart unavailable: " + e);
+        java.lang.reflect.Constructor<?>[] constructors = nmsClass.getDeclaredConstructors();
+        for (int i = 0; i < constructors.length; i++) {
+            java.lang.reflect.Constructor<?> c = constructors[i];
+            Class<?>[] p = c.getParameterTypes();
+            if (p.length == 1 && p[0].isAssignableFrom(cm.getClass())) {
+                c.setAccessible(true);
+                listener = c.newInstance(cm);
+                System.out.println("[QC45] EVCSD RemoteStart listener constructed via " + c.toString());
+                break;
+            }
+        }
+        if (listener == null) {
+            throw new IllegalStateException("NmsListenerImpl(CentralModule) constructor not found");
         }
 
-        if (!invoked) {
-            invoked = directSatelliteStart(idTag, connector);
-        }
-        if (!invoked) throw new IllegalStateException("No usable EVCSD remote-start path found");
+        Method remoteStart = nmsClass.getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
+        remoteStart.invoke(listener, "", idTag, Integer.valueOf(connector));
+
+        // Mirror the working start.jsp behavior as well. Depending on build,
+        // remoteStartCharge may set this internally; setting it again is harmless.
+        setRemoteStartedState(true);
 
         boolean after = false;
         try { after = remoteStarted(); } catch (Throwable ignored) {}
-        System.out.println("[QC45] EVCSD RemoteStart invoked connector=" + connector
-            + " remoteStarted(after)=" + after);
-
-        if (stateSetterFound && !after) {
-            throw new IllegalStateException("EVCSD remoteStarted state did not become true");
-        }
+        System.out.println("[QC45] EVCSD RemoteStart path=NmsListenerImpl(new CentralModule).remoteStartCharge"
+            + " connector=" + connector + " remoteStarted(after)=" + after);
     }
 
     public void remoteStop(int connector) throws Exception {
@@ -182,93 +193,16 @@ public final class ReflectionQC45 {
         sat.getClass().getMethod("stopCharging").invoke(sat);
     }
 
-    private boolean directSatelliteStart(String idTag, int connector) throws Exception {
-        Object sat = satellite(connector);
-        setSatelliteUser(sat, idTag);
-
-        Method[] methods = sat.getClass().getMethods();
-        for (int i = 0; i < methods.length; i++) {
-            Method m = methods[i];
-            if (!"startCharging".equals(m.getName())) continue;
-            Object[] args = startArgs(m.getParameterTypes(), idTag, connector);
-            System.out.println("[QC45] Satellite start candidate: " + signature(m));
-            if (args == null) continue;
-            try {
-                m.invoke(sat, args);
-                System.out.println("[QC45] EVCSD RemoteStart path=SatelliteModule." + signature(m));
-                return true;
-            } catch (Throwable e) {
-                System.err.println("[QC45] Satellite start candidate failed: " + signature(m) + " -> " + e);
-            }
-        }
-        return false;
-    }
-
-    private static Object[] startArgs(Class<?>[] types, String idTag, int connector) {
-        Object[] args = new Object[types.length];
-        int stringIndex = 0;
-        for (int i = 0; i < types.length; i++) {
-            Class<?> t = types[i];
-            if (t == String.class) {
-                args[i] = stringIndex++ == 0 && types.length > 1 ? "" : idTag;
-            } else if (t == Integer.TYPE || t == Integer.class) {
-                args[i] = Integer.valueOf(connector);
-            } else if (t == Boolean.TYPE || t == Boolean.class) {
-                args[i] = Boolean.TRUE;
-            } else {
-                return null;
-            }
-        }
-        return args;
-    }
-
-    private static String signature(Method m) {
-        StringBuilder b = new StringBuilder(m.getName()).append('(');
-        Class<?>[] p = m.getParameterTypes();
-        for (int i = 0; i < p.length; i++) {
-            if (i > 0) b.append(',');
-            b.append(p[i].getSimpleName());
-        }
-        return b.append(')').toString();
-    }
-
-    private static void setSatelliteUser(Object sat, String idTag) {
-        String[] methods = new String[] { "setUser", "setIdTag", "setUsername" };
-        for (int i = 0; i < methods.length; i++) {
-            try {
-                sat.getClass().getMethod(methods[i], String.class).invoke(sat, idTag);
-                System.out.println("[QC45] Satellite " + methods[i] + " applied idTag=" + idTag);
-                return;
-            } catch (Throwable ignored) {
-            }
-        }
-        String[] fields = new String[] { "user", "idTag", "username" };
-        for (int i = 0; i < fields.length; i++) {
-            Class<?> t = sat.getClass();
-            while (t != null) {
-                try {
-                    Field f = t.getDeclaredField(fields[i]);
-                    if (f.getType() == String.class) {
-                        f.setAccessible(true);
-                        f.set(sat, idTag);
-                        System.out.println("[QC45] Satellite field " + fields[i] + " applied idTag=" + idTag);
-                        return;
-                    }
-                } catch (Throwable ignored) {
-                }
-                t = t.getSuperclass();
-            }
-        }
-    }
-
     private boolean setRemoteStartedState(boolean value) throws Exception {
         Object cm = central();
+
         try {
             Method m = centralClass.getMethod("setRemoteStarted", Boolean.TYPE);
             m.invoke(cm, Boolean.valueOf(value));
             return true;
         } catch (NoSuchMethodException ignored) {
         }
+
         if (value) {
             try {
                 Method m = centralClass.getMethod("setRemoteStarted");
@@ -277,6 +211,7 @@ public final class ReflectionQC45 {
             } catch (NoSuchMethodException ignored) {
             }
         }
+
         Class<?> t = cm.getClass();
         while (t != null) {
             try {
@@ -292,78 +227,6 @@ public final class ReflectionQC45 {
             t = t.getSuperclass();
         }
         return false;
-    }
-
-    private Object findNmsListener() throws Exception {
-        Class<?> nmsClass = Class.forName("pt.efacec.es.mobie.agent.nms.NmsListenerImpl");
-
-        Object direct = findAssignableInObject(central(), nmsClass);
-        if (direct != null) return direct;
-
-        try {
-            direct = findAssignableInObject(configuration(), nmsClass);
-            if (direct != null) return direct;
-        } catch (Throwable ignored) {
-        }
-
-        for (int connector = 1; connector <= 3; connector++) {
-            try {
-                direct = findAssignableInObject(satellite(connector), nmsClass);
-                if (direct != null) return direct;
-            } catch (Throwable ignored) {
-            }
-        }
-
-        Class<?> t = nmsClass;
-        while (t != null) {
-            Field[] fields = t.getDeclaredFields();
-            for (int i = 0; i < fields.length; i++) {
-                Field f = fields[i];
-                if (!Modifier.isStatic(f.getModifiers())) continue;
-                if (!nmsClass.isAssignableFrom(f.getType())) continue;
-                try {
-                    f.setAccessible(true);
-                    Object value = f.get(null);
-                    if (value != null) return value;
-                } catch (Throwable ignored) {
-                }
-            }
-            t = t.getSuperclass();
-        }
-
-        Method[] methods = nmsClass.getDeclaredMethods();
-        for (int i = 0; i < methods.length; i++) {
-            Method m = methods[i];
-            if (!Modifier.isStatic(m.getModifiers())) continue;
-            if (m.getParameterTypes().length != 0 || !nmsClass.isAssignableFrom(m.getReturnType())) continue;
-            try {
-                m.setAccessible(true);
-                Object value = m.invoke(null);
-                if (value != null) return value;
-            } catch (Throwable ignored) {
-            }
-        }
-        throw new IllegalStateException("NmsListenerImpl instance not found");
-    }
-
-    private static Object findAssignableInObject(Object owner, Class<?> wanted) {
-        if (owner == null) return null;
-        Class<?> t = owner.getClass();
-        while (t != null) {
-            Field[] fields = t.getDeclaredFields();
-            for (int i = 0; i < fields.length; i++) {
-                Field f = fields[i];
-                if (!wanted.isAssignableFrom(f.getType())) continue;
-                try {
-                    f.setAccessible(true);
-                    Object value = f.get(owner);
-                    if (value != null) return value;
-                } catch (Throwable ignored) {
-                }
-            }
-            t = t.getSuperclass();
-        }
-        return null;
     }
 
     private static int clamp(int value, int min, int max) {
