@@ -75,6 +75,9 @@ public final class Ocpp15LoopbackServer {
                 String body = responseBody(op, result, request);
                 String respAction = responseAction(op, reqAction);
                 String response = envelope(body, respAction, reqId, "urn:uuid:" + UUID.randomUUID().toString());
+                if ("authorize".equals(op)) {
+                    System.out.println("[QC45] OCPP15 Authorize SOAP response=" + response);
+                }
                 byte[] bytes = response.getBytes("UTF-8");
                 Headers h = exchange.getResponseHeaders();
                 h.set("Content-Type", "application/soap+xml; charset=utf-8; action=\"" + respAction + "\"");
@@ -142,28 +145,33 @@ public final class Ocpp15LoopbackServer {
 
     private String responseBody(String op, String result, String request) {
         if ("bootNotification".equals(op)) return tag("bootNotificationResponse",
-            tagValue("currentTime",fieldString(result,"currentTime","")) + tagValue("heartbeatInterval",String.valueOf(fieldInt(result,"interval",heartbeatInterval))) + tagValue("status",fieldString(result,"status","Rejected")));
-        if ("heartbeat".equals(op)) return tag("heartbeatResponse",tagValue("currentTime",fieldString(result,"currentTime","")));
+            value("currentTime",fieldString(result,"currentTime","")) + value("heartbeatInterval",String.valueOf(fieldInt(result,"interval",heartbeatInterval))) + value("status",fieldString(result,"status","Rejected")));
+        if ("heartbeat".equals(op)) return tag("heartbeatResponse",value("currentTime",fieldString(result,"currentTime","")));
         if ("authorize".equals(op)) return tag("authorizeResponse",idTagInfo(result));
         if ("startTransaction".equals(op)) {
             int tx=fieldInt(result,"transactionId",-1); int connector=intText(request,"connectorId",1); if(tx>=0) backend.rememberTransaction(tx,connector);
-            return tag("startTransactionResponse",tagValue("transactionId",String.valueOf(tx))+idTagInfo(result));
+            return tag("startTransactionResponse",value("transactionId",String.valueOf(tx))+idTagInfo(result));
         }
         if ("stopTransaction".equals(op)) return tag("stopTransactionResponse",idTagInfo(result));
         if ("statusNotification".equals(op)) return tag("statusNotificationResponse","");
         if ("meterValues".equals(op)) return tag("meterValuesResponse","");
         if ("firmwareStatusNotification".equals(op)) return tag("firmwareStatusNotificationResponse","");
         if ("diagnosticsStatusNotification".equals(op)) return tag("diagnosticsStatusNotificationResponse","");
-        if ("dataTransfer".equals(op)) { String b=tagValue("status",fieldString(result,"status","Rejected")); String d=fieldString(result,"data",""); if(d.length()>0)b+=tagValue("data",d); return tag("dataTransferResponse",b); }
+        if ("dataTransfer".equals(op)) { String b=value("status",fieldString(result,"status","Rejected")); String d=fieldString(result,"data",""); if(d.length()>0)b+=value("data",d); return tag("dataTransferResponse",b); }
         return tag(op+"Response","");
     }
 
+    /**
+     * EFACEC's generated OCPP 1.5 JAXB classes use a qualified operation root,
+     * but the fields of idTagInfo are unqualified. This is the layout emitted by
+     * the original working SOAP stack.
+     */
     private static String idTagInfo(String json) {
         String status=fieldString(json,"status","Accepted");
-        StringBuilder b=new StringBuilder("<cs:idTagInfo><cs:status>").append(escape(status)).append("</cs:status>");
-        String expiry=fieldString(json,"expiryDate",""); if(expiry.length()>0)b.append("<cs:expiryDate>").append(escape(expiry)).append("</cs:expiryDate>");
-        String parent=fieldString(json,"parentIdTag",""); if(parent.length()>0)b.append("<cs:parentIdTag>").append(escape(parent)).append("</cs:parentIdTag>");
-        return b.append("</cs:idTagInfo>").toString();
+        StringBuilder b=new StringBuilder("<idTagInfo><status>").append(escape(status)).append("</status>");
+        String expiry=fieldString(json,"expiryDate",""); if(expiry.length()>0)b.append("<expiryDate>").append(escape(expiry)).append("</expiryDate>");
+        String parent=fieldString(json,"parentIdTag",""); if(parent.length()>0)b.append("<parentIdTag>").append(escape(parent)).append("</parentIdTag>");
+        return b.append("</idTagInfo>").toString();
     }
 
     private static String action16(String op){ if("bootNotification".equals(op))return"BootNotification";if("heartbeat".equals(op))return"Heartbeat";if("authorize".equals(op))return"Authorize";if("startTransaction".equals(op))return"StartTransaction";if("stopTransaction".equals(op))return"StopTransaction";if("statusNotification".equals(op))return"StatusNotification";if("meterValues".equals(op))return"MeterValues";if("firmwareStatusNotification".equals(op))return"FirmwareStatusNotification";if("diagnosticsStatusNotification".equals(op))return"DiagnosticsStatusNotification";if("dataTransfer".equals(op))return"DataTransfer";return op;}
@@ -185,10 +193,10 @@ public final class Ocpp15LoopbackServer {
 
     private static String envelope(String body,String action,String relates,String id){String h="<s:Header><wsa:Action s:mustUnderstand=\"1\">"+escape(action)+"</wsa:Action><wsa:MessageID>"+escape(id)+"</wsa:MessageID>"+(relates.length()>0?"<wsa:RelatesTo>"+escape(relates)+"</wsa:RelatesTo>":"")+"</s:Header>";return"<?xml version=\"1.0\" encoding=\"UTF-8\"?><s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\" xmlns:wsa=\""+WSA+"\" xmlns:cs=\""+NS+"\">"+h+"<s:Body>"+body+"</s:Body></s:Envelope>";}
     private static String tag(String n,String c){return"<cs:"+n+">"+c+"</cs:"+n+">";}
-    private static String tagValue(String n,String v){return"<cs:"+n+">"+escape(v)+"</cs:"+n+">";}
+    private static String value(String n,String v){return"<"+n+">"+escape(v)+"</"+n+">";}
     private static String escape(String v){return v==null?"":v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");}
     private static String unescapeXml(String v){return v.replace("&lt;","<").replace("&gt;",">").replace("&quot;","\"").replace("&apos;","'").replace("&amp;","&");}
     private static String json(String s){return s==null?"":s.replace("\\","\\\\").replace("\"","\\\"").replace("\r","\\r").replace("\n","\\n");}
     private static String readUtf8(InputStream in)throws Exception{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>=0)o.write(b,0,n);return new String(o.toByteArray(),"UTF-8");}
-    private static String normalizePath(String p){p=p==null||p.trim().length()==0?"/QC45":p.trim();return p.charAt(0)=='/'?p:"/"+p;}
+    private static String normalizePath(String v){String p=v==null||v.trim().length()==0?"/QC45":v.trim();return p.charAt(0)=='/'?p:"/"+p;}
 }
