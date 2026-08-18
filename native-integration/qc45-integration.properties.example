@@ -4,14 +4,10 @@
 ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
 ocpp.username=QC45
 ocpp.password=CHANGE_ME
-
-# TLS trust for the OCPP 1.6 WSS connection.
 ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
 ocpp.tls.insecure=false
 
-# ------------------------------------------------------------
-# Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 protocol bridge
-# ------------------------------------------------------------
+# Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 bridge
 ocpp15.loopback.enabled=true
 ocpp15.loopback.bind=127.0.0.1
 ocpp15.loopback.port=9000
@@ -19,28 +15,21 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
-# Configure EVCSD itself to use:
-# centralManagementEndpointRWE=http://127.0.0.1:9000/QC45
-# centralmanagement.endpoint=http://127.0.0.1:9000/QC45
-# centralmanagement.enabled=true
-# communicationProtocol=OCPP15
-
-# ------------------------------------------------------------
-# Authenticated REST API for QC45 Monitor iOS app
-# ------------------------------------------------------------
+# Direct HTTPS API for QC45 Monitor iOS app
 remoteapi.enabled=true
 remoteapi.bind=0.0.0.0
-remoteapi.port=9080
-# Use a long random value. Do not expose port 9080 directly to the Internet;
-# use VPN or an HTTPS reverse proxy.
-remoteapi.token=CHANGE_TO_A_LONG_RANDOM_TOKEN
+remoteapi.port=9443
+remoteapi.token=CHANGE_TO_AT_LEAST_32_RANDOM_CHARACTERS
+remoteapi.tls.keyStore=/home/mobie/evcsd/qc45-api.jks
+remoteapi.tls.keyStoreType=JKS
+remoteapi.tls.keyStorePassword=CHANGE_ME_KEYSTORE_PASSWORD
+remoteapi.tls.keyPassword=CHANGE_ME_KEYSTORE_PASSWORD
+remoteapi.tls.certificateAlias=qc45-api
 
 # evcc / local load management
 modbus.port=1502
 
-# ------------------------------------------------------------
 # KOSTAL KSEM shared by LoadManager, GridFailback and Remote API
-# ------------------------------------------------------------
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
@@ -48,9 +37,7 @@ ksem.timeoutMs=1000
 ksem.legacyLowWord=true
 ksem.currentScale=0.001
 
-# ------------------------------------------------------------
 # Native load manager
-# ------------------------------------------------------------
 loadmanager.enabled=true
 loadmanager.targetA=32.0
 loadmanager.hysteresisA=0.8
@@ -61,9 +48,7 @@ loadmanager.maxAcKw=22
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
 
-# ------------------------------------------------------------
 # Independent grid failback
-# ------------------------------------------------------------
 failback.enabled=true
 failback.reduceA=34.0
 failback.reduceDelayMs=500
