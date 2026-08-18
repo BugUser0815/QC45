@@ -92,19 +92,19 @@ public final class ReflectionQC45 {
     }
 
     public void setDcBudgetKw(int kw) throws Exception {
-        kw = clamp(kw, 1, 50);
+        kw = clamp(kw, 0, 50);
         setGlobalMaxPower(kw);
         int active = activeDcConnector();
         if (active == 0) {
             setSatelliteLimit(1, kw, false);
             setSatelliteLimit(2, kw, false);
         } else {
-            setSatelliteLimit(active, kw, active == 2);
+            setSatelliteLimit(active, kw, active == 2 && kw > 0);
         }
     }
 
     public void setAcBudgetKw(int kw) throws Exception {
-        kw = clamp(kw, 1, 22);
+        kw = clamp(kw, 0, 22);
         Object conf = configuration();
         configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
         setSatelliteLimit(3, kw, false);
@@ -129,7 +129,7 @@ public final class ReflectionQC45 {
         Object sat = satellite(connector);
         Class<?> type = sat.getClass();
         type.getMethod("setMaxPower", Integer.TYPE).invoke(sat, Integer.valueOf(kw));
-        if (pushCcs) {
+        if (pushCcs && kw > 0) {
             boolean ccs = ((Boolean) type.getMethod("isCCSCharge").invoke(sat)).booleanValue();
             if (ccs) type.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
         }
