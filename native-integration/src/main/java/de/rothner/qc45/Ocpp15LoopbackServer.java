@@ -162,16 +162,14 @@ public final class Ocpp15LoopbackServer {
     }
 
     /**
-     * EFACEC's generated OCPP 1.5 JAXB classes use a qualified operation root,
-     * but the fields of idTagInfo are unqualified. This is the layout emitted by
-     * the original working SOAP stack.
+     * EFACEC treats a near-current expiryDate as already expired. ChargePoint
+     * currently returns Accepted together with an expiry timestamp at roughly
+     * the authorization instant, so the bridge deliberately forwards only the
+     * authorization status to the legacy OCPP 1.5 client.
      */
     private static String idTagInfo(String json) {
         String status=fieldString(json,"status","Accepted");
-        StringBuilder b=new StringBuilder("<idTagInfo><status>").append(escape(status)).append("</status>");
-        String expiry=fieldString(json,"expiryDate",""); if(expiry.length()>0)b.append("<expiryDate>").append(escape(expiry)).append("</expiryDate>");
-        String parent=fieldString(json,"parentIdTag",""); if(parent.length()>0)b.append("<parentIdTag>").append(escape(parent)).append("</parentIdTag>");
-        return b.append("</idTagInfo>").toString();
+        return "<idTagInfo><status>" + escape(status) + "</status></idTagInfo>";
     }
 
     private static String action16(String op){ if("bootNotification".equals(op))return"BootNotification";if("heartbeat".equals(op))return"Heartbeat";if("authorize".equals(op))return"Authorize";if("startTransaction".equals(op))return"StartTransaction";if("stopTransaction".equals(op))return"StopTransaction";if("statusNotification".equals(op))return"StatusNotification";if("meterValues".equals(op))return"MeterValues";if("firmwareStatusNotification".equals(op))return"FirmwareStatusNotification";if("diagnosticsStatusNotification".equals(op))return"DiagnosticsStatusNotification";if("dataTransfer".equals(op))return"DataTransfer";return op;}
