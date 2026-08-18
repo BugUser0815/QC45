@@ -7,7 +7,8 @@ package de.rothner.qc45;
  * Stage 2: if any phase stays above tripA long enough, or exceeds instantTripA, stop all connectors and latch.
  * Optional: trip if KSEM communication is lost for meterFailureMs.
  *
- * Latch resets only when the integration/JVM is restarted.
+ * Over-current trips stay latched until integration/JVM restart.
+ * Meter-communication trips stop once, then auto-recover after stable meter readings return.
  */
 public final class GridFailback extends Thread {
     private final ReflectionQC45 station;
@@ -25,10 +26,12 @@ public final class GridFailback extends Thread {
 
     private volatile boolean running = true;
     private volatile boolean tripped;
+    private volatile boolean meterFailureTrip;
     private long reduceSince;
     private long tripSince;
     private long lastGoodRead;
     private long lastLog;
+    private int goodReadsAfterMeterTrip;
 
     public GridFailback(ReflectionQC45 station, KsemClient meter,
                         double reduceA, long reduceDelayMs,
@@ -73,25 +76,37 @@ public final class GridFailback extends Thread {
                 lastGoodRead = now;
                 double max = c.max();
 
-                if (now - lastLog >= 5000L || max >= reduceA) {
+                if (now - lastLog >= 5000L || max >= reduceA || tripped) {
                     System.out.println("[QC45] Grid L1=" + one(c.l1) + "A L2=" + one(c.l2)
                         + "A L3=" + one(c.l3) + "A max=" + one(max) + "A"
-                        + (tripped ? " TRIPPED" : ""));
+                        + (tripped ? (meterFailureTrip ? " TRIPPED_METER" : " TRIPPED") : ""));
                     lastLog = now;
                 }
 
                 if (tripped) {
-                    enforceTrip();
+                    if (meterFailureTrip) {
+                        if (max < reduceA) {
+                            goodReadsAfterMeterTrip++;
+                            if (goodReadsAfterMeterTrip >= 5) {
+                                clearMeterTrip();
+                            }
+                        } else {
+                            goodReadsAfterMeterTrip = 0;
+                        }
+                    }
+                    // Do not repeatedly call remoteStop while tripped. The stop was
+                    // executed once when entering the trip state.
                 } else {
                     evaluate(now, max);
                 }
             } catch (Throwable e) {
+                goodReadsAfterMeterTrip = 0;
                 if (now - lastLog >= 5000L) {
                     System.err.println("[QC45] GridFailback KSEM read failed: " + e);
                     lastLog = now;
                 }
                 if (!tripped && tripOnMeterFailure && now - lastGoodRead >= meterFailureMs) {
-                    trip("KSEM communication lost for " + (now - lastGoodRead) + "ms");
+                    trip("KSEM communication lost for " + (now - lastGoodRead) + "ms", true);
                 }
             }
 
@@ -103,14 +118,14 @@ public final class GridFailback extends Thread {
 
     private void evaluate(long now, double max) throws Exception {
         if (max >= instantTripA) {
-            trip("instant phase current " + one(max) + "A >= " + one(instantTripA) + "A");
+            trip("instant phase current " + one(max) + "A >= " + one(instantTripA) + "A", false);
             return;
         }
 
         if (max >= tripA) {
             if (tripSince == 0L) tripSince = now;
             if (now - tripSince >= tripDelayMs) {
-                trip("phase current " + one(max) + "A >= " + one(tripA) + "A for " + (now - tripSince) + "ms");
+                trip("phase current " + one(max) + "A >= " + one(tripA) + "A for " + (now - tripSince) + "ms", false);
                 return;
             }
         } else {
@@ -132,14 +147,27 @@ public final class GridFailback extends Thread {
         station.setAcBudgetKw(reduceAcKw);
     }
 
-    private synchronized void trip(String reason) {
+    private synchronized void trip(String reason, boolean meterFailure) {
         if (tripped) return;
         tripped = true;
-        System.err.println("[QC45] GRID FAILBACK TRIP: " + reason);
-        enforceTrip();
+        meterFailureTrip = meterFailure;
+        goodReadsAfterMeterTrip = 0;
+        System.err.println("[QC45] GRID FAILBACK TRIP: " + reason
+            + (meterFailure ? " [auto-recoverable]" : " [latched]"));
+        enforceTripOnce();
     }
 
-    private void enforceTrip() {
+    private synchronized void clearMeterTrip() {
+        if (!tripped || !meterFailureTrip) return;
+        tripped = false;
+        meterFailureTrip = false;
+        goodReadsAfterMeterTrip = 0;
+        reduceSince = 0L;
+        tripSince = 0L;
+        System.out.println("[QC45] GRID FAILBACK RECOVERED: KSEM communication stable again");
+    }
+
+    private void enforceTripOnce() {
         try { station.setDcBudgetKw(reduceDcKw); } catch (Throwable e) {
             System.err.println("[QC45] failback DC reduction failed: " + e);
         }
