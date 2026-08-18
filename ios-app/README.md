@@ -63,28 +63,36 @@ Copy that exact 64-character value into the iOS app settings.
 
 ## Router / public access
 
-Recommended NAT rule:
+NAT rule:
 
 ```text
-WAN TCP 443 -> 10.0.0.156 TCP 9443
+WAN TCP 38443 -> 10.0.0.156 TCP 9443
 ```
 
-With `dahoam.sgs-elektro.de` pointing to the public WAN address, the app URL can remain:
+With `dahoam.sgs-elektro.de` pointing to the public WAN address, use this app URL:
 
 ```text
-https://dahoam.sgs-elektro.de
+https://dahoam.sgs-elektro.de:38443
 ```
 
 Do not expose the internal OCPP bridge, Tomcat or Modbus ports.
 
 ## Test
 
-Because the QC45 certificate is self-signed, normal curl validation will fail unless the certificate is supplied. For a transport-only test from a trusted admin machine:
+Local transport test:
 
 ```bash
 curl -k \
   -H 'Authorization: Bearer PUT_AT_LEAST_32_RANDOM_CHARACTERS_HERE' \
   https://10.0.0.156:9443/api/status
+```
+
+Public transport test:
+
+```bash
+curl -k \
+  -H 'Authorization: Bearer PUT_AT_LEAST_32_RANDOM_CHARACTERS_HERE' \
+  https://dahoam.sgs-elektro.de:38443/api/status
 ```
 
 The iOS app does not use `-k` semantics: it accepts the connection only when the SHA-256 certificate pin exactly matches.
