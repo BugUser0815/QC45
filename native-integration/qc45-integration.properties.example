@@ -10,6 +10,16 @@ ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
 ocpp.tls.insecure=false
 
 # ------------------------------------------------------------
+# Proven local QC45 command API
+# ------------------------------------------------------------
+# RemoteStart/RemoteStop from the OCPP 1.6 backend are deliberately sent
+# through the same qc45api JSP layer that the former Raspberry bridge used.
+qc45.api.baseUrl=http://127.0.0.1
+qc45.api.startPath=/qc45api/start.jsp
+qc45.api.stopPath=/qc45api/stop.jsp
+qc45.api.timeoutMs=5000
+
+# ------------------------------------------------------------
 # Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 protocol bridge
 # ------------------------------------------------------------
 ocpp15.loopback.enabled=true
