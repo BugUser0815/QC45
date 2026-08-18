@@ -10,12 +10,12 @@ public final class Integration {
     private final ReflectionQC45 station;
     private final ModbusServer modbus;
     private final OcppBridgeClient ocppBridge;
-    private final Ocpp15LoopbackServer ocpp15Bridge;
+    private final Ocpp15LegacyBridgeServer ocpp15Bridge;
     private final LoadManager loadManager;
     private final GridFailback failback;
 
     private Integration(ReflectionQC45 station, ModbusServer modbus, OcppBridgeClient ocppBridge,
-                        Ocpp15LoopbackServer ocpp15Bridge,
+                        Ocpp15LegacyBridgeServer ocpp15Bridge,
                         LoadManager loadManager, GridFailback failback) {
         this.station = station;
         this.modbus = modbus;
@@ -41,9 +41,9 @@ public final class Integration {
 
         OcppBridgeClient ocppBridge = new OcppBridgeClient(station, url, user, password, caFile, insecureTls);
 
-        Ocpp15LoopbackServer ocpp15Bridge = null;
+        Ocpp15LegacyBridgeServer ocpp15Bridge = null;
         if (bool(p, "ocpp15.loopback.enabled", true)) {
-            ocpp15Bridge = new Ocpp15LoopbackServer(
+            ocpp15Bridge = new Ocpp15LegacyBridgeServer(
                 p.getProperty("ocpp15.loopback.bind", "127.0.0.1").trim(),
                 integer(p, "ocpp15.loopback.port", 9000),
                 p.getProperty("ocpp15.loopback.path", "/QC45").trim(),
@@ -97,7 +97,7 @@ public final class Integration {
         modbus.start();
         if (loadManager != null) loadManager.start();
         if (failback != null) failback.start();
-        System.out.println("[QC45] native integration started in OCPP 1.5 -> 1.6 bridge mode");
+        System.out.println("[QC45] native integration started with original Python-compatible OCPP15 SOAP bridge");
         return integration;
     }
 
