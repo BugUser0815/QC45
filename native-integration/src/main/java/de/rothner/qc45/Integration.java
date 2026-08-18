@@ -27,14 +27,8 @@ public final class Integration {
 
     public static Integration start() throws Exception {
         Properties p = loadProperties();
-
-        String apiBaseUrl = p.getProperty("qc45.api.baseUrl", "http://127.0.0.1").trim();
-        String apiStartPath = p.getProperty("qc45.api.startPath", "/qc45api/start.jsp").trim();
-        String apiStopPath = p.getProperty("qc45.api.stopPath", "/qc45api/stop.jsp").trim();
-        int apiTimeoutMs = integer(p, "qc45.api.timeoutMs", 5000);
-        ReflectionQC45 station = new ReflectionQC45(apiBaseUrl, apiStartPath, apiStopPath, apiTimeoutMs);
-        System.out.println("[QC45] command API base=" + apiBaseUrl
-            + " start=" + apiStartPath + " stop=" + apiStopPath);
+        ReflectionQC45 station = new ReflectionQC45();
+        System.out.println("[QC45] native EVCSD control enabled (no qc45api HTTP dependency)");
 
         int modbusPort = integer(p, "modbus.port", 1502);
         ModbusServer modbus = new ModbusServer(station, modbusPort);
