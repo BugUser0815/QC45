@@ -17,7 +17,6 @@ ocpp15.loopback.bind=127.0.0.1
 ocpp15.loopback.port=9000
 ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
-# Maximum time the SOAP request waits for ChargePoint's OCPP 1.6 response.
 ocpp15.bridge.timeoutMs=10000
 
 # Configure EVCSD itself to use:
@@ -26,15 +25,21 @@ ocpp15.bridge.timeoutMs=10000
 # centralmanagement.enabled=true
 # communicationProtocol=OCPP15
 
-# RemoteStart/RemoteStop from OCPP 1.6 are executed natively inside the
-# EVCSD JVM using the exact same NmsListenerImpl logic as the proven
-# qc45api/start.jsp and qc45api/stop.jsp implementation. No HTTP API is needed.
+# ------------------------------------------------------------
+# Authenticated REST API for QC45 Monitor iOS app
+# ------------------------------------------------------------
+remoteapi.enabled=true
+remoteapi.bind=0.0.0.0
+remoteapi.port=9080
+# Use a long random value. Do not expose port 9080 directly to the Internet;
+# use VPN or an HTTPS reverse proxy.
+remoteapi.token=CHANGE_TO_A_LONG_RANDOM_TOKEN
 
 # evcc / local load management
 modbus.port=1502
 
 # ------------------------------------------------------------
-# KOSTAL KSEM shared by LoadManager and GridFailback
+# KOSTAL KSEM shared by LoadManager, GridFailback and Remote API
 # ------------------------------------------------------------
 ksem.host=10.0.0.70
 ksem.port=502
@@ -68,5 +73,6 @@ failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=38.0
 failback.intervalMs=200
+# KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
 failback.tripOnMeterFailure=true
 failback.meterFailureMs=3000
