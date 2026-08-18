@@ -4,25 +4,21 @@
 ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
 ocpp.username=QC45
 ocpp.password=CHANGE_ME
-ocpp.serial=QC45
-
-# Used only if EVCSD exposes no RFID/user value for a locally started session.
-ocpp.defaultIdTag=LOCAL
 
 # TLS trust for the OCPP 1.6 WSS connection.
-# Preferred production setup: point to a PEM file containing the issuing/root CA.
 ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
-# Test only. If true, ALL server certificates are accepted. Never leave enabled.
 ocpp.tls.insecure=false
 
 # ------------------------------------------------------------
-# Legacy EVCSD OCPP 1.5 SOAP loopback compatibility server
+# Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 protocol bridge
 # ------------------------------------------------------------
 ocpp15.loopback.enabled=true
 ocpp15.loopback.bind=127.0.0.1
 ocpp15.loopback.port=9000
 ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
+# Maximum time the SOAP request waits for ChargePoint's OCPP 1.6 response.
+ocpp15.bridge.timeoutMs=10000
 
 # Configure EVCSD itself to use:
 # centralManagementEndpointRWE=http://127.0.0.1:9000/QC45
@@ -40,11 +36,7 @@ ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
 ksem.timeoutMs=1000
-
-# The old proven Python reader used registers[1] from the two-register
-# KSEM current values at 60/100/140. Keep this true initially.
 ksem.legacyLowWord=true
-# Raw KSEM current -> A. Default assumes raw mA.
 ksem.currentScale=0.001
 
 # ------------------------------------------------------------
@@ -64,23 +56,13 @@ loadmanager.intervalMs=1000
 # Independent grid failback
 # ------------------------------------------------------------
 failback.enabled=true
-
-# Stage 1: force both DC and AC budgets to minimum.
 failback.reduceA=34.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
-
-# Stage 2: latched stop of connectors 1, 2 and 3.
 failback.tripA=35.0
 failback.tripDelayMs=250
-# Above this value trip immediately.
 failback.instantTripA=38.0
-
-# Polling interval. One cycle reads L1/L2/L3 directly from KSEM.
 failback.intervalMs=200
-
-# A failback which cannot see the meter is not a failback.
-# If enabled, KSEM communication loss also causes a latched trip.
 failback.tripOnMeterFailure=true
 failback.meterFailureMs=3000
