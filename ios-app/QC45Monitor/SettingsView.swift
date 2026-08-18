@@ -8,16 +8,19 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Ladestation") {
-                    TextField("API URL", text: $settings.baseURL)
+                    TextField("HTTPS API URL", text: $settings.baseURL)
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
                     SecureField("Bearer Token", text: $settings.token)
                         .textInputAutocapitalization(.never)
-                }
-                Section("Beispiel") {
-                    Text("http://10.0.0.156:9080")
+                    TextField("SHA-256 Zertifikat-Pin", text: $settings.certificatePin)
+                        .textInputAutocapitalization(.characters)
                         .font(.caption.monospaced())
-                    Text("Für Zugriff aus dem Internet VPN oder HTTPS-Reverse-Proxy verwenden.")
+                }
+                Section("Direktzugriff") {
+                    Text("https://dahoam.sgs-elektro.de")
+                        .font(.caption.monospaced())
+                    Text("Die App akzeptiert nur das exakt gepinnte Serverzertifikat. Ein anderes Zertifikat wird abgelehnt.")
                         .font(.footnote)
                 }
             }
