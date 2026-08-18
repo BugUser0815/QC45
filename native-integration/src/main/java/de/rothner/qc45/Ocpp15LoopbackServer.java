@@ -20,11 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * Minimal OCPP 1.5 SOAP loopback central system for the legacy EVCSD client.
- * Includes WS-Addressing response headers because the original EFACEC/JAX-WS
- * stack uses message correlation for Authorize and transaction responses.
- */
+/** Minimal OCPP 1.5 SOAP loopback central system for the legacy EVCSD client. */
 public final class Ocpp15LoopbackServer {
     private static final String NS = "urn://Ocpp/Cs/2012/06/";
     private static final String WSA = "http://www.w3.org/2005/08/addressing";
@@ -75,30 +71,37 @@ public final class Ocpp15LoopbackServer {
                 String requestAction = elementText(request, "Action");
                 String idTag = elementText(request, "idTag");
 
-                if ("authorize".equals(operation)) {
-                    System.out.println("[QC45] OCPP15 Authorize idTag=" + idTag + " -> Accepted");
-                } else if ("startTransaction".equals(operation)) {
-                    System.out.println("[QC45] OCPP15 StartTransaction idTag=" + idTag + " -> Accepted");
-                } else {
-                    System.out.println("[QC45] OCPP15 request op=" + operation
-                        + (requestMessageId.length() > 0 ? " messageId=" + requestMessageId : ""));
-                }
-
                 String body = responseBody(operation);
                 String responseAction = responseAction(operation, requestAction);
-                String response = envelope(body, responseAction, requestMessageId);
+                String responseMessageId = "urn:uuid:" + UUID.randomUUID().toString();
+                String response = envelope(body, responseAction, requestMessageId, responseMessageId);
                 byte[] bytes = response.getBytes("UTF-8");
+
+                if ("authorize".equals(operation)) {
+                    System.out.println("[QC45] OCPP15 Authorize idTag=" + idTag + " -> Accepted"
+                        + " reqAction=" + requestAction
+                        + " reqMessageId=" + requestMessageId
+                        + " respAction=" + responseAction
+                        + " relatesTo=" + requestMessageId);
+                } else if ("startTransaction".equals(operation)) {
+                    System.out.println("[QC45] OCPP15 StartTransaction idTag=" + idTag + " -> Accepted"
+                        + " reqAction=" + requestAction
+                        + " reqMessageId=" + requestMessageId
+                        + " respAction=" + responseAction
+                        + " relatesTo=" + requestMessageId);
+                } else {
+                    System.out.println("[QC45] OCPP15 request op=" + operation
+                        + " reqAction=" + requestAction
+                        + " reqMessageId=" + requestMessageId
+                        + " respAction=" + responseAction);
+                }
 
                 Headers headers = exchange.getResponseHeaders();
                 headers.set("Content-Type", "application/soap+xml; charset=utf-8; action=\"" + responseAction + "\"");
                 headers.set("Cache-Control", "no-store");
                 exchange.sendResponseHeaders(200, bytes.length);
                 OutputStream out = exchange.getResponseBody();
-                try {
-                    out.write(bytes);
-                } finally {
-                    out.close();
-                }
+                try { out.write(bytes); } finally { out.close(); }
 
                 if (operation.length() == 0) {
                     System.err.println("[QC45] OCPP15 loopback: unknown SOAP operation");
@@ -120,26 +123,18 @@ public final class Ocpp15LoopbackServer {
                 + tagValue("heartbeatInterval", String.valueOf(heartbeatInterval))
                 + tagValue("status", "Accepted"));
         }
-        if ("heartbeat".equals(op)) {
-            return tag("heartbeatResponse", tagValue("currentTime", now()));
-        }
-        if ("authorize".equals(op)) {
-            return tag("authorizeResponse", idTagInfo());
-        }
+        if ("heartbeat".equals(op)) return tag("heartbeatResponse", tagValue("currentTime", now()));
+        if ("authorize".equals(op)) return tag("authorizeResponse", idTagInfo());
         if ("startTransaction".equals(op)) {
             int tx = transactionIds.incrementAndGet();
-            return tag("startTransactionResponse",
-                tagValue("transactionId", String.valueOf(tx)) + idTagInfo());
+            return tag("startTransactionResponse", tagValue("transactionId", String.valueOf(tx)) + idTagInfo());
         }
-        if ("stopTransaction".equals(op)) {
-            return tag("stopTransactionResponse", idTagInfo());
-        }
+        if ("stopTransaction".equals(op)) return tag("stopTransactionResponse", idTagInfo());
         if ("statusNotification".equals(op)) return tag("statusNotificationResponse", "");
         if ("meterValues".equals(op)) return tag("meterValuesResponse", "");
         if ("firmwareStatusNotification".equals(op)) return tag("firmwareStatusNotificationResponse", "");
         if ("diagnosticsStatusNotification".equals(op)) return tag("diagnosticsStatusNotificationResponse", "");
         if ("dataTransfer".equals(op)) return tag("dataTransferResponse", tagValue("status", "Accepted"));
-
         if (op.length() > 0) return tag(op + "Response", "");
         return tag("heartbeatResponse", tagValue("currentTime", now()));
     }
@@ -154,7 +149,6 @@ public final class Ocpp15LoopbackServer {
             String op = operations[i];
             if (containsElement(xml, op)) return op;
         }
-
         int body = indexOfIgnoreCase(xml, ":Body");
         if (body < 0) body = indexOfIgnoreCase(xml, "<Body");
         if (body >= 0) {
@@ -214,21 +208,19 @@ public final class Ocpp15LoopbackServer {
         return "<cs:idTagInfo><cs:status>Accepted</cs:status></cs:idTagInfo>";
     }
 
-    private static String envelope(String body, String action, String relatesTo) {
+    private static String envelope(String body, String action, String relatesTo, String messageId) {
         StringBuilder h = new StringBuilder();
         h.append("<s:Header>");
         h.append("<wsa:Action s:mustUnderstand=\"1\">").append(escape(action)).append("</wsa:Action>");
-        h.append("<wsa:MessageID>urn:uuid:").append(UUID.randomUUID().toString()).append("</wsa:MessageID>");
+        h.append("<wsa:MessageID>").append(escape(messageId)).append("</wsa:MessageID>");
         if (relatesTo != null && relatesTo.length() > 0) {
             h.append("<wsa:RelatesTo>").append(escape(relatesTo)).append("</wsa:RelatesTo>");
         }
         h.append("</s:Header>");
-
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
             + "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\""
             + " xmlns:wsa=\"" + WSA + "\" xmlns:cs=\"" + NS + "\">"
-            + h.toString()
-            + "<s:Body>" + body + "</s:Body></s:Envelope>";
+            + h.toString() + "<s:Body>" + body + "</s:Body></s:Envelope>";
     }
 
     private static String tag(String name, String content) {
