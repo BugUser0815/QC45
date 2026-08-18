@@ -140,15 +140,74 @@ public final class ReflectionQC45 {
         }
     }
 
+    /**
+     * Start through the same EVCSD path used by the legacy NMS implementation.
+     * Older QC45 builds expose the remote-start setter either as
+     * setRemoteStarted(boolean) or as a no-argument setRemoteStarted().
+     */
     public void remoteStart(String idTag, int connector) throws Exception {
+        boolean before = false;
+        try { before = remoteStarted(); } catch (Throwable ignored) {}
+        System.out.println("[QC45] EVCSD RemoteStart request connector=" + connector
+            + " idTag=" + idTag + " remoteStarted(before)=" + before);
+
+        boolean stateSetterFound = setRemoteStartedState(true);
+        System.out.println("[QC45] EVCSD remoteStarted setter found=" + stateSetterFound);
+
         Object listener = findNmsListener();
         Method m = listener.getClass().getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
         m.invoke(listener, "", idTag, Integer.valueOf(connector));
+
+        boolean after = false;
+        try { after = remoteStarted(); } catch (Throwable ignored) {}
+        System.out.println("[QC45] EVCSD RemoteStart invoked connector=" + connector
+            + " remoteStarted(after)=" + after);
+
+        if (stateSetterFound && !after) {
+            throw new IllegalStateException("EVCSD remoteStarted state did not become true");
+        }
     }
 
     public void remoteStop(int connector) throws Exception {
         Object sat = satellite(connector);
         sat.getClass().getMethod("stopCharging").invoke(sat);
+    }
+
+    private boolean setRemoteStartedState(boolean value) throws Exception {
+        Object cm = central();
+
+        try {
+            Method m = centralClass.getMethod("setRemoteStarted", Boolean.TYPE);
+            m.invoke(cm, Boolean.valueOf(value));
+            return true;
+        } catch (NoSuchMethodException ignored) {
+        }
+
+        if (value) {
+            try {
+                Method m = centralClass.getMethod("setRemoteStarted");
+                m.invoke(cm);
+                return true;
+            } catch (NoSuchMethodException ignored) {
+            }
+        }
+
+        // Last-resort compatibility with builds that expose only the backing field.
+        Class<?> t = cm.getClass();
+        while (t != null) {
+            try {
+                Field f = t.getDeclaredField("remoteStarted");
+                if (f.getType() == Boolean.TYPE || f.getType() == Boolean.class) {
+                    f.setAccessible(true);
+                    if (f.getType() == Boolean.TYPE) f.setBoolean(cm, value);
+                    else f.set(cm, Boolean.valueOf(value));
+                    return true;
+                }
+            } catch (NoSuchFieldException ignored) {
+            }
+            t = t.getSuperclass();
+        }
+        return false;
     }
 
     private Object findNmsListener() throws Exception {
