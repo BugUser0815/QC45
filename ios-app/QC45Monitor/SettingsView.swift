@@ -18,9 +18,9 @@ struct SettingsView: View {
                         .font(.caption.monospaced())
                 }
                 Section("Direktzugriff") {
-                    Text("https://dahoam.sgs-elektro.de")
+                    Text("https://dahoam.sgs-elektro.de:38443")
                         .font(.caption.monospaced())
-                    Text("Die App akzeptiert nur das exakt gepinnte Serverzertifikat. Ein anderes Zertifikat wird abgelehnt.")
+                    Text("Extern: TCP 38443 → QC45 10.0.0.156:9443. Die App akzeptiert nur das exakt gepinnte Serverzertifikat.")
                         .font(.footnote)
                 }
             }
