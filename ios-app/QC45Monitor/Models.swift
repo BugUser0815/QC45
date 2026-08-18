@@ -22,7 +22,7 @@ final class AppSettings: ObservableObject {
     @Published var certificatePin: String { didSet { UserDefaults.standard.set(certificatePin, forKey: "certificatePin") } }
 
     init() {
-        baseURL = UserDefaults.standard.string(forKey: "baseURL") ?? "https://dahoam.sgs-elektro.de"
+        baseURL = UserDefaults.standard.string(forKey: "baseURL") ?? "https://dahoam.sgs-elektro.de:38443"
         token = Keychain.load(key: "remoteApiToken") ?? ""
         certificatePin = UserDefaults.standard.string(forKey: "certificatePin") ?? ""
     }
