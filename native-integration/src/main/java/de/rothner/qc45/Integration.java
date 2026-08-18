@@ -32,7 +32,7 @@ public final class Integration {
         Ocpp15LegacyBridgeServer ocpp15Bridge=null;
         if(bool(p,"ocpp15.loopback.enabled",true)) ocpp15Bridge=new Ocpp15LegacyBridgeServer(p.getProperty("ocpp15.loopback.bind","127.0.0.1").trim(),integer(p,"ocpp15.loopback.port",9000),p.getProperty("ocpp15.loopback.path","/QC45").trim(),integer(p,"ocpp15.loopback.heartbeatInterval",60),integer(p,"ocpp15.bridge.timeoutMs",10000),ocppBridge);
 
-        boolean loadManagerEnabled=bool(p,"loadmanager.enabled",true),failbackEnabled=bool(p,"failback.enabled",true),remoteApiEnabled=bool(p,"remoteapi.enabled",true);
+        boolean loadManagerEnabled=bool(p,"loadmanager.enabled",true),failbackEnabled=bool(p,"failback.enabled",true),remoteApiEnabled=bool(p,"remoteapi.enabled",false);
         KsemClient meter=null;
         if(loadManagerEnabled||failbackEnabled||remoteApiEnabled) meter=new KsemClient(p.getProperty("ksem.host","10.0.0.70").trim(),integer(p,"ksem.port",502),integer(p,"ksem.unit",71),integer(p,"ksem.timeoutMs",1000),decimal(p,"ksem.currentScale",0.001d),bool(p,"ksem.legacyLowWord",true));
 
