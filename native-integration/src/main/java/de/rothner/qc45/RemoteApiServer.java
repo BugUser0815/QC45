@@ -3,19 +3,30 @@ package de.rothner.qc45;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsExchange;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
+import java.security.KeyStore;
+import java.security.MessageDigest;
+import java.security.cert.Certificate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
 
-/** Small authenticated JSON API for the iOS monitor app. Put HTTPS/VPN in front of it for remote access. */
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+
+/** Authenticated HTTPS JSON API for the pinned iOS monitor app. */
 public final class RemoteApiServer {
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -24,10 +35,17 @@ public final class RemoteApiServer {
     private final String bind;
     private final int port;
     private final String token;
-    private HttpServer server;
+    private final String keyStoreFile;
+    private final String keyStoreType;
+    private final String keyStorePassword;
+    private final String keyPassword;
+    private final String certificateAlias;
+    private HttpsServer server;
 
     public RemoteApiServer(ReflectionQC45 station, KsemClient meter, OcppBridgeClient ocpp,
-                           GridFailback failback, String bind, int port, String token) {
+                           GridFailback failback, String bind, int port, String token,
+                           String keyStoreFile, String keyStoreType, String keyStorePassword,
+                           String keyPassword, String certificateAlias) {
         this.station = station;
         this.meter = meter;
         this.ocpp = ocpp;
@@ -35,12 +53,36 @@ public final class RemoteApiServer {
         this.bind = bind;
         this.port = port;
         this.token = token == null ? "" : token.trim();
+        this.keyStoreFile = keyStoreFile == null ? "" : keyStoreFile.trim();
+        this.keyStoreType = keyStoreType == null || keyStoreType.trim().length() == 0 ? "JKS" : keyStoreType.trim();
+        this.keyStorePassword = keyStorePassword == null ? "" : keyStorePassword;
+        this.keyPassword = keyPassword == null || keyPassword.length() == 0 ? this.keyStorePassword : keyPassword;
+        this.certificateAlias = certificateAlias == null || certificateAlias.trim().length() == 0 ? "qc45-api" : certificateAlias.trim();
     }
 
     public synchronized void start() throws Exception {
         if (server != null) return;
-        if (token.length() < 16) throw new IllegalArgumentException("remoteapi.token must contain at least 16 characters");
-        HttpServer s = HttpServer.create(new InetSocketAddress(InetAddress.getByName(bind), port), 16);
+        if (token.length() < 32) throw new IllegalArgumentException("remoteapi.token must contain at least 32 characters");
+        if (keyStoreFile.length() == 0) throw new IllegalArgumentException("remoteapi.tls.keyStore is required");
+        if (keyStorePassword.length() == 0) throw new IllegalArgumentException("remoteapi.tls.keyStorePassword is required");
+
+        final KeyStore ks = KeyStore.getInstance(keyStoreType);
+        InputStream in = new FileInputStream(keyStoreFile);
+        try { ks.load(in, keyStorePassword.toCharArray()); } finally { in.close(); }
+
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(ks, keyPassword.toCharArray());
+        final SSLContext ssl = SSLContext.getInstance("TLSv1.2");
+        ssl.init(kmf.getKeyManagers(), null, null);
+
+        HttpsServer s = HttpsServer.create(new InetSocketAddress(InetAddress.getByName(bind), port), 16);
+        s.setHttpsConfigurator(new HttpsConfigurator(ssl) {
+            public void configure(HttpsParameters params) {
+                SSLParameters p = getSSLContext().getDefaultSSLParameters();
+                p.setProtocols(new String[] { "TLSv1.2" });
+                params.setSSLParameters(p);
+            }
+        });
         s.createContext("/api/status", new Handler("status"));
         s.createContext("/api/start", new Handler("start"));
         s.createContext("/api/stop", new Handler("stop"));
@@ -48,11 +90,16 @@ public final class RemoteApiServer {
         s.setExecutor(Executors.newCachedThreadPool());
         s.start();
         server = s;
-        System.out.println("[QC45] Remote API listening on http://" + bind + ":" + port + "/api");
+
+        Certificate cert = ks.getCertificate(certificateAlias);
+        if (cert == null) throw new IllegalStateException("Certificate alias not found in keystore: " + certificateAlias);
+        String pin = sha256Hex(cert.getEncoded());
+        System.out.println("[QC45] Remote API listening on https://" + bind + ":" + port + "/api TLSv1.2");
+        System.out.println("[QC45] Remote API certificate SHA-256 pin=" + pin);
     }
 
     public synchronized void shutdown() {
-        HttpServer s = server; server = null;
+        HttpsServer s = server; server = null;
         if (s != null) s.stop(0);
         System.out.println("[QC45] Remote API stopped");
     }
@@ -63,6 +110,7 @@ public final class RemoteApiServer {
 
         public void handle(HttpExchange e) {
             try {
+                if (!(e instanceof HttpsExchange)) { json(e, 426, "{\"error\":\"https_required\"}"); return; }
                 if (!authorized(e)) { json(e, 401, "{\"error\":\"unauthorized\"}"); return; }
                 if ("health".equals(operation)) { json(e, 200, "{\"ok\":true}"); return; }
                 if ("status".equals(operation)) {
@@ -126,18 +174,19 @@ public final class RemoteApiServer {
         return b.toString();
     }
 
-    private boolean authorized(HttpExchange e) {
+    private boolean authorized(HttpExchange e) throws Exception {
         String auth = e.getRequestHeaders().getFirst("Authorization");
-        return auth != null && auth.equals("Bearer " + token);
+        if (auth == null) return false;
+        byte[] a = auth.getBytes("UTF-8");
+        byte[] b = ("Bearer " + token).getBytes("UTF-8");
+        return MessageDigest.isEqual(a, b);
     }
 
     private static Map<String,String> params(HttpExchange e) throws Exception {
         Map<String,String> out = new LinkedHashMap<String,String>();
         parseQuery(out, e.getRequestURI().getRawQuery());
         String ct=e.getRequestHeaders().getFirst("Content-Type");
-        if (ct != null && ct.toLowerCase().indexOf("application/x-www-form-urlencoded") >= 0) {
-            parseQuery(out, read(e.getRequestBody()));
-        }
+        if (ct != null && ct.toLowerCase().indexOf("application/x-www-form-urlencoded") >= 0) parseQuery(out, read(e.getRequestBody()));
         return out;
     }
 
@@ -147,7 +196,8 @@ public final class RemoteApiServer {
     }
     private static int integer(String v,int d){try{return v==null?d:Integer.parseInt(v);}catch(Exception e){return d;}}
     private static String read(InputStream in)throws Exception{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]buf=new byte[1024];int n;while((n=in.read(buf))>=0)o.write(buf,0,n);return new String(o.toByteArray(),"UTF-8");}
-    private static void json(HttpExchange e,int code,String body)throws Exception{byte[]data=body.getBytes("UTF-8");Headers h=e.getResponseHeaders();h.set("Content-Type","application/json; charset=utf-8");h.set("Cache-Control","no-store");e.sendResponseHeaders(code,data.length);OutputStream out=e.getResponseBody();try{out.write(data);}finally{out.close();}}
+    private static void json(HttpExchange e,int code,String body)throws Exception{byte[]data=body.getBytes("UTF-8");Headers h=e.getResponseHeaders();h.set("Content-Type","application/json; charset=utf-8");h.set("Cache-Control","no-store");h.set("X-Content-Type-Options","nosniff");e.sendResponseHeaders(code,data.length);OutputStream out=e.getResponseBody();try{out.write(data);}finally{out.close();}}
     private static String j(String s){return s==null?"":s.replace("\\","\\\\").replace("\"","\\\"").replace("\r","\\r").replace("\n","\\n");}
     private static String one(double d){return String.format(java.util.Locale.US,"%.3f",Double.valueOf(d));}
+    private static String sha256Hex(byte[] data)throws Exception{byte[]d=MessageDigest.getInstance("SHA-256").digest(data);StringBuilder b=new StringBuilder();for(int i=0;i<d.length;i++){int v=d[i]&255;if(v<16)b.append('0');b.append(Integer.toHexString(v));}return b.toString().toUpperCase(java.util.Locale.US);}
 }
