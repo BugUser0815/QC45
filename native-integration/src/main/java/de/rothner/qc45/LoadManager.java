@@ -8,6 +8,8 @@ package de.rothner.qc45;
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
+    private static final int SAFE_DC_RAMP_UP_KW = 1;
+    private static final long DC_SETTLE_MS = 3000L;
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -26,6 +28,7 @@ public final class LoadManager extends Thread {
     private boolean prevAcActive;
     private int prevDcConnector;
     private long lastLog;
+    private long lastDcIncreaseMs;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
                        double targetA, double failbackGuardA, double hysteresisA,
@@ -54,7 +57,8 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started target=" + one(targetA)
-            + "A setter=native diagnostics=full ccs-current=live-voltage");
+            + "A setter=native diagnostics=full ccs-current=live-voltage"
+            + " dc-ramp=" + effectiveDcRampUpKw() + "kW dc-settle=" + DC_SETTLE_MS + "ms");
 
         try {
             setLimitNative(1, minDcKw, "startup");
@@ -77,7 +81,12 @@ public final class LoadManager extends Thread {
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
                     dumpState("BEFORE-START", active, -1, -1, -1, "WRITE=yes session-start");
-                    if (newDc) setLimitNative(active.dcConnector, minDcKw, "session-start-dc");
+                    if (newDc) {
+                        setLimitNative(active.dcConnector, minDcKw, "session-start-dc");
+                        // Treat the initial minimum as the first DC step. Let the vehicle
+                        // and charger settle before allowing any upward regulation.
+                        lastDcIncreaseMs = now;
+                    }
                     if (newAc) setLimitNative(3, minAcKw, "session-start-ac");
                     dumpState("AFTER-START", active, -1, -1, -1, "WRITE=done session-start");
                     prevDcActive = active.dc;
@@ -93,6 +102,7 @@ public final class LoadManager extends Thread {
                 boolean sessionEnded = false;
                 if (!active.dc && prevDcActive) {
                     if (prevDcConnector > 0) setLimitNative(prevDcConnector, minDcKw, "session-end-dc");
+                    lastDcIncreaseMs = 0L;
                     sessionEnded = true;
                 }
                 if (!active.ac && prevAcActive) {
@@ -145,18 +155,36 @@ public final class LoadManager extends Thread {
                 if (Math.abs(headroomA) < hysteresisA) {
                     totalTargetKw = Math.max(minTotalKw, currentTotalLimitKw);
                 } else if (requestedTotalKw > currentTotalLimitKw) {
-                    totalTargetKw = Math.min(requestedTotalKw, currentTotalLimitKw + rampUpKwPerLoop);
+                    int ramp = active.dc ? effectiveDcRampUpKw() : rampUpKwPerLoop;
+                    totalTargetKw = Math.min(requestedTotalKw, currentTotalLimitKw + ramp);
                 } else {
+                    // Reductions are intentionally never delayed.
                     totalTargetKw = requestedTotalKw;
                 }
                 totalTargetKw = clamp(totalTargetKw, minTotalKw, maxTotalKw);
 
                 Targets targets = allocateFromActual(active, totalTargetKw, actualDcKw, actualAcKw);
 
+                boolean dcSettling = false;
+                long settleRemainingMs = 0L;
+                if (active.dc && targets.dcKw > reportedDcLimitKw && lastDcIncreaseMs > 0L) {
+                    long elapsed = now - lastDcIncreaseMs;
+                    if (elapsed < DC_SETTLE_MS) {
+                        dcSettling = true;
+                        settleRemainingMs = DC_SETTLE_MS - elapsed;
+                        // Hold only the upward DC movement. AC and every downward move
+                        // remain available immediately. The held value also feeds the
+                        // CCS current refresh below, so current cannot run ahead of kW.
+                        targets = new Targets(reportedDcLimitKw, targets.acKw);
+                        totalTargetKw = targets.dcKw + targets.acKw;
+                    }
+                }
+
                 boolean writeDc = active.dc && targets.dcKw != reportedDcLimitKw;
                 boolean writeAc = active.ac && targets.acKw != reportedAcLimitKw;
                 dumpState("DECISION", active, targets.dcKw, targets.acKw, totalTargetKw,
                     "WRITE-DC=" + yesno(writeDc) + " WRITE-AC=" + yesno(writeAc)
+                    + (dcSettling ? " DC-SETTLING remaining=" + settleRemainingMs + "ms" : "")
                     + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
                     + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
                     + " headroom=" + one(headroomA) + "A requestedRaw=" + one(requestedRawKw) + "kW");
@@ -165,6 +193,11 @@ public final class LoadManager extends Thread {
                 if (writeDc) {
                     setLimitNative(active.dcConnector, targets.dcKw,
                         "regulation-dc reported=" + reportedDcLimitKw + " target=" + targets.dcKw);
+                    if (targets.dcKw > reportedDcLimitKw) {
+                        lastDcIncreaseMs = now;
+                        System.out.println("[QC45] LoadManager DC-SETTLE armed target=" + targets.dcKw
+                            + "kW until=" + (now + DC_SETTLE_MS) + " (+" + DC_SETTLE_MS + "ms)");
+                    }
                     changed = true;
                 }
                 if (writeAc) {
@@ -175,22 +208,23 @@ public final class LoadManager extends Thread {
 
                 // Even with a constant kW target, the EV battery voltage changes during
                 // charging. Keep quickChargeMaxCurrent synchronized with P/U every loop.
-                // A DC kW write already performs this refresh, so avoid sending twice.
+                // During settling, targets.dcKw is deliberately the held reported value.
                 if (active.dc && active.dcConnector == 2 && !writeDc) {
                     try {
                         int amps = station.refreshQuickChargeCurrentForPower(2, targets.dcKw);
                         System.out.println("[QC45] LoadManager CCS-CURRENT-REFRESH target="
-                            + targets.dcKw + "kW current=" + amps + "A");
+                            + targets.dcKw + "kW current=" + amps + "A"
+                            + (dcSettling ? " DC-SETTLING" : ""));
                     } catch (Throwable e) {
                         System.err.println("[QC45] LoadManager CCS-CURRENT-REFRESH failed: " + e);
                     }
                 }
 
                 dumpState("AFTER-DECISION", active, targets.dcKw, targets.acKw, totalTargetKw,
-                    changed ? "WRITE=performed" : "WRITE=no targets already reported");
+                    changed ? "WRITE=performed" : dcSettling ? "WRITE=no dc settling" : "WRITE=no targets already reported");
 
                 log(now, currents, criticalA, active, headroomA,
-                    (changed ? "SET-NATIVE" : "HOLD")
+                    (changed ? "SET-NATIVE" : dcSettling ? "DC-SETTLING" : "HOLD")
                     + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
                     + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
                     + " targetDC=" + targets.dcKw + " targetAC=" + targets.acKw
@@ -207,6 +241,10 @@ public final class LoadManager extends Thread {
         }
 
         System.out.println("[QC45] LoadManager stopped");
+    }
+
+    private int effectiveDcRampUpKw() {
+        return Math.max(1, Math.min(SAFE_DC_RAMP_UP_KW, rampUpKwPerLoop));
     }
 
     private void setLimitNative(int connector, int kw, String reason) throws Exception {
@@ -375,6 +413,7 @@ public final class LoadManager extends Thread {
     private void log(long now, KsemClient.Currents c, double criticalA,
                      Active active, double headroomA, String action) {
         if (now - lastLog < 5000L && !action.startsWith("SET")
+                && !action.startsWith("DC-SETTLING")
                 && !action.startsWith("START-MIN")
                 && !action.startsWith("SESSION-END")
                 && !action.equals("FAILBACK-GUARD")) return;
