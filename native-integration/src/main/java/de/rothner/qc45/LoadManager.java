@@ -1,21 +1,13 @@
 package de.rothner.qc45;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-
 /**
  * Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * The controller mirrors the proven legacy Python implementation. The actual
- * QC45 power-limit write deliberately goes through the proven local
- * currentlimit.jsp endpoint instead of the native reflection setter.
+ * The controller mirrors the proven legacy Python implementation, but the
+ * actual power-limit write is now fully native through ReflectionQC45.
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
-    private static final String LIMIT_URL = "http://127.0.0.1:8080/qc45api/currentlimit.jsp";
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -62,12 +54,12 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started target=" + one(targetA)
-            + "A setter=currentlimit.jsp");
+            + "A setter=native");
 
         try {
-            setLimitViaJsp(1, minDcKw, "startup");
-            setLimitViaJsp(2, minDcKw, "startup");
-            setLimitViaJsp(3, minAcKw, "startup");
+            setLimitNative(1, minDcKw, "startup");
+            setLimitNative(2, minDcKw, "startup");
+            setLimitNative(3, minAcKw, "startup");
             System.out.println("[QC45] LoadManager startup reset C1=" + minDcKw
                 + "kW C2=" + minDcKw + "kW C3=" + minAcKw + "kW");
         } catch (Throwable e) {
@@ -84,8 +76,8 @@ public final class LoadManager extends Thread {
                 boolean newDc = active.dc && !prevDcActive;
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
-                    if (newDc) setLimitViaJsp(active.dcConnector, minDcKw, "session-start-dc");
-                    if (newAc) setLimitViaJsp(3, minAcKw, "session-start-ac");
+                    if (newDc) setLimitNative(active.dcConnector, minDcKw, "session-start-dc");
+                    if (newAc) setLimitNative(3, minAcKw, "session-start-ac");
                     prevDcActive = active.dc;
                     prevAcActive = active.ac;
                     prevDcConnector = active.dcConnector;
@@ -98,11 +90,11 @@ public final class LoadManager extends Thread {
 
                 boolean sessionEnded = false;
                 if (!active.dc && prevDcActive) {
-                    if (prevDcConnector > 0) setLimitViaJsp(prevDcConnector, minDcKw, "session-end-dc");
+                    if (prevDcConnector > 0) setLimitNative(prevDcConnector, minDcKw, "session-end-dc");
                     sessionEnded = true;
                 }
                 if (!active.ac && prevAcActive) {
-                    setLimitViaJsp(3, minAcKw, "session-end-ac");
+                    setLimitNative(3, minAcKw, "session-end-ac");
                     sessionEnded = true;
                 }
                 prevDcActive = active.dc;
@@ -157,18 +149,18 @@ public final class LoadManager extends Thread {
 
                 boolean changed = false;
                 if (active.dc && targets.dcKw != reportedDcLimitKw) {
-                    setLimitViaJsp(active.dcConnector, targets.dcKw,
+                    setLimitNative(active.dcConnector, targets.dcKw,
                         "regulation-dc reported=" + reportedDcLimitKw + " target=" + targets.dcKw);
                     changed = true;
                 }
                 if (active.ac && targets.acKw != reportedAcLimitKw) {
-                    setLimitViaJsp(3, targets.acKw,
+                    setLimitNative(3, targets.acKw,
                         "regulation-ac reported=" + reportedAcLimitKw + " target=" + targets.acKw);
                     changed = true;
                 }
 
                 log(now, currents, criticalA, active, headroomA,
-                    (changed ? "SET-JSP" : "HOLD")
+                    (changed ? "SET-NATIVE" : "HOLD")
                     + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
                     + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
                     + " targetDC=" + targets.dcKw + " targetAC=" + targets.acKw
@@ -187,49 +179,26 @@ public final class LoadManager extends Thread {
         System.out.println("[QC45] LoadManager stopped");
     }
 
-    private void setLimitViaJsp(int connector, int kw, String reason) throws Exception {
+    private void setLimitNative(int connector, int kw, String reason) throws Exception {
         int max = connector == 3 ? maxAcKw : maxDcKw;
         int min = connector == 3 ? minAcKw : minDcKw;
         kw = clamp(kw, min, max);
 
-        String url = LIMIT_URL
-            + "?connector=" + URLEncoder.encode(String.valueOf(connector), "UTF-8")
-            + "&kw=" + URLEncoder.encode(String.valueOf(kw), "UTF-8");
+        int before = station.limitKw(connector);
+        System.out.println("[QC45] LoadManager WRITE-NATIVE connector=" + connector
+            + " kw=" + kw + "kW before=" + before + "kW reason=" + reason);
 
-        System.out.println("[QC45] LoadManager WRITE connector=" + connector
-            + " kw=" + kw + "kW reason=" + reason);
-
-        HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
-        c.setConnectTimeout(1500);
-        c.setReadTimeout(4000);
-        c.setRequestMethod("GET");
-        c.setUseCaches(false);
-
-        int code = c.getResponseCode();
-        BufferedReader r = new BufferedReader(new InputStreamReader(
-            code >= 200 && code < 400 ? c.getInputStream() : c.getErrorStream(), "UTF-8"));
-        StringBuilder body = new StringBuilder();
         try {
-            String line;
-            while ((line = r.readLine()) != null) {
-                if (body.length() > 0) body.append(" | ");
-                body.append(line.trim());
-            }
-        } finally {
-            try { r.close(); } catch (Throwable ignored) {}
-            c.disconnect();
+            station.setConnectorLimitKw(connector, kw);
+            int after = station.limitKw(connector);
+            System.out.println("[QC45] LoadManager WRITTEN-NATIVE connector=" + connector
+                + " kw=" + kw + "kW after=" + after + "kW");
+        } catch (Throwable e) {
+            System.err.println("[QC45] LoadManager WRITE-NATIVE-FAILED connector=" + connector
+                + " kw=" + kw + "kW error=" + e);
+            if (e instanceof Exception) throw (Exception)e;
+            throw new RuntimeException(e);
         }
-
-        String text = body.toString();
-        if (code < 200 || code >= 300 || text.indexOf("OK") < 0) {
-            System.err.println("[QC45] LoadManager WRITE-FAILED connector=" + connector
-                + " kw=" + kw + "kW HTTP=" + code + " response=" + text);
-            throw new IllegalStateException("currentlimit.jsp rejected connector=" + connector
-                + " kw=" + kw + " HTTP=" + code + " response=" + text);
-        }
-
-        System.out.println("[QC45] LoadManager WRITTEN connector=" + connector
-            + " kw=" + kw + "kW HTTP=" + code + " response=" + text);
     }
 
     private Targets allocateFromActual(Active active, int totalTargetKw,
