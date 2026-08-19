@@ -3,19 +3,18 @@ package de.rothner.qc45;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.io.PrintStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
 /**
- * Duplicates JVM stdout/stderr to a persistent QC45 integration log while
- * preserving the original Tomcat/EVCSD streams.
+ * Routes native QC45 integration stdout/stderr to one persistent logfile.
  *
- * This is intentionally installed from BootstrapListener before Integration
- * starts, so messages from OCPP, loopback, load manager and failback are all
- * visible even on QC45 installations where Tomcat stdout is discarded.
+ * Installed by BootstrapListener before Integration starts, so LoadManager,
+ * ReflectionQC45, GridFailback, OCPP and all diagnostics use the same file.
+ * We intentionally do not depend on Tomcat/EVCSD stdout because some QC45
+ * installations discard or redirect those streams.
  */
 public final class FileLog {
     private static boolean installed;
@@ -30,44 +29,28 @@ public final class FileLog {
         File parent = file.getParentFile();
         if (parent != null && !parent.exists()) parent.mkdirs();
 
-        final PrintStream originalOut = System.out;
-        final PrintStream originalErr = System.err;
         fileStream = new PrintStream(new FileOutputStream(file, true), true, "UTF-8");
 
-        System.setOut(new PrintStream(new TeeOutputStream(originalOut, fileStream), true));
-        System.setErr(new PrintStream(new TeeOutputStream(originalErr, fileStream), true));
+        // From this point on every System.out/System.err message produced by the
+        // native integration goes directly into the persistent integration log.
+        System.setOut(fileStream);
+        System.setErr(fileStream);
         installed = true;
 
         System.out.println("[QC45] ------------------------------------------------------------");
         System.out.println("[QC45] file logging started " + timestamp() + " -> " + file.getAbsolutePath());
+        System.out.println("[QC45] stdout/stderr redirected to persistent integration log");
+    }
+
+    public static synchronized void info(String message) {
+        if (fileStream != null) fileStream.println(message);
+    }
+
+    public static synchronized void error(String message) {
+        if (fileStream != null) fileStream.println(message);
     }
 
     private static String timestamp() {
         return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
-    }
-
-    private static final class TeeOutputStream extends OutputStream {
-        private final OutputStream a;
-        private final OutputStream b;
-
-        TeeOutputStream(OutputStream a, OutputStream b) {
-            this.a = a;
-            this.b = b;
-        }
-
-        public synchronized void write(int value) throws IOException {
-            a.write(value);
-            b.write(value);
-        }
-
-        public synchronized void write(byte[] data, int off, int len) throws IOException {
-            a.write(data, off, len);
-            b.write(data, off, len);
-        }
-
-        public synchronized void flush() throws IOException {
-            a.flush();
-            b.flush();
-        }
     }
 }
