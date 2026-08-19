@@ -48,6 +48,8 @@ failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=38.0
 failback.intervalMs=200
+# Hard-trip latch clears automatically after this many ms continuously below reduceA.
+failback.resetDelayMs=60000
 # KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
 failback.tripOnMeterFailure=true
 failback.meterFailureMs=3000
