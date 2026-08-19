@@ -47,7 +47,8 @@ public final class Integration {
                 p.getProperty("ocpp15.loopback.path", "/QC45").trim(),
                 integer(p, "ocpp15.loopback.heartbeatInterval", 60),
                 integer(p, "ocpp15.bridge.timeoutMs", 10000),
-                ocppBridge);
+                ocppBridge,
+                station);
         }
 
         boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
