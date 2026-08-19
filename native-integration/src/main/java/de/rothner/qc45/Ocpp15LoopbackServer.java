@@ -10,6 +10,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,6 +30,7 @@ public final class Ocpp15LoopbackServer {
     private final int heartbeatInterval;
     private final int timeoutMs;
     private final OcppBridgeClient backend;
+    private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private HttpServer server;
 
     public Ocpp15LoopbackServer(String bindAddress, int port, String path, int heartbeatInterval,
@@ -142,8 +144,14 @@ public final class Ocpp15LoopbackServer {
             return j+"}";
         }
         if ("statusNotification".equals(op)) {
-            return "{" + n("connectorId",intText(xml,"connectorId",0)) + "," + q("errorCode",emptyDefault(elementText(xml,"errorCode"),"NoError")) + ","
-                + q("status",elementText(xml,"status")) + optionalString(xml,"timestamp") + optionalString(xml,"vendorId") + optionalString(xml,"vendorErrorCode") + "}";
+            int connector = intText(xml,"connectorId",0);
+            String status = elementText(xml,"status");
+            if (connector > 0 && hasActiveTransaction(connector)
+                    && ("Available".equalsIgnoreCase(status) || "Preparing".equalsIgnoreCase(status))) {
+                status = "Charging";
+            }
+            return "{" + n("connectorId",connector) + "," + q("errorCode",emptyDefault(elementText(xml,"errorCode"),"NoError")) + ","
+                + q("status",status) + optionalString(xml,"timestamp") + optionalString(xml,"vendorId") + optionalString(xml,"vendorErrorCode") + "}";
         }
         if ("meterValues".equals(op)) return meterValuesJson(xml);
         if ("firmwareStatusNotification".equals(op)) return "{" + q("status",elementText(xml,"status")) + "}";
@@ -179,10 +187,19 @@ public final class Ocpp15LoopbackServer {
         if ("heartbeat".equals(op)) return tag("heartbeatResponse",value("currentTime",fieldString(result,"currentTime","")));
         if ("authorize".equals(op)) return tag("authorizeResponse",idTagInfo(result));
         if ("startTransaction".equals(op)) {
-            int tx=fieldInt(result,"transactionId",-1); int connector=intText(request,"connectorId",1); if(tx>=0) backend.rememberTransaction(tx,connector);
+            int tx=fieldInt(result,"transactionId",-1);
+            int connector=intText(request,"connectorId",1);
+            if(tx>=0) {
+                backend.rememberTransaction(tx,connector);
+                synchronized (activeTransactions) { activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector)); }
+            }
             return tag("startTransactionResponse",value("transactionId",String.valueOf(tx))+idTagInfo(result));
         }
-        if ("stopTransaction".equals(op)) return tag("stopTransactionResponse",idTagInfo(result));
+        if ("stopTransaction".equals(op)) {
+            int tx=intText(request,"transactionId",-1);
+            synchronized (activeTransactions) { activeTransactions.remove(Integer.valueOf(tx)); }
+            return tag("stopTransactionResponse",idTagInfo(result));
+        }
         if ("statusNotification".equals(op)) return tag("statusNotificationResponse","");
         if ("meterValues".equals(op)) return tag("meterValuesResponse","");
         if ("firmwareStatusNotification".equals(op)) return tag("firmwareStatusNotificationResponse","");
@@ -194,6 +211,15 @@ public final class Ocpp15LoopbackServer {
             return tag("dataTransferResponse",b);
         }
         return tag(op+"Response","");
+    }
+
+    private boolean hasActiveTransaction(int connector) {
+        synchronized (activeTransactions) {
+            for (Integer c : activeTransactions.values()) {
+                if (c != null && c.intValue() == connector) return true;
+            }
+        }
+        return false;
     }
 
     private static String idTagInfo(String json) {
