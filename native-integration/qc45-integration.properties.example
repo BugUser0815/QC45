@@ -15,21 +15,10 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
-# Direct HTTPS API for QC45 Monitor iOS app
-remoteapi.enabled=true
-remoteapi.bind=0.0.0.0
-remoteapi.port=9443
-remoteapi.token=CHANGE_TO_AT_LEAST_32_RANDOM_CHARACTERS
-remoteapi.tls.keyStore=/home/mobie/evcsd/qc45-api.jks
-remoteapi.tls.keyStoreType=JKS
-remoteapi.tls.keyStorePassword=CHANGE_ME_KEYSTORE_PASSWORD
-remoteapi.tls.keyPassword=CHANGE_ME_KEYSTORE_PASSWORD
-remoteapi.tls.certificateAlias=qc45-api
-
 # evcc / local load management
 modbus.port=1502
 
-# KOSTAL KSEM shared by LoadManager, GridFailback and Remote API
+# KOSTAL KSEM shared by LoadManager and GridFailback
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
@@ -38,6 +27,7 @@ ksem.legacyLowWord=true
 ksem.currentScale=0.001
 
 # Native load manager
+# Normal balancing controls DC connectors only. Type2 is not manipulated.
 loadmanager.enabled=true
 loadmanager.targetA=32.0
 loadmanager.hysteresisA=0.8
