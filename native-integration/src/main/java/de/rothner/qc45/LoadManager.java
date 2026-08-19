@@ -54,7 +54,7 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started target=" + one(targetA)
-            + "A setter=native diagnostics=full");
+            + "A setter=native diagnostics=full ccs-current=live-voltage");
 
         try {
             setLimitNative(1, minDcKw, "startup");
@@ -173,6 +173,19 @@ public final class LoadManager extends Thread {
                     changed = true;
                 }
 
+                // Even with a constant kW target, the EV battery voltage changes during
+                // charging. Keep quickChargeMaxCurrent synchronized with P/U every loop.
+                // A DC kW write already performs this refresh, so avoid sending twice.
+                if (active.dc && active.dcConnector == 2 && !writeDc) {
+                    try {
+                        int amps = station.refreshQuickChargeCurrentForPower(2, targets.dcKw);
+                        System.out.println("[QC45] LoadManager CCS-CURRENT-REFRESH target="
+                            + targets.dcKw + "kW current=" + amps + "A");
+                    } catch (Throwable e) {
+                        System.err.println("[QC45] LoadManager CCS-CURRENT-REFRESH failed: " + e);
+                    }
+                }
+
                 dumpState("AFTER-DECISION", active, targets.dcKw, targets.acKw, totalTargetKw,
                     changed ? "WRITE=performed" : "WRITE=no targets already reported");
 
@@ -231,12 +244,15 @@ public final class LoadManager extends Thread {
             String maxAc = safeMaxAc();
             String dcFixed = safeDcFixed();
             String acFixed = safeAcFixed();
+            String ccsVoltage = safeCcsVoltage();
+            String ccsCurrent = safeCcsCurrent();
 
             System.out.println("[QC45] LoadManager DIAG stage=" + stage
                 + " activeDC=" + active.dc + " dcConnector=" + active.dcConnector
                 + " activeAC=" + active.ac
                 + " power[C1=" + p1 + ",C2=" + p2 + ",C3=" + p3 + "]kW"
                 + " satMax[C1=" + l1 + ",C2=" + l2 + ",C3=" + l3 + "]kW"
+                + " ccs[voltage=" + ccsVoltage + "V,quickChargeMaxCurrent=" + ccsCurrent + "A]"
                 + " conf[maxPower=" + global + ",maxPowerAC=" + maxAc
                 + ",DCMaxPowerFixed=" + dcFixed + ",ACMaxPowerFixed=" + acFixed + "]"
                 + " target[DC=" + valueOrDash(targetDcKw) + ",AC=" + valueOrDash(targetAcKw)
@@ -263,6 +279,16 @@ public final class LoadManager extends Thread {
 
     private String safeAcFixed() {
         try { return String.valueOf(station.acMaxPowerFixed()); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeCcsVoltage() {
+        try { return String.valueOf(station.dcVoltageV(2)); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeCcsCurrent() {
+        try { return String.valueOf(station.quickChargeMaxCurrentA(2)); }
         catch (Throwable e) { return "n/a"; }
     }
 
