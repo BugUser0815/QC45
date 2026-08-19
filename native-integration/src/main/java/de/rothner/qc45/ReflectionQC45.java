@@ -93,7 +93,12 @@ public final class ReflectionQC45 {
 
     public void setDcBudgetKw(int kw) throws Exception {
         kw = clamp(kw, 0, 50);
+
+        // EVCSD has multiple DC power limits. Keep all of them in sync,
+        // otherwise DC.maxPower.fixed may override the runtime satellite limit.
         setGlobalMaxPower(kw);
+        setDcMaxPowerFixed(kw);
+
         int active = activeDcConnector();
         if (active == 0) {
             setSatelliteLimit(1, kw, false);
@@ -101,6 +106,10 @@ public final class ReflectionQC45 {
         } else {
             setSatelliteLimit(active, kw, active == 2 && kw > 0);
         }
+
+        System.out.println("[QC45] DC budget=" + kw + "kW globalMaxPower=" + globalMaxPower()
+            + " dcMaxPowerFixed=" + dcMaxPowerFixed()
+            + " activeConnector=" + active);
     }
 
     public void setAcBudgetKw(int kw) throws Exception {
@@ -114,6 +123,18 @@ public final class ReflectionQC45 {
         return ((Number) configurationClass.getMethod("getMaxPower").invoke(configuration())).intValue();
     }
 
+    public int dcMaxPowerFixed() throws Exception {
+        Object conf = configuration();
+        try {
+            return ((Number) configurationClass.getMethod("getDCMaxPowerFixed").invoke(conf)).intValue();
+        } catch (NoSuchMethodException e) {
+            Field f = findField(configurationClass, "DCMaxPowerFixed", "dcMaxPowerFixed");
+            if (f == null) throw e;
+            f.setAccessible(true);
+            return ((Number) f.get(conf)).intValue();
+        }
+    }
+
     public int maxPowerAC() throws Exception {
         return ((Number) configurationClass.getMethod("getMaxPowerAC").invoke(configuration())).intValue();
     }
@@ -123,6 +144,30 @@ public final class ReflectionQC45 {
         Field field = configurationClass.getDeclaredField("maxPower");
         field.setAccessible(true);
         field.setInt(conf, kw);
+    }
+
+    private void setDcMaxPowerFixed(int kw) throws Exception {
+        Object conf = configuration();
+        try {
+            configurationClass.getMethod("setDCMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+            return;
+        } catch (NoSuchMethodException e) {
+            Field f = findField(configurationClass, "DCMaxPowerFixed", "dcMaxPowerFixed");
+            if (f == null) throw e;
+            f.setAccessible(true);
+            if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
+            else f.set(conf, Integer.valueOf(kw));
+        }
+    }
+
+    private static Field findField(Class<?> type, String name1, String name2) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name1); } catch (NoSuchFieldException ignored) {}
+            try { return t.getDeclaredField(name2); } catch (NoSuchFieldException ignored) {}
+            t = t.getSuperclass();
+        }
+        return null;
     }
 
     private void setSatelliteLimit(int connector, int kw, boolean pushCcs) throws Exception {
