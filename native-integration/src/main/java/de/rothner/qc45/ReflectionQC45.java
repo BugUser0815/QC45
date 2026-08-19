@@ -55,7 +55,14 @@ public final class ReflectionQC45 {
         return Math.max(0, ((Number) sat.getClass().getMethod("getMaxPower").invoke(sat)).intValue());
     }
 
+    /**
+     * For CCS, QuickChargeSerializer stores the module reply in SatelliteModule.infoState.voltage.
+     * getCurrentVoltage() reads voltagePhaseValue[] instead, which is normally empty for CCS.
+     */
     public int dcVoltageV(int connector) throws Exception {
+        int ccsVoltage = ccsModuleNumber(connector, "voltage", 0);
+        if (ccsVoltage >= 100 && ccsVoltage <= 1000) return ccsVoltage;
+
         Object sat = satellite(connector);
         Object value = sat.getClass().getMethod("getCurrentVoltage").invoke(sat);
         if (!(value instanceof int[])) return 0;
@@ -66,6 +73,59 @@ public final class ReflectionQC45 {
             if (v >= 100 && v <= 1000) return v;
         }
         return 0;
+    }
+
+    /** Read the actual CCS-module values decoded by QuickChargeSerializer.unserialize(). */
+    public String ccsModuleTelemetry(int connector) {
+        try {
+            Object sat = satellite(connector);
+            Field infoField = findSingleField(sat.getClass(), "infoState");
+            if (infoField == null) return "n/a";
+            infoField.setAccessible(true);
+            Object info = infoField.get(sat);
+            if (info == null) return "n/a";
+
+            int voltage = numberField(info, "voltage", 0);
+            int current = numberField(info, "electricCurrent", 0);
+            int power = numberField(info, "power", 0);
+            int dtc = numberField(info, "quickChargeDTC", 0);
+            boolean epo = booleanField(info, "epoPressed", false);
+
+            return "voltage=" + voltage + "V,current=" + current + "A,power=" + power
+                + "kW,dtc=" + dtc + ",epo=" + epo;
+        } catch (Throwable e) {
+            return "n/a(" + e.getClass().getSimpleName() + ")";
+        }
+    }
+
+    private int ccsModuleNumber(int connector, String name, int fallback) {
+        try {
+            Object sat = satellite(connector);
+            Field infoField = findSingleField(sat.getClass(), "infoState");
+            if (infoField == null) return fallback;
+            infoField.setAccessible(true);
+            Object info = infoField.get(sat);
+            if (info == null) return fallback;
+            return numberField(info, name, fallback);
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
+    private static int numberField(Object owner, String name, int fallback) throws Exception {
+        Field f = findSingleField(owner.getClass(), name);
+        if (f == null) return fallback;
+        f.setAccessible(true);
+        Object value = f.get(owner);
+        return value instanceof Number ? ((Number)value).intValue() : fallback;
+    }
+
+    private static boolean booleanField(Object owner, String name, boolean fallback) throws Exception {
+        Field f = findSingleField(owner.getClass(), name);
+        if (f == null) return fallback;
+        f.setAccessible(true);
+        Object value = f.get(owner);
+        return value instanceof Boolean ? ((Boolean)value).booleanValue() : fallback;
     }
 
     public int quickChargeMaxCurrentA(int connector) throws Exception {
@@ -91,8 +151,6 @@ public final class ReflectionQC45 {
             String centralValue = findMessageStateCurrentInObject(cm, "CentralModule");
             if (centralValue != null) return centralValue;
 
-            // Some firmware builds keep MessageStateMachines.current as a static
-            // field. Try likely class locations without taking a hard dependency.
             String[] classNames = new String[] {
                 "pt.efacec.es.mobie.agent.statemachines.MessageStateMachines",
                 "pt.efacec.es.mobie.agent.MessageStateMachines"
@@ -189,7 +247,8 @@ public final class ReflectionQC45 {
             + " quickChargeMaxCurrent=" + oldA + "A->" + targetA + "A"
             + " messageState=" + messageCurrent
             + " satelliteMaxPower=" + limitKw(connector) + "kW"
-            + " actualPower=" + powerKw(connector) + "kW");
+            + " actualPower=" + powerKw(connector) + "kW"
+            + " ccsRx[" + ccsModuleTelemetry(connector) + "]");
         return targetA;
     }
 
@@ -276,6 +335,7 @@ public final class ReflectionQC45 {
             + " ccs=" + ccs + " sentCcsStart=" + sentCcsStart
             + " quickChargeMaxCurrent=" + quickCurrent + "A"
             + " messageState=" + (ccs ? ccsMessageStateCurrent(connector) : "n/a")
+            + (ccs ? " ccsRx[" + ccsModuleTelemetry(connector) + "]" : "")
             + " globalMaxPower=" + safeGlobalMaxPower()
             + " maxPowerAC=" + safeMaxPowerAC()
             + " dcFixed=" + safeDcFixed()
