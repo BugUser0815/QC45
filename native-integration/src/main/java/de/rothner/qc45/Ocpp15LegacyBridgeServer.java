@@ -12,7 +12,9 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -37,16 +39,20 @@ public final class Ocpp15LegacyBridgeServer {
     private final int heartbeatInterval;
     private final int timeoutMs;
     private final OcppBridgeClient upstream;
+    private final ReflectionQC45 station;
+    private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private HttpServer server;
 
     public Ocpp15LegacyBridgeServer(String bindAddress, int port, String path, int heartbeatInterval,
-                                    int timeoutMs, OcppBridgeClient upstream) {
+                                    int timeoutMs, OcppBridgeClient upstream,
+                                    ReflectionQC45 station) {
         this.bindAddress = bindAddress;
         this.port = port;
         this.path = normalizePath(path);
         this.heartbeatInterval = heartbeatInterval;
         this.timeoutMs = timeoutMs;
         this.upstream = upstream;
+        this.station = station;
     }
 
     public synchronized void start() throws Exception {
@@ -131,9 +137,11 @@ public final class Ocpp15LegacyBridgeServer {
                 + idTagInfoXml(result, "Invalid") + "</authorizeResponse>");
         }
         if ("statusNotification".equals(op)) {
+            int connector = intText(xml, "connectorId", 0);
             String status = elementText(xml, "status");
             if ("Occupied".equals(status)) status = "Preparing";
-            String json = "{" + n("connectorId", intText(xml, "connectorId", 0)) + ","
+            status = translatedStatus(connector, status);
+            String json = "{" + n("connectorId", connector) + ","
                 + q("status", status.length() == 0 ? "Unavailable" : status) + ","
                 + q("errorCode", emptyDefault(elementText(xml, "errorCode"), "NoError"))
                 + opt(xml, "info") + opt(xml, "timestamp") + opt(xml, "vendorId") + opt(xml, "vendorErrorCode") + "}";
@@ -151,6 +159,9 @@ public final class Ocpp15LegacyBridgeServer {
             String result = upstream.call("StartTransaction", json, timeoutMs);
             int tx = fieldInt(result, "transactionId", 0);
             upstream.rememberTransaction(tx, connector);
+            synchronized (activeTransactions) {
+                activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector));
+            }
             return soapEnvelope("<startTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
                 + value("transactionId", String.valueOf(tx)) + idTagInfoXml(result, "Accepted")
                 + "</startTransactionResponse>");
@@ -160,13 +171,23 @@ public final class Ocpp15LegacyBridgeServer {
             return emptyResponse("meterValuesResponse");
         }
         if ("stopTransaction".equals(op)) {
+            int tx = intText(xml, "transactionId", 0);
             String ts = elementText(xml, "timestamp"); if (ts.length() == 0) ts = utcNow();
-            String json = "{" + n("transactionId", intText(xml, "transactionId", 0)) + ","
+            String json = "{" + n("transactionId", tx) + ","
                 + n("meterStop", longText(xml, "meterStop", 0)) + "," + q("timestamp", ts);
             String id = elementText(xml, "idTag"); if (id.length() > 0) json += "," + q("idTag", id);
             String reason = elementText(xml, "reason"); if (reason.length() > 0) json += "," + q("reason", reason);
             json += "}";
             String result = upstream.call("StopTransaction", json, timeoutMs);
+
+            Integer connector;
+            synchronized (activeTransactions) {
+                connector = activeTransactions.remove(Integer.valueOf(tx));
+            }
+            if (connector != null && connector.intValue() > 0) {
+                sendFinishingBestEffort(connector.intValue());
+            }
+
             if (result.indexOf("idTagInfo") >= 0) {
                 return soapEnvelope("<stopTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
                     + idTagInfoXml(result, "Accepted") + "</stopTransactionResponse>");
@@ -192,6 +213,55 @@ public final class Ocpp15LegacyBridgeServer {
             return soapEnvelope("<dataTransferResponse xmlns=\"" + OCPP15_NS + "\">" + body + "</dataTransferResponse>");
         }
         throw new IllegalArgumentException("Unsupported OCPP15 operation: " + op);
+    }
+
+    private String translatedStatus(int connector, String incoming) {
+        if (connector <= 0 || !hasActiveTransaction(connector) || !isNormalChargeStatus(incoming)) {
+            return incoming;
+        }
+
+        try {
+            int powerKw = station.powerKw(connector);
+            if (powerKw > 0) return "Charging";
+
+            int limitKw = station.limitKw(connector);
+            if (limitKw <= 0) return "SuspendedEVSE";
+            return "SuspendedEV";
+        } catch (Throwable e) {
+            System.err.println("[QC45] OCPP status derivation failed connector=" + connector + ": " + e);
+            return incoming;
+        }
+    }
+
+    private boolean hasActiveTransaction(int connector) {
+        synchronized (activeTransactions) {
+            for (Integer value : activeTransactions.values()) {
+                if (value != null && value.intValue() == connector) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isNormalChargeStatus(String status) {
+        return "Available".equalsIgnoreCase(status)
+            || "Preparing".equalsIgnoreCase(status)
+            || "Charging".equalsIgnoreCase(status)
+            || "SuspendedEV".equalsIgnoreCase(status)
+            || "SuspendedEVSE".equalsIgnoreCase(status)
+            || "Finishing".equalsIgnoreCase(status)
+            || status == null || status.length() == 0;
+    }
+
+    private void sendFinishingBestEffort(int connector) {
+        try {
+            String json = "{" + n("connectorId", connector) + ","
+                + q("status", "Finishing") + ","
+                + q("errorCode", "NoError") + ","
+                + q("timestamp", utcNow()) + "}";
+            upstream.call("StatusNotification", json, timeoutMs);
+        } catch (Throwable e) {
+            System.err.println("[QC45] OCPP Finishing notification failed connector=" + connector + ": " + e);
+        }
     }
 
     private static String soapEnvelope(String inner) {
