@@ -5,18 +5,18 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.util.Properties;
 
-/** Owns OCPP bridge, legacy SOAP endpoint, Modbus, load manager and grid failback. */
+/** Owns OCPP bridge, SOAP endpoint, Modbus, load manager and grid failback. */
 public final class Integration {
     private final ReflectionQC45 station;
     private final ModbusServer modbus;
     private final OcppBridgeClient ocppBridge;
-    private final Ocpp15LegacyBridgeServer ocpp15Bridge;
+    private final Ocpp15BridgeServer ocpp15Bridge;
     private final LoadManager loadManager;
     private final GridFailback failback;
 
     private Integration(ReflectionQC45 station, ModbusServer modbus,
                         OcppBridgeClient ocppBridge,
-                        Ocpp15LegacyBridgeServer ocpp15Bridge,
+                        Ocpp15BridgeServer ocpp15Bridge,
                         LoadManager loadManager, GridFailback failback) {
         this.station = station;
         this.modbus = modbus;
@@ -39,9 +39,9 @@ public final class Integration {
             p.getProperty("ocpp.tls.caFile", "").trim(),
             bool(p, "ocpp.tls.insecure", false));
 
-        Ocpp15LegacyBridgeServer ocpp15Bridge = null;
+        Ocpp15BridgeServer ocpp15Bridge = null;
         if (bool(p, "ocpp15.loopback.enabled", true)) {
-            ocpp15Bridge = new Ocpp15LegacyBridgeServer(
+            ocpp15Bridge = new Ocpp15BridgeServer(
                 p.getProperty("ocpp15.loopback.bind", "127.0.0.1").trim(),
                 integer(p, "ocpp15.loopback.port", 9000),
                 p.getProperty("ocpp15.loopback.path", "/QC45").trim(),
