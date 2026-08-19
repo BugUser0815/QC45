@@ -9,6 +9,7 @@ package de.rothner.qc45;
  * - active DC = CHAdeMO OR CCS, plus optional simultaneous Type2
  * - start every newly active connector at minimum power
  * - ramp power up slowly, reduce immediately
+ * - while charging, continuously re-assert the current targets every loop because EVCSD may overwrite them
  * - do nothing while completely idle to avoid fighting QC45 idle defaults
  * - yield completely to GridFailback at/above its reduction threshold
  */
@@ -72,18 +73,12 @@ public final class LoadManager extends Thread {
 
                 Active active = detectActive();
 
-                // A connector just became active: force a safe start level before any ramp-up.
                 boolean newDc = active.dc && !prevDcActive;
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
-                    if (newDc) {
-                        dcTargetKw = minDcKw;
-                        station.setDcBudgetKw(dcTargetKw);
-                    }
-                    if (newAc) {
-                        acTargetKw = minAcKw;
-                        station.setAcBudgetKw(acTargetKw);
-                    }
+                    if (newDc) dcTargetKw = minDcKw;
+                    if (newAc) acTargetKw = minAcKw;
+                    enforceTargets(active);
                     prevDcActive = active.dc;
                     prevAcActive = active.ac;
                     log(now, currents, criticalA, active, 0.0d, "START-MIN");
@@ -91,7 +86,6 @@ public final class LoadManager extends Thread {
                     continue;
                 }
 
-                // Session ended: reset that budget once. Do not keep writing while idle.
                 if (!active.dc && prevDcActive) {
                     dcTargetKw = minDcKw;
                     station.setDcBudgetKw(dcTargetKw);
@@ -109,7 +103,7 @@ public final class LoadManager extends Thread {
                     continue;
                 }
 
-                // GridFailback owns the station from this point upward.
+                // GridFailback owns the station from this point upward. Do not fight it.
                 if (criticalA >= failbackGuardA) {
                     log(now, currents, criticalA, active, targetA - criticalA, "FAILBACK-GUARD");
                     sleepLoop();
@@ -118,9 +112,13 @@ public final class LoadManager extends Thread {
 
                 double headroomA = targetA - criticalA;
 
-                // Small deadband around the target avoids constant 1 kW chatter.
+                // HOLD still re-writes every active limit. EVCSD is known to overwrite
+                // maxPower/maxPowerAC/fixed limits asynchronously.
                 if (Math.abs(headroomA) < hysteresisA) {
-                    log(now, currents, criticalA, active, headroomA, "HOLD");
+                    enforceTargets(active);
+                    log(now, currents, criticalA, active, headroomA,
+                        "HOLD/REASSERT DC=" + (active.dc ? dcTargetKw : 0)
+                        + "kW AC=" + (active.ac ? acTargetKw : 0) + "kW");
                     sleepLoop();
                     continue;
                 }
@@ -138,12 +136,9 @@ public final class LoadManager extends Thread {
                 if (desiredTotalKw > currentTargetTotal) {
                     desiredTotalKw = Math.min(desiredTotalKw, currentTargetTotal + rampUpKwPerLoop);
                 }
-                // Reductions are intentionally not ramp-limited.
 
                 allocate(active, desiredTotalKw);
-
-                if (active.dc) station.setDcBudgetKw(dcTargetKw);
-                if (active.ac) station.setAcBudgetKw(acTargetKw);
+                enforceTargets(active);
 
                 log(now, currents, criticalA, active, headroomA,
                     "SET DC=" + (active.dc ? dcTargetKw : 0) + "kW AC=" + (active.ac ? acTargetKw : 0) + "kW");
@@ -159,6 +154,11 @@ public final class LoadManager extends Thread {
         }
 
         System.out.println("[QC45] LoadManager stopped");
+    }
+
+    private void enforceTargets(Active active) throws Exception {
+        if (active.dc) station.setDcBudgetKw(dcTargetKw);
+        if (active.ac) station.setAcBudgetKw(acTargetKw);
     }
 
     private Active detectActive() throws Exception {
@@ -192,7 +192,6 @@ public final class LoadManager extends Thread {
 
         int currentTotal = dcTargetKw + acTargetKw;
         if (desiredTotalKw < currentTotal) {
-            // Fast reduction: reduce DC first, then Type2.
             int reduction = currentTotal - desiredTotalKw;
             int dcRoom = dcTargetKw - minDcKw;
             int fromDc = Math.min(reduction, dcRoom);
@@ -207,8 +206,6 @@ public final class LoadManager extends Thread {
             boolean dcCan = dcTargetKw < maxDcKw;
             boolean acCan = acTargetKw < maxAcKw;
             if (!dcCan && !acCan) break;
-
-            // Split increases roughly evenly. If one side is full, the other gets the rest.
             if (dcCan) { dcTargetKw++; addition--; }
             if (addition > 0 && acCan) { acTargetKw++; addition--; }
         }
@@ -217,7 +214,7 @@ public final class LoadManager extends Thread {
     private void log(long now, KsemClient.Currents c, double criticalA,
                      Active active, double headroomA, String action) {
         if (now - lastLog < 5000L && !action.startsWith("SET") && !action.equals("START-MIN")
-                && !action.equals("FAILBACK-GUARD")) return;
+                && !action.equals("FAILBACK-GUARD") && !action.startsWith("HOLD/REASSERT")) return;
 
         String mode = active.dc && active.ac ? "DC+AC" : active.dc ? "DC" : active.ac ? "AC" : "IDLE";
         System.out.println("[QC45] LoadManager " + mode
