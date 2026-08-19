@@ -54,6 +54,63 @@ public final class ReflectionQC45 {
         return Math.max(0, ((Number) sat.getClass().getMethod("getMaxPower").invoke(sat)).intValue());
     }
 
+    public int dcVoltageV(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Object value = sat.getClass().getMethod("getCurrentVoltage").invoke(sat);
+        if (!(value instanceof int[])) return 0;
+        int[] volts = (int[]) value;
+        if (volts == null) return 0;
+        for (int i = 0; i < volts.length; i++) {
+            int v = volts[i];
+            if (v >= 100 && v <= 1000) return v;
+        }
+        return 0;
+    }
+
+    public int quickChargeMaxCurrentA(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Field f = findField(sat.getClass(), "quickChargeMaxCurrent", "QuickChargeMaxCurrent");
+        if (f == null) throw new NoSuchFieldException("quickChargeMaxCurrent");
+        f.setAccessible(true);
+        Object value = f.get(sat);
+        return value instanceof Number ? ((Number)value).intValue() : 0;
+    }
+
+    /**
+     * Recalculate quickChargeMaxCurrent from requested DC power and the live
+     * QC45 DC voltage: I = P / U. Refreshed every active CCS control cycle.
+     */
+    public int refreshQuickChargeCurrentForPower(int connector, int targetKw) throws Exception {
+        if (connector != 1 && connector != 2) return 0;
+        Object sat = satellite(connector);
+        Class<?> satType = sat.getClass();
+        boolean ccs = ((Boolean) satType.getMethod("isCCSCharge").invoke(sat)).booleanValue();
+        if (!ccs) return 0;
+
+        int voltage = dcVoltageV(connector);
+        boolean fallback = false;
+        if (voltage <= 0) {
+            voltage = 400;
+            fallback = true;
+        }
+
+        int targetA = clamp((int)Math.round((targetKw * 1000.0d) / voltage), 1, 125);
+        Field currentField = findField(satType, "quickChargeMaxCurrent", "QuickChargeMaxCurrent");
+        if (currentField == null) throw new NoSuchFieldException("quickChargeMaxCurrent");
+        currentField.setAccessible(true);
+        int oldA = ((Number) currentField.get(sat)).intValue();
+        if (currentField.getType() == Integer.TYPE) currentField.setInt(sat, targetA);
+        else currentField.set(sat, Integer.valueOf(targetA));
+
+        satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
+
+        System.out.println("[QC45] CCS current target connector=" + connector
+            + " power=" + targetKw + "kW voltage=" + voltage + "V"
+            + (fallback ? " fallback=true" : " fallback=false")
+            + " quickChargeMaxCurrent=" + oldA + "A->" + targetA + "A");
+        return targetA;
+    }
+
     public long energyRaw(int connector) throws Exception {
         Object sat = satellite(connector);
         Object value = sat.getClass().getMethod("getEnergy").invoke(sat);
@@ -96,13 +153,6 @@ public final class ReflectionQC45 {
         return Math.max(powerKw(1), powerKw(2)) + powerKw(3);
     }
 
-    /**
-     * Native port of the proven currentlimit.jsp control path.
-     *
-     * Core writes are deliberately performed before optional firmware-specific
-     * fixed fields. Missing optional fields can therefore never prevent the
-     * actual SatelliteModule.setMaxPower()/CCS command from being sent.
-     */
     public void setConnectorLimitKw(int connector, int kw) throws Exception {
         if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
         kw = clamp(kw, 0, connector == 3 ? 22 : 50);
@@ -116,7 +166,6 @@ public final class ReflectionQC45 {
         int oldTarget = ((Number) satType.getMethod("getMaxPower").invoke(target)).intValue();
         boolean ccs = ((Boolean) satType.getMethod("isCCSCharge").invoke(target)).booleanValue();
 
-        // Proven currentlimit.jsp core path first.
         if (connector == 3) {
             configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
         } else {
@@ -126,13 +175,12 @@ public final class ReflectionQC45 {
         satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
 
         boolean sentCcsStart = false;
+        int quickCurrent = 0;
         if (ccs && connector == 2 && kw > 0) {
-            satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(target, Boolean.TRUE);
+            quickCurrent = refreshQuickChargeCurrentForPower(connector, kw);
             sentCcsStart = true;
         }
 
-        // Additional values requested for this firmware. These are best-effort:
-        // they must never abort the proven core setter above.
         if (connector == 3) {
             bestEffortSetMaxPowerACField(conf, kw);
             bestEffortSetAcMaxPowerFixed(conf, kw);
@@ -144,6 +192,7 @@ public final class ReflectionQC45 {
             + " requested=" + kw + "kW oldSatellite=" + oldTarget
             + " newSatellite=" + limitKw(connector)
             + " ccs=" + ccs + " sentCcsStart=" + sentCcsStart
+            + " quickChargeMaxCurrent=" + quickCurrent + "A"
             + " globalMaxPower=" + safeGlobalMaxPower()
             + " maxPowerAC=" + safeMaxPowerAC()
             + " dcFixed=" + safeDcFixed()
