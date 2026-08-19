@@ -54,7 +54,7 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started target=" + one(targetA)
-            + "A setter=native");
+            + "A setter=native diagnostics=full");
 
         try {
             setLimitNative(1, minDcKw, "startup");
@@ -76,8 +76,10 @@ public final class LoadManager extends Thread {
                 boolean newDc = active.dc && !prevDcActive;
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
+                    dumpState("BEFORE-START", active, -1, -1, -1, "WRITE=yes session-start");
                     if (newDc) setLimitNative(active.dcConnector, minDcKw, "session-start-dc");
                     if (newAc) setLimitNative(3, minAcKw, "session-start-ac");
+                    dumpState("AFTER-START", active, -1, -1, -1, "WRITE=done session-start");
                     prevDcActive = active.dc;
                     prevAcActive = active.ac;
                     prevDcConnector = active.dcConnector;
@@ -102,18 +104,22 @@ public final class LoadManager extends Thread {
                 if (active.dc) prevDcConnector = active.dcConnector;
 
                 if (sessionEnded) {
+                    dumpState("SESSION-END", active, -1, -1, -1, "WRITE=done reset-min");
                     log(now, currents, criticalA, active, targetA - criticalA, "SESSION-END RESET-MIN");
                     sleepLoop();
                     continue;
                 }
 
                 if (!active.dc && !active.ac) {
+                    dumpState("IDLE", active, -1, -1, -1, "WRITE=no idle");
                     log(now, currents, criticalA, active, targetA - criticalA, "IDLE");
                     sleepLoop();
                     continue;
                 }
 
                 if (criticalA >= failbackGuardA) {
+                    dumpState("FAILBACK-GUARD", active, -1, -1, -1,
+                        "WRITE=no failback guard critical=" + one(criticalA) + "A");
                     log(now, currents, criticalA, active, targetA - criticalA, "FAILBACK-GUARD");
                     sleepLoop();
                     continue;
@@ -147,17 +153,28 @@ public final class LoadManager extends Thread {
 
                 Targets targets = allocateFromActual(active, totalTargetKw, actualDcKw, actualAcKw);
 
+                boolean writeDc = active.dc && targets.dcKw != reportedDcLimitKw;
+                boolean writeAc = active.ac && targets.acKw != reportedAcLimitKw;
+                dumpState("DECISION", active, targets.dcKw, targets.acKw, totalTargetKw,
+                    "WRITE-DC=" + yesno(writeDc) + " WRITE-AC=" + yesno(writeAc)
+                    + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
+                    + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
+                    + " headroom=" + one(headroomA) + "A requestedRaw=" + one(requestedRawKw) + "kW");
+
                 boolean changed = false;
-                if (active.dc && targets.dcKw != reportedDcLimitKw) {
+                if (writeDc) {
                     setLimitNative(active.dcConnector, targets.dcKw,
                         "regulation-dc reported=" + reportedDcLimitKw + " target=" + targets.dcKw);
                     changed = true;
                 }
-                if (active.ac && targets.acKw != reportedAcLimitKw) {
+                if (writeAc) {
                     setLimitNative(3, targets.acKw,
                         "regulation-ac reported=" + reportedAcLimitKw + " target=" + targets.acKw);
                     changed = true;
                 }
+
+                dumpState("AFTER-DECISION", active, targets.dcKw, targets.acKw, totalTargetKw,
+                    changed ? "WRITE=performed" : "WRITE=no targets already reported");
 
                 log(now, currents, criticalA, active, headroomA,
                     (changed ? "SET-NATIVE" : "HOLD")
@@ -199,6 +216,62 @@ public final class LoadManager extends Thread {
             if (e instanceof Exception) throw (Exception)e;
             throw new RuntimeException(e);
         }
+    }
+
+    private void dumpState(String stage, Active active, int targetDcKw, int targetAcKw,
+                           int totalTargetKw, String decision) {
+        try {
+            int p1 = station.powerKw(1);
+            int p2 = station.powerKw(2);
+            int p3 = station.powerKw(3);
+            int l1 = station.limitKw(1);
+            int l2 = station.limitKw(2);
+            int l3 = station.limitKw(3);
+            String global = safeGlobal();
+            String maxAc = safeMaxAc();
+            String dcFixed = safeDcFixed();
+            String acFixed = safeAcFixed();
+
+            System.out.println("[QC45] LoadManager DIAG stage=" + stage
+                + " activeDC=" + active.dc + " dcConnector=" + active.dcConnector
+                + " activeAC=" + active.ac
+                + " power[C1=" + p1 + ",C2=" + p2 + ",C3=" + p3 + "]kW"
+                + " satMax[C1=" + l1 + ",C2=" + l2 + ",C3=" + l3 + "]kW"
+                + " conf[maxPower=" + global + ",maxPowerAC=" + maxAc
+                + ",DCMaxPowerFixed=" + dcFixed + ",ACMaxPowerFixed=" + acFixed + "]"
+                + " target[DC=" + valueOrDash(targetDcKw) + ",AC=" + valueOrDash(targetAcKw)
+                + ",total=" + valueOrDash(totalTargetKw) + "]kW " + decision);
+        } catch (Throwable e) {
+            System.err.println("[QC45] LoadManager DIAG stage=" + stage + " failed: " + e);
+        }
+    }
+
+    private String safeGlobal() {
+        try { return String.valueOf(station.globalMaxPower()); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeMaxAc() {
+        try { return String.valueOf(station.maxPowerAC()); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeDcFixed() {
+        try { return String.valueOf(station.dcMaxPowerFixed()); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeAcFixed() {
+        try { return String.valueOf(station.acMaxPowerFixed()); }
+        catch (Throwable e) { return "n/a"; }
+    }
+
+    private static String valueOrDash(int value) {
+        return value < 0 ? "-" : String.valueOf(value);
+    }
+
+    private static String yesno(boolean value) {
+        return value ? "yes" : "no";
     }
 
     private Targets allocateFromActual(Active active, int totalTargetKw,
