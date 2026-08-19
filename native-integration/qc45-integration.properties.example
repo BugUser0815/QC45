@@ -1,0 +1,63 @@
+# Copy to /home/mobie/evcsd/qc45-integration.properties
+
+# ChargePoint / OCPP 1.6 JSON over WSS
+ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
+ocpp.username=QC45
+ocpp.password=CHANGE_ME
+ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
+ocpp.tls.insecure=false
+
+# Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 bridge
+ocpp15.loopback.enabled=true
+ocpp15.loopback.bind=127.0.0.1
+ocpp15.loopback.port=9000
+ocpp15.loopback.path=/QC45
+ocpp15.loopback.heartbeatInterval=60
+ocpp15.bridge.timeoutMs=10000
+
+# Direct HTTPS API for QC45 Monitor iOS app
+remoteapi.enabled=true
+remoteapi.bind=0.0.0.0
+remoteapi.port=9443
+remoteapi.token=CHANGE_TO_AT_LEAST_32_RANDOM_CHARACTERS
+remoteapi.tls.keyStore=/home/mobie/evcsd/qc45-api.jks
+remoteapi.tls.keyStoreType=JKS
+remoteapi.tls.keyStorePassword=CHANGE_ME_KEYSTORE_PASSWORD
+remoteapi.tls.keyPassword=CHANGE_ME_KEYSTORE_PASSWORD
+remoteapi.tls.certificateAlias=qc45-api
+
+# evcc / local load management
+modbus.port=1502
+
+# KOSTAL KSEM shared by LoadManager, GridFailback and Remote API
+ksem.host=10.0.0.70
+ksem.port=502
+ksem.unit=71
+ksem.timeoutMs=1000
+ksem.legacyLowWord=true
+ksem.currentScale=0.001
+
+# Native load manager
+loadmanager.enabled=true
+loadmanager.targetA=32.0
+loadmanager.hysteresisA=0.8
+loadmanager.minDcKw=5
+loadmanager.maxDcKw=50
+loadmanager.minAcKw=5
+loadmanager.maxAcKw=22
+loadmanager.rampUpKwPerLoop=2
+loadmanager.intervalMs=1000
+
+# Independent grid failback
+failback.enabled=true
+failback.reduceA=34.0
+failback.reduceDelayMs=500
+failback.reduceDcKw=5
+failback.reduceAcKw=5
+failback.tripA=35.0
+failback.tripDelayMs=250
+failback.instantTripA=38.0
+failback.intervalMs=200
+# KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
+failback.tripOnMeterFailure=true
+failback.meterFailureMs=3000

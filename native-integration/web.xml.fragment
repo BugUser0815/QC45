@@ -1,0 +1,4 @@
+<!-- Add inside <web-app> in /home/mobie/evcsd/webapps/ROOT/WEB-INF/web.xml -->
+<listener>
+  <listener-class>de.rothner.qc45.BootstrapListener</listener-class>
+</listener>

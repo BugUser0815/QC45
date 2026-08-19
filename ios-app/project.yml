@@ -1,0 +1,20 @@
+name: QC45Monitor
+options:
+  bundleIdPrefix: de.rothner
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: 17.0
+targets:
+  QC45Monitor:
+    type: application
+    platform: iOS
+    sources: [QC45Monitor]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.rothner.QC45Monitor
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: QC45 Monitor
+        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+        SWIFT_VERSION: 5.0
+    scheme:
+      testTargets: []
