@@ -89,7 +89,8 @@ public final class Integration {
             integer(p, "failback.reduceAcKw", 5),
             integer(p, "failback.intervalMs", 200),
             bool(p, "failback.tripOnMeterFailure", true),
-            integer(p, "failback.meterFailureMs", 3000)) : null;
+            integer(p, "failback.meterFailureMs", 3000),
+            integer(p, "failback.resetDelayMs", 60000)) : null;
 
         Integration integration = new Integration(
             station, modbus, ocppBridge, ocpp15Bridge, loadManager, failback);
