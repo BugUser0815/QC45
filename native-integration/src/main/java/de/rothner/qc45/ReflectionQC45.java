@@ -3,6 +3,7 @@ package de.rothner.qc45;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 /** Reflection adapter around the live EVCSD objects. */
 public final class ReflectionQC45 {
@@ -77,6 +78,83 @@ public final class ReflectionQC45 {
     }
 
     /**
+     * Read the current value that sendCcsStart() places into the firmware's
+     * MessageStateMachines object. This is diagnostic-only and never writes it.
+     */
+    public String ccsMessageStateCurrent(int connector) {
+        try {
+            Object sat = satellite(connector);
+            String direct = findMessageStateCurrentInObject(sat, "Satellite");
+            if (direct != null) return direct;
+
+            Object cm = central();
+            String centralValue = findMessageStateCurrentInObject(cm, "CentralModule");
+            if (centralValue != null) return centralValue;
+
+            // Some firmware builds keep MessageStateMachines.current as a static
+            // field. Try likely class locations without taking a hard dependency.
+            String[] classNames = new String[] {
+                "pt.efacec.es.mobie.agent.statemachines.MessageStateMachines",
+                "pt.efacec.es.mobie.agent.MessageStateMachines"
+            };
+            for (int i = 0; i < classNames.length; i++) {
+                try {
+                    Class<?> type = Class.forName(classNames[i]);
+                    Field current = findSingleField(type, "current");
+                    if (current != null && Modifier.isStatic(current.getModifiers())) {
+                        current.setAccessible(true);
+                        Object value = current.get(null);
+                        if (value instanceof Number) {
+                            return classNames[i] + ".current=" + ((Number)value).intValue() + "A";
+                        }
+                        if (value != null) return classNames[i] + ".current=" + String.valueOf(value);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        } catch (Throwable ignored) {}
+        return "n/a";
+    }
+
+    private String findMessageStateCurrentInObject(Object owner, String ownerLabel) {
+        if (owner == null) return null;
+        Class<?> t = owner.getClass();
+        while (t != null) {
+            Field[] fields = t.getDeclaredFields();
+            for (int i = 0; i < fields.length; i++) {
+                Field f = fields[i];
+                if (Modifier.isStatic(f.getModifiers())) continue;
+                String fieldName = f.getName().toLowerCase(java.util.Locale.US);
+                String typeName = f.getType().getName().toLowerCase(java.util.Locale.US);
+                if (fieldName.indexOf("messagestate") < 0 && typeName.indexOf("messagestatemachines") < 0) continue;
+                try {
+                    f.setAccessible(true);
+                    Object state = f.get(owner);
+                    if (state == null) continue;
+                    Field current = findSingleField(state.getClass(), "current");
+                    if (current == null) continue;
+                    current.setAccessible(true);
+                    Object value = current.get(state);
+                    if (value instanceof Number) {
+                        return ownerLabel + "." + f.getName() + ".current=" + ((Number)value).intValue() + "A";
+                    }
+                    if (value != null) return ownerLabel + "." + f.getName() + ".current=" + String.valueOf(value);
+                } catch (Throwable ignored) {}
+            }
+            t = t.getSuperclass();
+        }
+        return null;
+    }
+
+    private static Field findSingleField(Class<?> type, String name) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name); }
+            catch (NoSuchFieldException ignored) { t = t.getSuperclass(); }
+        }
+        return null;
+    }
+
+    /**
      * Recalculate quickChargeMaxCurrent from requested DC power and the live
      * QC45 DC voltage: I = P / U. Refreshed every active CCS control cycle.
      */
@@ -104,10 +182,14 @@ public final class ReflectionQC45 {
 
         satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
 
+        String messageCurrent = ccsMessageStateCurrent(connector);
         System.out.println("[QC45] CCS current target connector=" + connector
             + " power=" + targetKw + "kW voltage=" + voltage + "V"
             + (fallback ? " fallback=true" : " fallback=false")
-            + " quickChargeMaxCurrent=" + oldA + "A->" + targetA + "A");
+            + " quickChargeMaxCurrent=" + oldA + "A->" + targetA + "A"
+            + " messageState=" + messageCurrent
+            + " satelliteMaxPower=" + limitKw(connector) + "kW"
+            + " actualPower=" + powerKw(connector) + "kW");
         return targetA;
     }
 
@@ -193,6 +275,7 @@ public final class ReflectionQC45 {
             + " newSatellite=" + limitKw(connector)
             + " ccs=" + ccs + " sentCcsStart=" + sentCcsStart
             + " quickChargeMaxCurrent=" + quickCurrent + "A"
+            + " messageState=" + (ccs ? ccsMessageStateCurrent(connector) : "n/a")
             + " globalMaxPower=" + safeGlobalMaxPower()
             + " maxPowerAC=" + safeMaxPowerAC()
             + " dcFixed=" + safeDcFixed()
