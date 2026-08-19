@@ -93,9 +93,6 @@ public final class ReflectionQC45 {
 
     public void setDcBudgetKw(int kw) throws Exception {
         kw = clamp(kw, 0, 50);
-
-        // EVCSD has multiple DC power limits. Keep all of them in sync,
-        // otherwise DC.maxPower.fixed may override the runtime satellite limit.
         setGlobalMaxPower(kw);
         setDcMaxPowerFixed(kw);
 
@@ -116,7 +113,14 @@ public final class ReflectionQC45 {
         kw = clamp(kw, 0, 22);
         Object conf = configuration();
         configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+        setAcMaxPowerFixed(kw);
         setSatelliteLimit(3, kw, false);
+
+        String fixed;
+        try { fixed = String.valueOf(acMaxPowerFixed()); }
+        catch (Throwable e) { fixed = "unavailable"; }
+        System.out.println("[QC45] AC budget=" + kw + "kW maxPowerAC=" + maxPowerAC()
+            + " acMaxPowerFixed=" + fixed);
     }
 
     public int globalMaxPower() throws Exception {
@@ -139,6 +143,18 @@ public final class ReflectionQC45 {
         return ((Number) configurationClass.getMethod("getMaxPowerAC").invoke(configuration())).intValue();
     }
 
+    public int acMaxPowerFixed() throws Exception {
+        Object conf = configuration();
+        try {
+            return ((Number) configurationClass.getMethod("getACMaxPowerFixed").invoke(conf)).intValue();
+        } catch (NoSuchMethodException e) {
+            Field f = findField(configurationClass, "ACMaxPowerFixed", "acMaxPowerFixed");
+            if (f == null) throw e;
+            f.setAccessible(true);
+            return ((Number) f.get(conf)).intValue();
+        }
+    }
+
     private void setGlobalMaxPower(int kw) throws Exception {
         Object conf = configuration();
         Field field = configurationClass.getDeclaredField("maxPower");
@@ -153,6 +169,20 @@ public final class ReflectionQC45 {
             return;
         } catch (NoSuchMethodException e) {
             Field f = findField(configurationClass, "DCMaxPowerFixed", "dcMaxPowerFixed");
+            if (f == null) throw e;
+            f.setAccessible(true);
+            if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
+            else f.set(conf, Integer.valueOf(kw));
+        }
+    }
+
+    private void setAcMaxPowerFixed(int kw) throws Exception {
+        Object conf = configuration();
+        try {
+            configurationClass.getMethod("setACMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+            return;
+        } catch (NoSuchMethodException e) {
+            Field f = findField(configurationClass, "ACMaxPowerFixed", "acMaxPowerFixed");
             if (f == null) throw e;
             f.setAccessible(true);
             if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
@@ -180,54 +210,41 @@ public final class ReflectionQC45 {
         }
     }
 
-    /** Exact native port of the proven qc45api/start.jsp logic. */
     public void remoteStart(String idTag, int connector) throws Exception {
         if (idTag == null || idTag.trim().length() == 0) throw new IllegalArgumentException("missing idTag");
         idTag = idTag.trim();
         Object cm = central();
         Object listener = newNmsListener(cm);
-
         Method m = listener.getClass().getMethod("remoteStartCharge", String.class, String.class, Integer.TYPE);
         Object value = m.invoke(listener, "", idTag, Integer.valueOf(connector));
         boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
         boolean remote = remoteStarted();
-
-        System.out.println("[QC45] Native RemoteStart connector=" + connector
-            + " idTag=" + idTag + " remoteStartCharge=" + result + " remoteStarted=" + remote);
-
+        System.out.println("[QC45] Native RemoteStart connector=" + connector + " idTag=" + idTag
+            + " remoteStartCharge=" + result + " remoteStarted=" + remote);
         if (!result) throw new IllegalStateException("remoteStartCharge returned false");
     }
 
-    /** Exact native port of the proven qc45api/stop.jsp logic. */
     public void remoteStop(int connector) throws Exception {
         Object cm = central();
         Object target = satellite(connector);
         Object listener = newNmsListener(cm);
-
         Object satInfo = target.getClass().getMethod("getSatelliteInfoDB").invoke(target);
         if (satInfo == null) throw new IllegalStateException("SatelliteInfoDB unavailable");
         String satelliteUniqueId = String.valueOf(satInfo.getClass().getMethod("getStationId").invoke(satInfo));
-
         String transactionUniqueId = "";
         Object tx = target.getClass().getMethod("getActiveTransaction").invoke(target);
         if (tx != null) {
             Object txId = tx.getClass().getMethod("getUniqueId").invoke(tx);
             if (txId != null) transactionUniqueId = String.valueOf(txId);
         }
-
         Method abort = listener.getClass().getMethod("abortCharge", String.class, String.class, String.class);
         Object value = abort.invoke(listener, satelliteUniqueId, transactionUniqueId, "");
         boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
-
         setRemoteStartedFalse(cm);
         boolean remote = remoteStarted();
-
         System.out.println("[QC45] Native RemoteStop connector=" + connector
-            + " satelliteUniqueId=" + satelliteUniqueId
-            + " transactionUniqueId=" + transactionUniqueId
-            + " abortCharge=" + result
-            + " remoteStarted=" + remote);
-
+            + " satelliteUniqueId=" + satelliteUniqueId + " transactionUniqueId=" + transactionUniqueId
+            + " abortCharge=" + result + " remoteStarted=" + remote);
         if (!result) throw new IllegalStateException("abortCharge returned false");
     }
 
@@ -250,7 +267,6 @@ public final class ReflectionQC45 {
             centralClass.getMethod("setRemoteStarted", Boolean.TYPE).invoke(cm, Boolean.FALSE);
             return;
         } catch (NoSuchMethodException ignored) {}
-
         Class<?> t = cm.getClass();
         while (t != null) {
             try {
