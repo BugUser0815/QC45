@@ -61,7 +61,7 @@ public final class GridFailback extends Thread {
 
     public void run(){
         lastGoodRead=System.currentTimeMillis();
-        System.out.println("[QC45] GridFailback started emergency-reset=press-and-release boolean-probe=v2");
+        System.out.println("[QC45] GridFailback started emergency-reset=press-and-release boolean-probe=v3-epo");
         while(running){
             long now=System.currentTimeMillis();
             try{
@@ -137,9 +137,6 @@ public final class GridFailback extends Thread {
     private void evaluateEmergencyReset(long now)throws Exception{
         EmergencyStopProbe.Result result=emergencyStopProbe.read();
 
-        // Log every change in the live boolean EVCSD state immediately. This is
-        // deliberately independent of the normal 5 s status log so a short
-        // emergency-stop press cannot disappear between log intervals.
         if(lastBooleanSnapshot==null||!lastBooleanSnapshot.equals(result.booleanSnapshot)){
             System.out.println("[QC45] GRID FAILBACK EVCSD-BOOLEAN-CHANGE "+result.booleanSnapshot);
             lastBooleanSnapshot=result.booleanSnapshot;
@@ -158,7 +155,7 @@ public final class GridFailback extends Thread {
         if(result.active){
             if(!emergencySeenWhileTripped){
                 emergencySeenWhileTripped=true;
-                System.out.println("[QC45] GRID FAILBACK RESET ARMED: emergency stop pressed; release it to clear trip latch");
+                System.out.println("[QC45] GRID FAILBACK RESET ARMED: EPO pressed; release it to clear trip latch");
             }
             return;
         }
@@ -169,7 +166,7 @@ public final class GridFailback extends Thread {
         if(!tripped||!emergencySeenWhileTripped)return;
         tripped=false;emergencySeenWhileTripped=false;lastEmergencyState=Boolean.FALSE;
         reduceSince=0L;tripSince=0L;goodReadsAfterMeterPause=0;
-        System.out.println("[QC45] GRID FAILBACK RESET: emergency stop press/release cycle completed; latch cleared");
+        System.out.println("[QC45] GRID FAILBACK RESET: EPO press/release cycle completed; latch cleared");
     }
 
     private void enforceHardTripOnce(){
@@ -211,8 +208,6 @@ public final class GridFailback extends Thread {
         private static void inspectObject(String label,Object target,ProbeAccumulator acc){
             Class<?> type=target.getClass();
 
-            // Public, zero-argument boolean getters only. Never invoke arbitrary
-            // methods merely because their name contains 'stop'.
             Method[] methods=type.getMethods();
             for(int i=0;i<methods.length;i++){
                 Method m=methods[i];
@@ -226,7 +221,6 @@ public final class GridFailback extends Thread {
                 }catch(Throwable ignored){}
             }
 
-            // Boolean fields are read directly, including private firmware state.
             Class<?> t=type;
             while(t!=null){
                 Field[] fields=t.getDeclaredFields();
@@ -261,7 +255,7 @@ public final class GridFailback extends Thread {
             if(name==null)return false;
             String n=name.toLowerCase(java.util.Locale.US);
             return n.indexOf("emergency")>=0||n.indexOf("estop")>=0||n.indexOf("e_stop")>=0
-                ||n.indexOf("notaus")>=0||n.indexOf("panic")>=0
+                ||n.indexOf("notaus")>=0||n.indexOf("epo")>=0||n.indexOf("panic")>=0
                 ||n.indexOf("stopbutton")>=0||n.indexOf("stop_button")>=0;
         }
 
