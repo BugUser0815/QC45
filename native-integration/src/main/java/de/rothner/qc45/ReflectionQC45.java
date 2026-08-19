@@ -27,9 +27,14 @@ public final class ReflectionQC45 {
         return c;
     }
 
-    private Object satellite(int connector) throws Exception {
+    private Object[] satellites() throws Exception {
         Object[] sats = (Object[]) centralClass.getMethod("getSatellites").invoke(central());
         if (sats == null) throw new IllegalStateException("Satellites unavailable");
+        return sats;
+    }
+
+    private Object satellite(int connector) throws Exception {
+        Object[] sats = satellites();
         for (int i = 0; i < sats.length; i++) {
             Object sat = sats[i];
             if (sat == null) continue;
@@ -91,40 +96,73 @@ public final class ReflectionQC45 {
         return Math.max(powerKw(1), powerKw(2)) + powerKw(3);
     }
 
-    public void setDcBudgetKw(int kw) throws Exception {
-        kw = clamp(kw, 0, 50);
-        setGlobalMaxPower(kw);
-        setDcMaxPowerFixed(kw);
+    /**
+     * Native port of the proven currentlimit.jsp control path.
+     *
+     * Core writes are deliberately performed before optional firmware-specific
+     * fixed fields. Missing optional fields can therefore never prevent the
+     * actual SatelliteModule.setMaxPower()/CCS command from being sent.
+     */
+    public void setConnectorLimitKw(int connector, int kw) throws Exception {
+        if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
+        kw = clamp(kw, 0, connector == 3 ? 22 : 50);
 
-        int active = activeDcConnector();
-        if (active == 0) {
-            setSatelliteLimit(1, kw, false);
-            setSatelliteLimit(2, kw, false);
+        Object cm = central();
+        Object conf = centralClass.getMethod("getConf").invoke(cm);
+        if (conf == null) throw new IllegalStateException("Configuration unavailable");
+        Object target = satellite(connector);
+        Class<?> satType = target.getClass();
+
+        int oldTarget = ((Number) satType.getMethod("getMaxPower").invoke(target)).intValue();
+        boolean ccs = ((Boolean) satType.getMethod("isCCSCharge").invoke(target)).booleanValue();
+
+        // Proven currentlimit.jsp core path first.
+        if (connector == 3) {
+            configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
         } else {
-            setSatelliteLimit(active, kw, active == 2 && kw > 0);
+            setGlobalMaxPowerOn(conf, kw);
         }
 
-        System.out.println("[QC45] DC budget=" + kw + "kW globalMaxPower=" + globalMaxPower()
-            + " dcMaxPowerFixed=" + dcMaxPowerFixed()
-            + " activeConnector=" + active);
+        satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
+
+        boolean sentCcsStart = false;
+        if (ccs && connector == 2 && kw > 0) {
+            satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(target, Boolean.TRUE);
+            sentCcsStart = true;
+        }
+
+        // Additional values requested for this firmware. These are best-effort:
+        // they must never abort the proven core setter above.
+        if (connector == 3) {
+            bestEffortSetMaxPowerACField(conf, kw);
+            bestEffortSetAcMaxPowerFixed(conf, kw);
+        } else {
+            bestEffortSetDcMaxPowerFixed(conf, kw);
+        }
+
+        System.out.println("[QC45] NativeLimit connector=" + connector
+            + " requested=" + kw + "kW oldSatellite=" + oldTarget
+            + " newSatellite=" + limitKw(connector)
+            + " ccs=" + ccs + " sentCcsStart=" + sentCcsStart
+            + " globalMaxPower=" + safeGlobalMaxPower()
+            + " maxPowerAC=" + safeMaxPowerAC()
+            + " dcFixed=" + safeDcFixed()
+            + " acFixed=" + safeAcFixed());
+    }
+
+    public void setDcBudgetKw(int kw) throws Exception {
+        kw = clamp(kw, 0, 50);
+        int active = activeDcConnector();
+        if (active == 0) {
+            setConnectorLimitKw(1, kw);
+            setConnectorLimitKw(2, kw);
+        } else {
+            setConnectorLimitKw(active, kw);
+        }
     }
 
     public void setAcBudgetKw(int kw) throws Exception {
-        kw = clamp(kw, 0, 22);
-        Object conf = configuration();
-
-        // Keep all AC limits in sync. Some EVCSD builds keep a separate
-        // maxPowerAC field in addition to setMaxPowerAC() and ACMaxPowerFixed.
-        configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
-        setMaxPowerACField(kw);
-        setAcMaxPowerFixed(kw);
-        setSatelliteLimit(3, kw, false);
-
-        String fixed;
-        try { fixed = String.valueOf(acMaxPowerFixed()); }
-        catch (Throwable e) { fixed = "unavailable"; }
-        System.out.println("[QC45] AC budget=" + kw + "kW maxPowerAC=" + maxPowerAC()
-            + " acMaxPowerFixed=" + fixed);
+        setConnectorLimitKw(3, clamp(kw, 0, 22));
     }
 
     public int globalMaxPower() throws Exception {
@@ -167,48 +205,69 @@ public final class ReflectionQC45 {
         }
     }
 
-    private void setGlobalMaxPower(int kw) throws Exception {
-        Object conf = configuration();
-        Field field = configurationClass.getDeclaredField("maxPower");
+    private void setGlobalMaxPowerOn(Object conf, int kw) throws Exception {
+        Field field = findField(configurationClass, "maxPower", "MaxPower");
+        if (field == null) throw new NoSuchFieldException("maxPower");
         field.setAccessible(true);
-        field.setInt(conf, kw);
+        if (field.getType() == Integer.TYPE) field.setInt(conf, kw);
+        else field.set(conf, Integer.valueOf(kw));
     }
 
-    private void setDcMaxPowerFixed(int kw) throws Exception {
-        Object conf = configuration();
+    private void bestEffortSetDcMaxPowerFixed(Object conf, int kw) {
         try {
-            configurationClass.getMethod("setDCMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
-            return;
-        } catch (NoSuchMethodException e) {
+            try {
+                configurationClass.getMethod("setDCMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+                return;
+            } catch (NoSuchMethodException ignored) {}
             Field f = findField(configurationClass, "DCMaxPowerFixed", "dcMaxPowerFixed");
-            if (f == null) throw e;
-            f.setAccessible(true);
-            if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
-            else f.set(conf, Integer.valueOf(kw));
+            if (f != null) setNumberField(f, conf, kw);
+        } catch (Throwable e) {
+            System.err.println("[QC45] NativeLimit optional DCMaxPowerFixed failed: " + e);
         }
     }
 
-    private void setMaxPowerACField(int kw) throws Exception {
-        Object conf = configuration();
-        Field f = findField(configurationClass, "maxPowerAC", "MaxPowerAC");
-        if (f == null) throw new NoSuchFieldException("maxPowerAC");
-        f.setAccessible(true);
-        if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
-        else f.set(conf, Integer.valueOf(kw));
-    }
-
-    private void setAcMaxPowerFixed(int kw) throws Exception {
-        Object conf = configuration();
+    private void bestEffortSetMaxPowerACField(Object conf, int kw) {
         try {
-            configurationClass.getMethod("setACMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
-            return;
-        } catch (NoSuchMethodException e) {
-            Field f = findField(configurationClass, "ACMaxPowerFixed", "acMaxPowerFixed");
-            if (f == null) throw e;
-            f.setAccessible(true);
-            if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
-            else f.set(conf, Integer.valueOf(kw));
+            Field f = findField(configurationClass, "maxPowerAC", "MaxPowerAC");
+            if (f != null) setNumberField(f, conf, kw);
+        } catch (Throwable e) {
+            System.err.println("[QC45] NativeLimit optional maxPowerAC field failed: " + e);
         }
+    }
+
+    private void bestEffortSetAcMaxPowerFixed(Object conf, int kw) {
+        try {
+            try {
+                configurationClass.getMethod("setACMaxPowerFixed", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+                return;
+            } catch (NoSuchMethodException ignored) {}
+            Field f = findField(configurationClass, "ACMaxPowerFixed", "acMaxPowerFixed");
+            if (f != null) setNumberField(f, conf, kw);
+        } catch (Throwable e) {
+            System.err.println("[QC45] NativeLimit optional ACMaxPowerFixed failed: " + e);
+        }
+    }
+
+    private static void setNumberField(Field f, Object target, int value) throws Exception {
+        f.setAccessible(true);
+        if (f.getType() == Integer.TYPE) f.setInt(target, value);
+        else f.set(target, Integer.valueOf(value));
+    }
+
+    private String safeGlobalMaxPower() {
+        try { return String.valueOf(globalMaxPower()); } catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeMaxPowerAC() {
+        try { return String.valueOf(maxPowerAC()); } catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeDcFixed() {
+        try { return String.valueOf(dcMaxPowerFixed()); } catch (Throwable e) { return "n/a"; }
+    }
+
+    private String safeAcFixed() {
+        try { return String.valueOf(acMaxPowerFixed()); } catch (Throwable e) { return "n/a"; }
     }
 
     private static Field findField(Class<?> type, String name1, String name2) {
@@ -219,16 +278,6 @@ public final class ReflectionQC45 {
             t = t.getSuperclass();
         }
         return null;
-    }
-
-    private void setSatelliteLimit(int connector, int kw, boolean pushCcs) throws Exception {
-        Object sat = satellite(connector);
-        Class<?> type = sat.getClass();
-        type.getMethod("setMaxPower", Integer.TYPE).invoke(sat, Integer.valueOf(kw));
-        if (pushCcs && kw > 0) {
-            boolean ccs = ((Boolean) type.getMethod("isCCSCharge").invoke(sat)).booleanValue();
-            if (ccs) type.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
-        }
     }
 
     public void remoteStart(String idTag, int connector) throws Exception {
