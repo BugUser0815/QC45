@@ -1,19 +1,21 @@
 package de.rothner.qc45;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+
 /**
  * Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * This intentionally mirrors the proven legacy Python controller:
- * - use QC45-reported connector limits as the current controller state
- * - derive total target from measured charger power + grid headroom
- * - ramp only positive changes
- * - reduce immediately
- * - allocate DC+AC from measured connector powers
- * - write a limit only when the QC45-reported value differs from the target
- * - if EVCSD overwrites a limit, the next status cycle observes that change and corrects it
+ * The controller mirrors the proven legacy Python implementation. The actual
+ * QC45 power-limit write deliberately goes through the proven local
+ * currentlimit.jsp endpoint instead of the native reflection setter.
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
+    private static final String LIMIT_URL = "http://127.0.0.1:8080/qc45api/currentlimit.jsp";
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -30,6 +32,7 @@ public final class LoadManager extends Thread {
     private volatile boolean running = true;
     private boolean prevDcActive;
     private boolean prevAcActive;
+    private int prevDcConnector;
     private long lastLog;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
@@ -58,7 +61,19 @@ public final class LoadManager extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] LoadManager started target=" + one(targetA) + "A legacy-control-model=true");
+        System.out.println("[QC45] LoadManager started target=" + one(targetA)
+            + "A setter=currentlimit.jsp");
+
+        // Exact legacy startup behaviour: every connector starts at 5 kW.
+        try {
+            setLimitViaJsp(1, minDcKw);
+            setLimitViaJsp(2, minDcKw);
+            setLimitViaJsp(3, minAcKw);
+            System.out.println("[QC45] LoadManager startup reset C1=" + minDcKw
+                + "kW C2=" + minDcKw + "kW C3=" + minAcKw + "kW");
+        } catch (Throwable e) {
+            System.err.println("[QC45] LoadManager startup reset failed: " + e);
+        }
 
         while (running) {
             long now = System.currentTimeMillis();
@@ -67,14 +82,14 @@ public final class LoadManager extends Thread {
                 double criticalA = currents.max();
                 Active active = detectActive();
 
-                // Match the old controller: a newly active connector starts at 5 kW.
                 boolean newDc = active.dc && !prevDcActive;
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
-                    if (newDc) station.setDcBudgetKw(minDcKw);
-                    if (newAc) station.setAcBudgetKw(minAcKw);
+                    if (newDc) setLimitViaJsp(active.dcConnector, minDcKw);
+                    if (newAc) setLimitViaJsp(3, minAcKw);
                     prevDcActive = active.dc;
                     prevAcActive = active.ac;
+                    prevDcConnector = active.dcConnector;
                     log(now, currents, criticalA, active, targetA - criticalA,
                         "START-MIN DC=" + (newDc ? minDcKw : stationLimitSafe(active.dcConnector))
                         + "kW AC=" + (newAc ? minAcKw : stationLimitSafe(3)) + "kW");
@@ -82,19 +97,18 @@ public final class LoadManager extends Thread {
                     continue;
                 }
 
-                // Match the old controller: session end is reset immediately, then wait
-                // for the next fresh status cycle instead of using stale values.
                 boolean sessionEnded = false;
                 if (!active.dc && prevDcActive) {
-                    station.setDcBudgetKw(minDcKw);
+                    if (prevDcConnector > 0) setLimitViaJsp(prevDcConnector, minDcKw);
                     sessionEnded = true;
                 }
                 if (!active.ac && prevAcActive) {
-                    station.setAcBudgetKw(minAcKw);
+                    setLimitViaJsp(3, minAcKw);
                     sessionEnded = true;
                 }
                 prevDcActive = active.dc;
                 prevAcActive = active.ac;
+                if (active.dc) prevDcConnector = active.dcConnector;
 
                 if (sessionEnded) {
                     log(now, currents, criticalA, active, targetA - criticalA, "SESSION-END RESET-MIN");
@@ -108,7 +122,6 @@ public final class LoadManager extends Thread {
                     continue;
                 }
 
-                // GridFailback owns the station at/above its guard threshold.
                 if (criticalA >= failbackGuardA) {
                     log(now, currents, criticalA, active, targetA - criticalA, "FAILBACK-GUARD");
                     sleepLoop();
@@ -132,8 +145,6 @@ public final class LoadManager extends Thread {
                 int requestedTotalKw = clamp((int)Math.round(requestedRawKw), minTotalKw, maxTotalKw);
                 int totalTargetKw;
 
-                // Exact legacy behavior: within the deadband keep the QC45-reported
-                // current total limit. Outside it, ramp only upward; reductions are immediate.
                 if (Math.abs(headroomA) < hysteresisA) {
                     totalTargetKw = Math.max(minTotalKw, currentTotalLimitKw);
                 } else if (requestedTotalKw > currentTotalLimitKw) {
@@ -147,16 +158,16 @@ public final class LoadManager extends Thread {
 
                 boolean changed = false;
                 if (active.dc && targets.dcKw != reportedDcLimitKw) {
-                    station.setDcBudgetKw(targets.dcKw);
+                    setLimitViaJsp(active.dcConnector, targets.dcKw);
                     changed = true;
                 }
                 if (active.ac && targets.acKw != reportedAcLimitKw) {
-                    station.setAcBudgetKw(targets.acKw);
+                    setLimitViaJsp(3, targets.acKw);
                     changed = true;
                 }
 
                 log(now, currents, criticalA, active, headroomA,
-                    (changed ? "SET" : "HOLD")
+                    (changed ? "SET-JSP" : "HOLD")
                     + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
                     + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
                     + " targetDC=" + targets.dcKw + " targetAC=" + targets.acKw
@@ -173,6 +184,42 @@ public final class LoadManager extends Thread {
         }
 
         System.out.println("[QC45] LoadManager stopped");
+    }
+
+    private void setLimitViaJsp(int connector, int kw) throws Exception {
+        int max = connector == 3 ? maxAcKw : maxDcKw;
+        int min = connector == 3 ? minAcKw : minDcKw;
+        kw = clamp(kw, min, max);
+
+        String url = LIMIT_URL
+            + "?connector=" + URLEncoder.encode(String.valueOf(connector), "UTF-8")
+            + "&kw=" + URLEncoder.encode(String.valueOf(kw), "UTF-8");
+
+        HttpURLConnection c = (HttpURLConnection)new URL(url).openConnection();
+        c.setConnectTimeout(1500);
+        c.setReadTimeout(4000);
+        c.setRequestMethod("GET");
+        c.setUseCaches(false);
+
+        int code = c.getResponseCode();
+        BufferedReader r = new BufferedReader(new InputStreamReader(
+            code >= 200 && code < 400 ? c.getInputStream() : c.getErrorStream(), "UTF-8"));
+        StringBuilder body = new StringBuilder();
+        try {
+            String line;
+            while ((line = r.readLine()) != null) body.append(line).append('\n');
+        } finally {
+            try { r.close(); } catch (Throwable ignored) {}
+            c.disconnect();
+        }
+
+        String text = body.toString();
+        if (code < 200 || code >= 300 || text.indexOf("OK") < 0) {
+            throw new IllegalStateException("currentlimit.jsp rejected connector=" + connector
+                + " kw=" + kw + " HTTP=" + code + " response=" + text.trim());
+        }
+
+        System.out.println("[QC45] currentlimit.jsp connector=" + connector + " kw=" + kw + " OK");
     }
 
     private Targets allocateFromActual(Active active, int totalTargetKw,
@@ -194,7 +241,6 @@ public final class LoadManager extends Thread {
             double half = delta / 2.0d;
             dcTarget += half;
             acTarget += half;
-
             if (acTarget > maxAcKw) {
                 double overflow = acTarget - maxAcKw;
                 acTarget = maxAcKw;
@@ -211,7 +257,6 @@ public final class LoadManager extends Thread {
             double dcReduction = Math.min(reduction, dcAvailable);
             dcTarget -= dcReduction;
             reduction -= dcReduction;
-
             if (reduction > 0.0d) {
                 double acAvailable = Math.max(0.0d, acTarget - minAcKw);
                 double acReduction = Math.min(reduction, acAvailable);
@@ -219,9 +264,9 @@ public final class LoadManager extends Thread {
             }
         }
 
-        int dc = clamp((int)Math.round(dcTarget), minDcKw, maxDcKw);
-        int ac = clamp((int)Math.round(acTarget), minAcKw, maxAcKw);
-        return new Targets(dc, ac);
+        return new Targets(
+            clamp((int)Math.round(dcTarget), minDcKw, maxDcKw),
+            clamp((int)Math.round(acTarget), minAcKw, maxAcKw));
     }
 
     private Active detectActive() throws Exception {
@@ -280,7 +325,6 @@ public final class LoadManager extends Thread {
         final boolean dc;
         final boolean ac;
         final int dcConnector;
-
         Active(boolean dc, boolean ac, int dcConnector) {
             this.dc = dc;
             this.ac = ac;
@@ -291,7 +335,6 @@ public final class LoadManager extends Thread {
     private static final class Targets {
         final int dcKw;
         final int acKw;
-
         Targets(int dcKw, int acKw) {
             this.dcKw = dcKw;
             this.acKw = acKw;
