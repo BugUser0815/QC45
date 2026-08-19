@@ -3,15 +3,14 @@ package de.rothner.qc45;
 /**
  * Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * Rules:
- * - regulate against the most loaded grid phase
- * - target defaults to 32 A (35 A service with 3 A reserve)
- * - active DC = CHAdeMO OR CCS, plus optional simultaneous Type2
- * - start every newly active connector at minimum power
- * - ramp power up slowly, reduce immediately
- * - while charging, continuously re-assert the current targets every loop because EVCSD may overwrite them
- * - do nothing while completely idle to avoid fighting QC45 idle defaults
- * - yield completely to GridFailback at/above its reduction threshold
+ * This intentionally mirrors the proven legacy Python controller:
+ * - use QC45-reported connector limits as the current controller state
+ * - derive total target from measured charger power + grid headroom
+ * - ramp only positive changes
+ * - reduce immediately
+ * - allocate DC+AC from measured connector powers
+ * - write a limit only when the QC45-reported value differs from the target
+ * - if EVCSD overwrites a limit, the next status cycle observes that change and corrects it
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
@@ -31,8 +30,6 @@ public final class LoadManager extends Thread {
     private volatile boolean running = true;
     private boolean prevDcActive;
     private boolean prevAcActive;
-    private int dcTargetKw;
-    private int acTargetKw;
     private long lastLog;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
@@ -53,8 +50,6 @@ public final class LoadManager extends Thread {
         this.maxAcKw = maxAcKw;
         this.rampUpKwPerLoop = rampUpKwPerLoop;
         this.intervalMs = intervalMs;
-        this.dcTargetKw = minDcKw;
-        this.acTargetKw = minAcKw;
     }
 
     public void shutdown() {
@@ -63,39 +58,49 @@ public final class LoadManager extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] LoadManager started target=" + one(targetA) + "A");
+        System.out.println("[QC45] LoadManager started target=" + one(targetA) + "A legacy-control-model=true");
 
         while (running) {
             long now = System.currentTimeMillis();
             try {
                 KsemClient.Currents currents = meter.readCurrents();
                 double criticalA = currents.max();
-
                 Active active = detectActive();
 
+                // Match the old controller: a newly active connector starts at 5 kW.
                 boolean newDc = active.dc && !prevDcActive;
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc || newAc) {
-                    if (newDc) dcTargetKw = minDcKw;
-                    if (newAc) acTargetKw = minAcKw;
-                    enforceTargets(active);
+                    if (newDc) station.setDcBudgetKw(minDcKw);
+                    if (newAc) station.setAcBudgetKw(minAcKw);
                     prevDcActive = active.dc;
                     prevAcActive = active.ac;
-                    log(now, currents, criticalA, active, 0.0d, "START-MIN");
+                    log(now, currents, criticalA, active, targetA - criticalA,
+                        "START-MIN DC=" + (newDc ? minDcKw : stationLimitSafe(active.dcConnector))
+                        + "kW AC=" + (newAc ? minAcKw : stationLimitSafe(3)) + "kW");
                     sleepLoop();
                     continue;
                 }
 
+                // Match the old controller: session end is reset immediately, then wait
+                // for the next fresh status cycle instead of using stale values.
+                boolean sessionEnded = false;
                 if (!active.dc && prevDcActive) {
-                    dcTargetKw = minDcKw;
-                    station.setDcBudgetKw(dcTargetKw);
+                    station.setDcBudgetKw(minDcKw);
+                    sessionEnded = true;
                 }
                 if (!active.ac && prevAcActive) {
-                    acTargetKw = minAcKw;
-                    station.setAcBudgetKw(acTargetKw);
+                    station.setAcBudgetKw(minAcKw);
+                    sessionEnded = true;
                 }
                 prevDcActive = active.dc;
                 prevAcActive = active.ac;
+
+                if (sessionEnded) {
+                    log(now, currents, criticalA, active, targetA - criticalA, "SESSION-END RESET-MIN");
+                    sleepLoop();
+                    continue;
+                }
 
                 if (!active.dc && !active.ac) {
                     log(now, currents, criticalA, active, targetA - criticalA, "IDLE");
@@ -103,22 +108,9 @@ public final class LoadManager extends Thread {
                     continue;
                 }
 
-                // GridFailback owns the station from this point upward. Do not fight it.
+                // GridFailback owns the station at/above its guard threshold.
                 if (criticalA >= failbackGuardA) {
                     log(now, currents, criticalA, active, targetA - criticalA, "FAILBACK-GUARD");
-                    sleepLoop();
-                    continue;
-                }
-
-                double headroomA = targetA - criticalA;
-
-                // HOLD still re-writes every active limit. EVCSD is known to overwrite
-                // maxPower/maxPowerAC/fixed limits asynchronously.
-                if (Math.abs(headroomA) < hysteresisA) {
-                    enforceTargets(active);
-                    log(now, currents, criticalA, active, headroomA,
-                        "HOLD/REASSERT DC=" + (active.dc ? dcTargetKw : 0)
-                        + "kW AC=" + (active.ac ? acTargetKw : 0) + "kW");
                     sleepLoop();
                     continue;
                 }
@@ -127,21 +119,48 @@ public final class LoadManager extends Thread {
                 int actualAcKw = active.ac ? station.powerKw(3) : 0;
                 int actualTotalKw = actualDcKw + actualAcKw;
 
-                double desiredRawKw = actualTotalKw + headroomA * SQRT3_400_KW_PER_A;
-                int minTotal = (active.dc ? minDcKw : 0) + (active.ac ? minAcKw : 0);
-                int maxTotal = (active.dc ? maxDcKw : 0) + (active.ac ? maxAcKw : 0);
-                int desiredTotalKw = clamp((int)Math.floor(desiredRawKw), minTotal, maxTotal);
+                int reportedDcLimitKw = active.dc ? station.limitKw(active.dcConnector) : 0;
+                int reportedAcLimitKw = active.ac ? station.limitKw(3) : 0;
+                int currentTotalLimitKw = reportedDcLimitKw + reportedAcLimitKw;
 
-                int currentTargetTotal = (active.dc ? dcTargetKw : 0) + (active.ac ? acTargetKw : 0);
-                if (desiredTotalKw > currentTargetTotal) {
-                    desiredTotalKw = Math.min(desiredTotalKw, currentTargetTotal + rampUpKwPerLoop);
+                int activeCount = (active.dc ? 1 : 0) + (active.ac ? 1 : 0);
+                int minTotalKw = (active.dc ? minDcKw : 0) + (active.ac ? minAcKw : 0);
+                int maxTotalKw = (active.dc ? maxDcKw : 0) + (active.ac ? maxAcKw : 0);
+                double headroomA = targetA - criticalA;
+
+                double requestedRawKw = actualTotalKw + headroomA * SQRT3_400_KW_PER_A;
+                int requestedTotalKw = clamp((int)Math.round(requestedRawKw), minTotalKw, maxTotalKw);
+                int totalTargetKw;
+
+                // Exact legacy behavior: within the deadband keep the QC45-reported
+                // current total limit. Outside it, ramp only upward; reductions are immediate.
+                if (Math.abs(headroomA) < hysteresisA) {
+                    totalTargetKw = Math.max(minTotalKw, currentTotalLimitKw);
+                } else if (requestedTotalKw > currentTotalLimitKw) {
+                    totalTargetKw = Math.min(requestedTotalKw, currentTotalLimitKw + rampUpKwPerLoop);
+                } else {
+                    totalTargetKw = requestedTotalKw;
+                }
+                totalTargetKw = clamp(totalTargetKw, minTotalKw, maxTotalKw);
+
+                Targets targets = allocateFromActual(active, totalTargetKw, actualDcKw, actualAcKw);
+
+                boolean changed = false;
+                if (active.dc && targets.dcKw != reportedDcLimitKw) {
+                    station.setDcBudgetKw(targets.dcKw);
+                    changed = true;
+                }
+                if (active.ac && targets.acKw != reportedAcLimitKw) {
+                    station.setAcBudgetKw(targets.acKw);
+                    changed = true;
                 }
 
-                allocate(active, desiredTotalKw);
-                enforceTargets(active);
-
                 log(now, currents, criticalA, active, headroomA,
-                    "SET DC=" + (active.dc ? dcTargetKw : 0) + "kW AC=" + (active.ac ? acTargetKw : 0) + "kW");
+                    (changed ? "SET" : "HOLD")
+                    + " actualDC=" + actualDcKw + " actualAC=" + actualAcKw
+                    + " reportedDC=" + reportedDcLimitKw + " reportedAC=" + reportedAcLimitKw
+                    + " targetDC=" + targets.dcKw + " targetAC=" + targets.acKw
+                    + " totalTarget=" + totalTargetKw + " activeCount=" + activeCount);
 
             } catch (Throwable e) {
                 if (now - lastLog >= 5000L) {
@@ -156,9 +175,53 @@ public final class LoadManager extends Thread {
         System.out.println("[QC45] LoadManager stopped");
     }
 
-    private void enforceTargets(Active active) throws Exception {
-        if (active.dc) station.setDcBudgetKw(dcTargetKw);
-        if (active.ac) station.setAcBudgetKw(acTargetKw);
+    private Targets allocateFromActual(Active active, int totalTargetKw,
+                                       int actualDcKw, int actualAcKw) {
+        if (active.dc && !active.ac) {
+            return new Targets(clamp(totalTargetKw, minDcKw, maxDcKw), 0);
+        }
+        if (!active.dc && active.ac) {
+            return new Targets(0, clamp(totalTargetKw, minAcKw, maxAcKw));
+        }
+
+        int dcActual = Math.max(minDcKw, actualDcKw);
+        int acActual = Math.max(minAcKw, actualAcKw);
+        int delta = totalTargetKw - (dcActual + acActual);
+        double dcTarget = dcActual;
+        double acTarget = acActual;
+
+        if (delta >= 0) {
+            double half = delta / 2.0d;
+            dcTarget += half;
+            acTarget += half;
+
+            if (acTarget > maxAcKw) {
+                double overflow = acTarget - maxAcKw;
+                acTarget = maxAcKw;
+                dcTarget += overflow;
+            }
+            if (dcTarget > maxDcKw) {
+                double overflow = dcTarget - maxDcKw;
+                dcTarget = maxDcKw;
+                acTarget += overflow;
+            }
+        } else {
+            double reduction = -delta;
+            double dcAvailable = Math.max(0.0d, dcTarget - minDcKw);
+            double dcReduction = Math.min(reduction, dcAvailable);
+            dcTarget -= dcReduction;
+            reduction -= dcReduction;
+
+            if (reduction > 0.0d) {
+                double acAvailable = Math.max(0.0d, acTarget - minAcKw);
+                double acReduction = Math.min(reduction, acAvailable);
+                acTarget -= acReduction;
+            }
+        }
+
+        int dc = clamp((int)Math.round(dcTarget), minDcKw, maxDcKw);
+        int ac = clamp((int)Math.round(acTarget), minAcKw, maxAcKw);
+        return new Targets(dc, ac);
     }
 
     private Active detectActive() throws Exception {
@@ -180,41 +243,18 @@ public final class LoadManager extends Thread {
         return new Active(dcConnector != 0, ac, dcConnector);
     }
 
-    private void allocate(Active active, int desiredTotalKw) {
-        if (active.dc && !active.ac) {
-            dcTargetKw = clamp(desiredTotalKw, minDcKw, maxDcKw);
-            return;
-        }
-        if (!active.dc && active.ac) {
-            acTargetKw = clamp(desiredTotalKw, minAcKw, maxAcKw);
-            return;
-        }
-
-        int currentTotal = dcTargetKw + acTargetKw;
-        if (desiredTotalKw < currentTotal) {
-            int reduction = currentTotal - desiredTotalKw;
-            int dcRoom = dcTargetKw - minDcKw;
-            int fromDc = Math.min(reduction, dcRoom);
-            dcTargetKw -= fromDc;
-            reduction -= fromDc;
-            if (reduction > 0) acTargetKw = Math.max(minAcKw, acTargetKw - reduction);
-            return;
-        }
-
-        int addition = desiredTotalKw - currentTotal;
-        while (addition > 0) {
-            boolean dcCan = dcTargetKw < maxDcKw;
-            boolean acCan = acTargetKw < maxAcKw;
-            if (!dcCan && !acCan) break;
-            if (dcCan) { dcTargetKw++; addition--; }
-            if (addition > 0 && acCan) { acTargetKw++; addition--; }
-        }
+    private int stationLimitSafe(int connector) {
+        if (connector <= 0) return 0;
+        try { return station.limitKw(connector); }
+        catch (Throwable ignored) { return 0; }
     }
 
     private void log(long now, KsemClient.Currents c, double criticalA,
                      Active active, double headroomA, String action) {
-        if (now - lastLog < 5000L && !action.startsWith("SET") && !action.equals("START-MIN")
-                && !action.equals("FAILBACK-GUARD") && !action.startsWith("HOLD/REASSERT")) return;
+        if (now - lastLog < 5000L && !action.startsWith("SET")
+                && !action.startsWith("START-MIN")
+                && !action.startsWith("SESSION-END")
+                && !action.equals("FAILBACK-GUARD")) return;
 
         String mode = active.dc && active.ac ? "DC+AC" : active.dc ? "DC" : active.ac ? "AC" : "IDLE";
         System.out.println("[QC45] LoadManager " + mode
@@ -245,6 +285,16 @@ public final class LoadManager extends Thread {
             this.dc = dc;
             this.ac = ac;
             this.dcConnector = dcConnector;
+        }
+    }
+
+    private static final class Targets {
+        final int dcKw;
+        final int acKw;
+
+        Targets(int dcKw, int acKw) {
+            this.dcKw = dcKw;
+            this.acKw = acKw;
         }
     }
 }
