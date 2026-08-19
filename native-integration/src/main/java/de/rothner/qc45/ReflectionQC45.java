@@ -112,7 +112,11 @@ public final class ReflectionQC45 {
     public void setAcBudgetKw(int kw) throws Exception {
         kw = clamp(kw, 0, 22);
         Object conf = configuration();
+
+        // Keep all AC limits in sync. Some EVCSD builds keep a separate
+        // maxPowerAC field in addition to setMaxPowerAC() and ACMaxPowerFixed.
         configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
+        setMaxPowerACField(kw);
         setAcMaxPowerFixed(kw);
         setSatelliteLimit(3, kw, false);
 
@@ -140,7 +144,15 @@ public final class ReflectionQC45 {
     }
 
     public int maxPowerAC() throws Exception {
-        return ((Number) configurationClass.getMethod("getMaxPowerAC").invoke(configuration())).intValue();
+        Object conf = configuration();
+        try {
+            return ((Number) configurationClass.getMethod("getMaxPowerAC").invoke(conf)).intValue();
+        } catch (NoSuchMethodException e) {
+            Field f = findField(configurationClass, "maxPowerAC", "MaxPowerAC");
+            if (f == null) throw e;
+            f.setAccessible(true);
+            return ((Number) f.get(conf)).intValue();
+        }
     }
 
     public int acMaxPowerFixed() throws Exception {
@@ -174,6 +186,15 @@ public final class ReflectionQC45 {
             if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
             else f.set(conf, Integer.valueOf(kw));
         }
+    }
+
+    private void setMaxPowerACField(int kw) throws Exception {
+        Object conf = configuration();
+        Field f = findField(configurationClass, "maxPowerAC", "MaxPowerAC");
+        if (f == null) throw new NoSuchFieldException("maxPowerAC");
+        f.setAccessible(true);
+        if (f.getType() == Integer.TYPE) f.setInt(conf, kw);
+        else f.set(conf, Integer.valueOf(kw));
     }
 
     private void setAcMaxPowerFixed(int kw) throws Exception {
