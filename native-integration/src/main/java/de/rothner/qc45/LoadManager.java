@@ -1,16 +1,11 @@
 package de.rothner.qc45;
 
-import java.lang.reflect.Method;
-
 /** Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * Normal load balancing deliberately controls DC only. Type2/AC is never
- * manipulated here. Its grid consumption is still visible through the KSEM and
- * therefore reduces the headroom available to the active DC connector.
- *
- * The only EVCSD value modified by this class is SatelliteModule.setMaxPower()
- * on connector 1 or 2. No Configuration, fixed-power, CCS-current or AC values
- * are touched by the load manager.
+ * This is the proven Version 1.0 control logic, restricted to the two DC
+ * connectors. Connector 3 (Type2/AC) is deliberately never detected or
+ * controlled here. Its consumption is still included in the KSEM phase
+ * currents and therefore reduces the headroom available to DC.
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
@@ -55,11 +50,11 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started DC-only target=" + one(targetA)
-            + "A ramp=" + rampUpKwPerLoop + "kW/loop control=Satellite.setMaxPower");
+            + "A ramp=" + rampUpKwPerLoop + "kW/loop control=v1.0");
 
         try {
-            setConnectorPowerOnly(1, minDcKw);
-            setConnectorPowerOnly(2, minDcKw);
+            setLimitNative(1, minDcKw);
+            setLimitNative(2, minDcKw);
         } catch (Throwable e) {
             System.err.println("[QC45] LoadManager startup reset failed: " + e);
         }
@@ -73,7 +68,7 @@ public final class LoadManager extends Thread {
 
                 boolean newDc = active.dc && (!prevDcActive || active.dcConnector != prevDcConnector);
                 if (newDc) {
-                    setConnectorPowerOnly(active.dcConnector, minDcKw);
+                    setLimitNative(active.dcConnector, minDcKw);
                     prevDcActive = true;
                     prevDcConnector = active.dcConnector;
                     System.out.println("[QC45] LoadManager session start DC=" + active.dcConnector);
@@ -82,7 +77,7 @@ public final class LoadManager extends Thread {
                 }
 
                 if (!active.dc && prevDcActive) {
-                    if (prevDcConnector > 0) setConnectorPowerOnly(prevDcConnector, minDcKw);
+                    if (prevDcConnector > 0) setLimitNative(prevDcConnector, minDcKw);
                     prevDcActive = false;
                     prevDcConnector = 0;
                     System.out.println("[QC45] LoadManager session end");
@@ -105,39 +100,50 @@ public final class LoadManager extends Thread {
                 }
 
                 int actualDcKw = station.powerKw(active.dcConnector);
-                int currentLimitKw = station.limitKw(active.dcConnector);
-                currentLimitKw = clamp(currentLimitKw, minDcKw, maxDcKw);
+                int reportedDcLimitKw = station.limitKw(active.dcConnector);
+                int currentTotalLimitKw = reportedDcLimitKw;
+                int minTotalKw = minDcKw;
+                int maxTotalKw = maxDcKw;
                 double headroomA = targetA - criticalA;
 
-                int targetKw;
+                int totalTargetKw;
                 if (Math.abs(headroomA) < hysteresisA) {
-                    targetKw = currentLimitKw;
+                    // Version 1.0 deadband: keep the currently commanded limit.
+                    totalTargetKw = currentTotalLimitKw;
                 } else if (headroomA < 0.0d) {
-                    // Above the grid target: only reduce from the currently
-                    // commanded connector power. Never derive a higher target
-                    // from lagging actual vehicle power.
-                    double reducedRawKw = currentLimitKw
+                    // Version 1.0 safety rule: when above grid target, reduce from
+                    // the commanded limit and never derive a higher limit from
+                    // lagging vehicle power.
+                    double reducedRawKw = currentTotalLimitKw
                         + headroomA * SQRT3_400_KW_PER_A;
-                    targetKw = Math.min(currentLimitKw, (int)Math.round(reducedRawKw));
+                    totalTargetKw = (int)Math.round(reducedRawKw);
+                    totalTargetKw = Math.min(totalTargetKw, currentTotalLimitKw);
                 } else {
-                    // Below target: retain the proven fast ramp. Actual DC power
-                    // is used to estimate available headroom, while the ramp is
-                    // anchored to the current connector command.
+                    // Proven Version 1.0 fast ramp, normally +2 kW per loop.
                     double requestedRawKw = actualDcKw
                         + headroomA * SQRT3_400_KW_PER_A;
-                    int requestedKw = clamp((int)Math.round(requestedRawKw), minDcKw, maxDcKw);
-                    if (requestedKw > currentLimitKw) {
-                        targetKw = Math.min(requestedKw, currentLimitKw + rampUpKwPerLoop);
+                    int requestedTotalKw = clamp((int)Math.round(requestedRawKw),
+                        minTotalKw, maxTotalKw);
+                    if (requestedTotalKw > currentTotalLimitKw) {
+                        totalTargetKw = Math.min(requestedTotalKw,
+                            currentTotalLimitKw + rampUpKwPerLoop);
                     } else {
-                        targetKw = requestedKw;
+                        totalTargetKw = requestedTotalKw;
                     }
                 }
 
-                targetKw = clamp(targetKw, minDcKw, maxDcKw);
-                if (targetKw != currentLimitKw) {
-                    setConnectorPowerOnly(active.dcConnector, targetKw);
+                totalTargetKw = clamp(totalTargetKw, minTotalKw, maxTotalKw);
+                int targetDcKw = totalTargetKw;
+
+                // Preserve the Version 1.0 negative-headroom protection.
+                if (headroomA < -hysteresisA) {
+                    targetDcKw = Math.min(targetDcKw, reportedDcLimitKw);
+                }
+
+                if (targetDcKw != reportedDcLimitKw) {
+                    setLimitNative(active.dcConnector, targetDcKw);
                     System.out.println("[QC45] LoadManager set grid=" + one(criticalA)
-                        + "A DC" + active.dcConnector + "=" + targetKw + "kW");
+                        + "A DC" + active.dcConnector + "=" + targetDcKw + "kW");
                 }
 
             } catch (Throwable e) {
@@ -153,37 +159,12 @@ public final class LoadManager extends Thread {
         System.out.println("[QC45] LoadManager stopped");
     }
 
-    /**
-     * Pure connector-power control. This intentionally bypasses
-     * ReflectionQC45.setConnectorLimitKw(), because that compatibility method
-     * also changes global/fixed limits and CCS helper values.
-     */
-    private void setConnectorPowerOnly(int connector, int kw) throws Exception {
+    /** Version 1.0 control path. Connector 3 is intentionally rejected. */
+    private void setLimitNative(int connector, int kw) throws Exception {
         if (connector != 1 && connector != 2) {
             throw new IllegalArgumentException("LoadManager controls DC connector 1 or 2 only");
         }
-        kw = clamp(kw, minDcKw, maxDcKw);
-
-        Class<?> centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
-        Object cm = centralClass.getMethod("getCurrentModule").invoke(null);
-        if (cm == null) throw new IllegalStateException("CentralModule unavailable");
-
-        Object[] sats = (Object[]) centralClass.getMethod("getSatellites").invoke(cm);
-        if (sats == null) throw new IllegalStateException("Satellites unavailable");
-
-        for (int i = 0; i < sats.length; i++) {
-            Object sat = sats[i];
-            if (sat == null) continue;
-            Method getId = sat.getClass().getMethod("getSatelliteId");
-            int id = ((Number)getId.invoke(sat)).intValue();
-            if (id != connector) continue;
-
-            sat.getClass().getMethod("setMaxPower", Integer.TYPE)
-                .invoke(sat, Integer.valueOf(kw));
-            return;
-        }
-
-        throw new IllegalArgumentException("Connector unavailable: " + connector);
+        station.setConnectorLimitKw(connector, clamp(kw, minDcKw, maxDcKw));
     }
 
     private Active detectActiveDc() throws Exception {
