@@ -18,7 +18,6 @@ public final class ModbusServer extends Thread {
     private final int port;
     private volatile boolean running = true;
     private volatile ServerSocket serverSocket;
-    private final long[] lastEnergyQueryMs = new long[4];
 
     public ModbusServer(ReflectionQC45 station, int port) {
         super("qc45-modbus-" + port);
@@ -159,14 +158,12 @@ public final class ModbusServer extends Thread {
             case 30: return station.remoteStarted() ? 1 : 0;
             case 40: return station.globalMaxPower();
             case 41: return station.maxPowerAC();
-            // Energy counters are unsigned 32-bit Wh, high word first.
             case 50: return energyWord(1, true);
             case 51: return energyWord(1, false);
             case 52: return energyWord(2, true);
             case 53: return energyWord(2, false);
             case 54: return energyWord(3, true);
             case 55: return energyWord(3, false);
-            // Overall state: 0=idle, 1=session/connected, 2=charging.
             case 60: return overallStatus();
             case 100: {
                 int dc = activeDcConnector();
@@ -182,11 +179,6 @@ public final class ModbusServer extends Thread {
         }
     }
 
-    /**
-     * A real EVCSD transaction is authoritative. The idTag/power fallback keeps
-     * compatibility with firmware states where the transaction object is not yet
-     * attached during the short start/stop transition.
-     */
     private boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
         try {
@@ -196,7 +188,6 @@ public final class ModbusServer extends Thread {
         return station.powerKw(connector) > 0 || station.idTag(connector).length() > 0;
     }
 
-    /** Logical DC connector, including a paused zero-power transaction. */
     private int activeDcConnector() throws Exception {
         int p1 = station.powerKw(1);
         int p2 = station.powerKw(2);
@@ -218,17 +209,12 @@ public final class ModbusServer extends Thread {
     }
 
     /**
-     * EVCSD getEnergy() only triggers an asynchronous satellite query. The
-     * actual cached meter value is returned by getCurrentEnergy() in Wh.
+     * Read only EVCSD's cached energy value. Do NOT call SatelliteModule.getEnergy()
+     * here: that method performs a synchronous satellite request using the global
+     * CentralModule.satRequest lock and can block for up to the firmware timeout.
      */
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
-        long now = System.currentTimeMillis();
-        if (connector >= 1 && connector <= 3 && now - lastEnergyQueryMs[connector] >= 1000L) {
-            try { sat.getClass().getMethod("getEnergy").invoke(sat); }
-            catch (NoSuchMethodException ignored) {}
-            lastEnergyQueryMs[connector] = now;
-        }
         Object value = sat.getClass().getMethod("getCurrentEnergy").invoke(sat);
         return value instanceof Number ? ((Number) value).longValue() & 0xffffffffL : 0L;
     }
@@ -238,7 +224,6 @@ public final class ModbusServer extends Thread {
         return high ? (int) ((value >>> 16) & 0xffffL) : (int) (value & 0xffffL);
     }
 
-    /** Access the already existing live EVCSD SatelliteModule through the adapter. */
     private Object satellite(int connector) throws Exception {
         Method method = ReflectionQC45.class.getDeclaredMethod("satellite", Integer.TYPE);
         method.setAccessible(true);
