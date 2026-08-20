@@ -13,17 +13,20 @@ public final class Integration {
     private final Ocpp15BridgeServer ocpp15Bridge;
     private final LoadManager loadManager;
     private final GridFailback failback;
+    private final EvcsdLagMonitor lagMonitor;
 
     private Integration(ReflectionQC45 station, ModbusServer modbus,
                         OcppBridgeClient ocppBridge,
                         Ocpp15BridgeServer ocpp15Bridge,
-                        LoadManager loadManager, GridFailback failback) {
+                        LoadManager loadManager, GridFailback failback,
+                        EvcsdLagMonitor lagMonitor) {
         this.station = station;
         this.modbus = modbus;
         this.ocppBridge = ocppBridge;
         this.ocpp15Bridge = ocpp15Bridge;
         this.loadManager = loadManager;
         this.failback = failback;
+        this.lagMonitor = lagMonitor;
     }
 
     public static Integration start() throws Exception {
@@ -53,6 +56,7 @@ public final class Integration {
 
         boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
         boolean failbackEnabled = bool(p, "failback.enabled", true);
+        boolean lagMonitorEnabled = bool(p, "evcsd.lagmonitor.enabled", true);
 
         KsemClient meter = null;
         if (loadManagerEnabled || failbackEnabled) {
@@ -92,19 +96,25 @@ public final class Integration {
             integer(p, "failback.meterFailureMs", 3000),
             integer(p, "failback.resetDelayMs", 60000)) : null;
 
+        EvcsdLagMonitor lagMonitor = lagMonitorEnabled ? new EvcsdLagMonitor(
+            integer(p, "evcsd.lagmonitor.intervalMs", 60000),
+            integer(p, "evcsd.lagmonitor.warnMs", 250)) : null;
+
         Integration integration = new Integration(
-            station, modbus, ocppBridge, ocpp15Bridge, loadManager, failback);
+            station, modbus, ocppBridge, ocpp15Bridge, loadManager, failback, lagMonitor);
 
         ocppBridge.start();
         if (ocpp15Bridge != null) ocpp15Bridge.start();
         modbus.start();
         if (loadManager != null) loadManager.start();
         if (failback != null) failback.start();
+        if (lagMonitor != null) lagMonitor.start();
         System.out.println("[QC45] native integration started");
         return integration;
     }
 
     public void stop() {
+        try { if (lagMonitor != null) lagMonitor.shutdown(); } catch (Throwable ignored) {}
         try { if (failback != null) failback.shutdown(); } catch (Throwable ignored) {}
         try { if (loadManager != null) loadManager.shutdown(); } catch (Throwable ignored) {}
         try { if (ocpp15Bridge != null) ocpp15Bridge.shutdown(); } catch (Throwable ignored) {}
