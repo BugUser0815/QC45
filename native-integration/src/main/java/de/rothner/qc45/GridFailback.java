@@ -1,11 +1,14 @@
 package de.rothner.qc45;
 
 /**
- * Independent grid-current failback.
+ * Independent grid-current failback for the two DC connectors.
  *
- * Stage 1: if any phase stays above reduceA long enough, force QC45 DC/AC budgets down.
- * Stage 2: if any phase stays above tripA long enough, or exceeds instantTripA, stop all connectors and latch.
- * KSEM communication loss sets DC/AC to 0 kW while keeping transactions alive.
+ * Stage 1: if any phase stays above reduceA long enough, force the QC45 DC budget down.
+ * Stage 2: if any phase stays above tripA long enough, or exceeds instantTripA, stop DC connectors and latch.
+ * KSEM communication loss sets DC to 0 kW while keeping the transaction alive.
+ *
+ * Connector 3 (Type2/AC) is deliberately never modified or stopped here.
+ * Its consumption is still included in the KSEM phase currents.
  *
  * A hard-trip latch clears automatically after resetDelayMs of continuous valid KSEM readings
  * with every phase below reduceA. Any overcurrent or KSEM read failure restarts the timer.
@@ -19,7 +22,6 @@ public final class GridFailback extends Thread {
     private final long tripDelayMs;
     private final double instantTripA;
     private final int reduceDcKw;
-    private final int reduceAcKw;
     private final int intervalMs;
     private final boolean tripOnMeterFailure;
     private final long meterFailureMs;
@@ -48,7 +50,6 @@ public final class GridFailback extends Thread {
         this.tripDelayMs = tripDelayMs;
         this.instantTripA = instantTripA;
         this.reduceDcKw = reduceDcKw;
-        this.reduceAcKw = reduceAcKw;
         this.intervalMs = intervalMs;
         this.tripOnMeterFailure = tripOnMeterFailure;
         this.meterFailureMs = meterFailureMs;
@@ -61,7 +62,8 @@ public final class GridFailback extends Thread {
 
     public void run() {
         lastGoodRead = System.currentTimeMillis();
-        System.out.println("[QC45] GridFailback started auto-reset=" + resetDelayMs + "ms stable-below=" + one(reduceA) + "A");
+        System.out.println("[QC45] GridFailback started DC-only auto-reset=" + resetDelayMs
+            + "ms stable-below=" + one(reduceA) + "A");
 
         while (running) {
             long now = System.currentTimeMillis();
@@ -157,7 +159,6 @@ public final class GridFailback extends Thread {
 
     private void forceMinimum() throws Exception {
         station.setDcBudgetKw(reduceDcKw);
-        station.setAcBudgetKw(reduceAcKw);
     }
 
     private synchronized void pauseForMeterFailure(long outageMs) {
@@ -165,9 +166,8 @@ public final class GridFailback extends Thread {
         meterPaused = true;
         goodReadsAfterMeterPause = 0;
         System.err.println("[QC45] GRID FAILBACK METER PAUSE: KSEM communication lost for " + outageMs
-            + "ms -> DC=0kW AC=0kW, transactions remain active");
+            + "ms -> DC=0kW, connector 3 untouched, transaction remains active");
         try { station.setDcBudgetKw(0); } catch (Throwable e) { System.err.println("[QC45] meter-pause DC=0 failed: " + e); }
-        try { station.setAcBudgetKw(0); } catch (Throwable e) { System.err.println("[QC45] meter-pause AC=0 failed: " + e); }
     }
 
     private synchronized void clearMeterPause() {
@@ -185,7 +185,7 @@ public final class GridFailback extends Thread {
         meterPaused = false;
         resetSince = 0L;
         System.err.println("[QC45] GRID FAILBACK TRIP: " + reason
-            + " [latched; auto-reset after " + resetDelayMs + "ms stable below " + one(reduceA) + "A]");
+            + " [DC-only; latched; auto-reset after " + resetDelayMs + "ms stable below " + one(reduceA) + "A]");
         enforceHardTripOnce();
     }
 
@@ -202,8 +202,7 @@ public final class GridFailback extends Thread {
 
     private void enforceHardTripOnce() {
         try { station.setDcBudgetKw(reduceDcKw); } catch (Throwable e) { System.err.println("[QC45] failback DC reduction failed: " + e); }
-        try { station.setAcBudgetKw(reduceAcKw); } catch (Throwable e) { System.err.println("[QC45] failback AC reduction failed: " + e); }
-        for (int connector = 1; connector <= 3; connector++) {
+        for (int connector = 1; connector <= 2; connector++) {
             try { station.remoteStop(connector); } catch (Throwable ignored) {}
         }
     }
