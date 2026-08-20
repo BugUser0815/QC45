@@ -18,6 +18,12 @@ ocpp15.bridge.timeoutMs=10000
 # evcc / local load management
 modbus.port=1502
 
+# Lightweight EVCSD internal executor lag probe.
+# One tiny marker task per interval; warnings are logged above warnMs.
+evcsd.lagmonitor.enabled=true
+evcsd.lagmonitor.intervalMs=60000
+evcsd.lagmonitor.warnMs=250
+
 # KOSTAL KSEM shared by LoadManager and GridFailback
 ksem.host=10.0.0.70
 ksem.port=502
