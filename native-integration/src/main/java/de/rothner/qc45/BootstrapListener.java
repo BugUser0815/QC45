@@ -19,7 +19,9 @@ public final class BootstrapListener implements ServletContextListener {
 
         try {
             CcsHardwareOverride.apply();
+            CcsProtocolV3Enforcer.apply();
             integration = Integration.start();
+            CcsProtocolV3Enforcer.apply();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
                 CcsRawTracerV2.installFromDefaultConfig();
