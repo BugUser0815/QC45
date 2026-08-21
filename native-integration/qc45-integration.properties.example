@@ -44,6 +44,11 @@ evcsd.ccsRawTrace.repeatMs=1000
 
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
+# Persistent lag >= 1000 ms for three consecutive probes arms a FULL DEVICE
+# reboot. Reboot is deferred until all connectors have no active transaction,
+# report 0 kW, and remain idle for 30 seconds. The Java process executes
+# `sudo -n /sbin/reboot`, therefore the EVCSD runtime user must have passwordless
+# permission for /sbin/reboot or the reboot attempt will be rejected and logged.
 evcsd.lagmonitor.enabled=true
 evcsd.lagmonitor.intervalMs=60000
 evcsd.lagmonitor.warnMs=250
