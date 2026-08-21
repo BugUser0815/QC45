@@ -2,10 +2,14 @@ package de.rothner.qc45;
 
 /** Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * This is the proven Version 1.0 control logic, restricted to the two DC
- * connectors. Connector 3 (Type2/AC) is deliberately never detected or
- * controlled here. Its consumption is still included in the KSEM phase
- * currents and therefore reduces the headroom available to DC.
+ * Version 1.0 DC control logic with an important start-safety guard:
+ * while no DC session is active, all DC-relevant EVCSD limits are continuously
+ * pre-armed to minDcKw. This prevents a new CCS/CHAdeMO session from starting
+ * from a stale 50/120 kW firmware value before the first load-manager cycle.
+ *
+ * Connector 3 (Type2/AC) is deliberately never detected or controlled here.
+ * Its consumption is still included in the KSEM phase currents and therefore
+ * reduces the headroom available to DC.
  */
 public final class LoadManager extends Thread {
     private static final double SQRT3_400_KW_PER_A = 0.692820323d;
@@ -24,6 +28,7 @@ public final class LoadManager extends Thread {
     private boolean prevDcActive;
     private int prevDcConnector;
     private long lastErrorLog;
+    private long lastIdlePreArmLog;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
                        double targetA, double failbackGuardA, double hysteresisA,
@@ -50,13 +55,12 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started DC-only target=" + one(targetA)
-            + "A ramp=" + rampUpKwPerLoop + "kW/loop control=v1.0");
+            + "A ramp=" + rampUpKwPerLoop + "kW/loop control=v1.0 prearm=" + minDcKw + "kW");
 
         try {
-            setLimitNative(1, minDcKw);
-            setLimitNative(2, minDcKw);
+            preArmDc();
         } catch (Throwable e) {
-            System.err.println("[QC45] LoadManager startup reset failed: " + e);
+            System.err.println("[QC45] LoadManager startup pre-arm failed: " + e);
         }
 
         while (running) {
@@ -68,10 +72,13 @@ public final class LoadManager extends Thread {
 
                 boolean newDc = active.dc && (!prevDcActive || active.dcConnector != prevDcConnector);
                 if (newDc) {
+                    // Re-assert the minimum immediately at session discovery. The
+                    // normal ramp may only start on a later loop iteration.
                     setLimitNative(active.dcConnector, minDcKw);
                     prevDcActive = true;
                     prevDcConnector = active.dcConnector;
-                    System.out.println("[QC45] LoadManager session start DC=" + active.dcConnector);
+                    System.out.println("[QC45] LoadManager session start DC=" + active.dcConnector
+                        + " prearmed=" + minDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
@@ -80,12 +87,25 @@ public final class LoadManager extends Thread {
                     if (prevDcConnector > 0) setLimitNative(prevDcConnector, minDcKw);
                     prevDcActive = false;
                     prevDcConnector = 0;
-                    System.out.println("[QC45] LoadManager session end");
+                    preArmDc();
+                    System.out.println("[QC45] LoadManager session end; DC prearmed=" + minDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
 
                 if (!active.dc) {
+                    // Critical safety behaviour: keep the firmware's global DC,
+                    // fixed DC and both satellite limits at the minimum while idle.
+                    // EVCSD can otherwise restore a stale high value before a new
+                    // charging session and the vehicle can jump to full power before
+                    // current-based failback gets its first useful sample.
+                    if (needsIdlePreArm()) {
+                        preArmDc();
+                        if (now - lastIdlePreArmLog >= 5000L) {
+                            System.out.println("[QC45] LoadManager idle DC limits re-armed to " + minDcKw + "kW");
+                            lastIdlePreArmLog = now;
+                        }
+                    }
                     sleepLoop();
                     continue;
                 }
@@ -93,14 +113,22 @@ public final class LoadManager extends Thread {
                 prevDcActive = true;
                 prevDcConnector = active.dcConnector;
 
-                // GridFailback owns the emergency/reduction area. Do not fight it.
+                // Do not merely wait for GridFailback here. If this loop sees the
+                // guard threshold, force the DC limit to minimum immediately as a
+                // second independent safety path.
                 if (criticalA >= failbackGuardA) {
+                    int reported = station.limitKw(active.dcConnector);
+                    if (reported != minDcKw) {
+                        setLimitNative(active.dcConnector, minDcKw);
+                        System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
+                            + "A -> DC" + active.dcConnector + "=" + minDcKw + "kW");
+                    }
                     sleepLoop();
                     continue;
                 }
 
                 int actualDcKw = station.powerKw(active.dcConnector);
-                int reportedDcLimitKw = station.limitKw(active.dcConnector);
+                int reportedDcLimitKw = clamp(station.limitKw(active.dcConnector), minDcKw, maxDcKw);
                 int currentTotalLimitKw = reportedDcLimitKw;
                 int minTotalKw = minDcKw;
                 int maxTotalKw = maxDcKw;
@@ -108,18 +136,13 @@ public final class LoadManager extends Thread {
 
                 int totalTargetKw;
                 if (Math.abs(headroomA) < hysteresisA) {
-                    // Version 1.0 deadband: keep the currently commanded limit.
                     totalTargetKw = currentTotalLimitKw;
                 } else if (headroomA < 0.0d) {
-                    // Version 1.0 safety rule: when above grid target, reduce from
-                    // the commanded limit and never derive a higher limit from
-                    // lagging vehicle power.
                     double reducedRawKw = currentTotalLimitKw
                         + headroomA * SQRT3_400_KW_PER_A;
                     totalTargetKw = (int)Math.round(reducedRawKw);
                     totalTargetKw = Math.min(totalTargetKw, currentTotalLimitKw);
                 } else {
-                    // Proven Version 1.0 fast ramp, normally +2 kW per loop.
                     double requestedRawKw = actualDcKw
                         + headroomA * SQRT3_400_KW_PER_A;
                     int requestedTotalKw = clamp((int)Math.round(requestedRawKw),
@@ -135,7 +158,6 @@ public final class LoadManager extends Thread {
                 totalTargetKw = clamp(totalTargetKw, minTotalKw, maxTotalKw);
                 int targetDcKw = totalTargetKw;
 
-                // Preserve the Version 1.0 negative-headroom protection.
                 if (headroomA < -hysteresisA) {
                     targetDcKw = Math.min(targetDcKw, reportedDcLimitKw);
                 }
@@ -157,6 +179,21 @@ public final class LoadManager extends Thread {
         }
 
         System.out.println("[QC45] LoadManager stopped");
+    }
+
+    private void preArmDc() throws Exception {
+        // setConnectorLimitKw synchronizes Configuration.maxPower,
+        // DCMaxPowerFixed and Satellite.maxPower. Calling it for both DC
+        // satellites leaves the complete DC start state at minDcKw.
+        setLimitNative(1, minDcKw);
+        setLimitNative(2, minDcKw);
+    }
+
+    private boolean needsIdlePreArm() throws Exception {
+        return station.globalMaxPower() != minDcKw
+            || station.dcMaxPowerFixed() != minDcKw
+            || station.limitKw(1) != minDcKw
+            || station.limitKw(2) != minDcKw;
     }
 
     /** Version 1.0 control path. Connector 3 is intentionally rejected. */
