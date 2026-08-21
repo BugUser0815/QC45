@@ -22,9 +22,9 @@ public final class BootstrapListener implements ServletContextListener {
             integration = Integration.start();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
-                CcsRawTracer.installFromDefaultConfig();
+                CcsRawTracerV2.installFromDefaultConfig();
             } catch (Throwable traceError) {
-                System.err.println("[QC45] CCS-RAW tracer failed to install: " + traceError);
+                System.err.println("[QC45] CCS-RAW2 tracer failed to install: " + traceError);
                 traceError.printStackTrace();
             }
         } catch (Throwable e) {
