@@ -12,12 +12,7 @@ import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.Properties;
 
-/**
- * Sparse raw serial tracer for the EFACEC QuickCharge/CCS path.
- *
- * The tracer wraps the already-open serial InputStream/OutputStream in-memory.
- * It does not change the serializer, protocol state machine or database.
- */
+/** Sparse raw serial tracer for the EFACEC QuickCharge/CCS path. */
 public final class CcsRawTracer {
     private static final String PREFIX = "[QC45] CCS-RAW ";
 
@@ -32,13 +27,11 @@ public final class CcsRawTracer {
         InputStream in = new FileInputStream(file);
         try { p.load(in); } finally { in.close(); }
 
-        boolean enabled = bool(p, "evcsd.ccsRawTrace.enabled", true);
-        if (!enabled) {
+        if (!bool(p, "evcsd.ccsRawTrace.enabled", true)) {
             System.out.println(PREFIX + "disabled");
             return;
         }
-        long repeatMs = integer(p, "evcsd.ccsRawTrace.repeatMs", 1000);
-        install(repeatMs);
+        install(integer(p, "evcsd.ccsRawTrace.repeatMs", 1000));
     }
 
     private static void install(long repeatMs) throws Exception {
@@ -46,34 +39,51 @@ public final class CcsRawTracer {
         Object central = centralType.getMethod("getCurrentModule").invoke(null);
         if (central == null) throw new IllegalStateException("CentralModule unavailable for CCS raw trace");
 
-        Field commsField = findField(central.getClass(), "commsSatellite");
-        if (commsField == null) throw new NoSuchFieldException("CentralModule.commsSatellite");
-        commsField.setAccessible(true);
-        Object comms = commsField.get(central);
-        if (comms == null || !comms.getClass().isArray()) {
-            throw new IllegalStateException("CentralModule.commsSatellite unavailable for CCS raw trace");
+        int[] counts = new int[] { 0, 0 };
+
+        // On QC45 installations using the master protocol, this is the real UART.
+        // commsSatellite then only contains PipeSerialReader instances.
+        Field communicationsField = findField(central.getClass(), "communications");
+        if (communicationsField != null) {
+            communicationsField.setAccessible(true);
+            Object physical = communicationsField.get(central);
+            if (physical != null) hookChannel(physical, "physical-master", repeatMs, counts);
         }
 
-        int txWrapped = 0;
-        int rxWrapped = 0;
-        int length = Array.getLength(comms);
-        for (int i = 0; i < length; i++) {
-            Object channel = Array.get(comms, i);
-            if (channel == null) continue;
+        // Also hook a direct QuickCharge UART when the installation does not use
+        // the master protocol. Virtual PipeSerialReader channels are ignored here.
+        Field commsField = findField(central.getClass(), "commsSatellite");
+        if (commsField != null) {
+            commsField.setAccessible(true);
+            Object comms = commsField.get(central);
+            if (comms != null && comms.getClass().isArray()) {
+                int length = Array.getLength(comms);
+                for (int i = 0; i < length; i++) {
+                    Object channel = Array.get(comms, i);
+                    if (channel != null) hookChannel(channel, "satellite-" + i, repeatMs, counts);
+                }
+            }
+        }
 
+        System.out.println(PREFIX + "installed txStreams=" + counts[0] + " rxStreams=" + counts[1]
+            + " repeatMs=" + repeatMs + " (physical master/direct serial; no protocol mutation)");
+    }
+
+    private static void hookChannel(Object channel, String fallbackPort, long repeatMs, int[] counts) {
+        try {
             Field serializerField = findField(channel.getClass(), "pSerializer");
-            if (serializerField == null) continue;
+            if (serializerField == null) return;
             serializerField.setAccessible(true);
             Object serializer = serializerField.get(channel);
-            if (serializer == null) continue;
+            if (serializer == null) return;
 
             String serializerName = serializer.getClass().getName();
             boolean quick = serializerName.indexOf("QuickChargeSerializer") >= 0;
             boolean master = serializerName.indexOf("MasterProtoSerializer") >= 0;
-            if (!quick && !master) continue;
+            if (!quick && !master) return;
 
-            String port = stringField(channel, "portName", "channel-" + i);
-            boolean filter63 = master;
+            String port = stringField(channel, "portName", fallbackPort);
+            boolean filter63 = true;
 
             Field outField = findField(channel.getClass(), "out");
             if (outField != null) {
@@ -81,7 +91,7 @@ public final class CcsRawTracer {
                 Object value = outField.get(channel);
                 if (value instanceof OutputStream && !(value instanceof TraceOutputStream)) {
                     outField.set(channel, new TraceOutputStream((OutputStream)value, port, serializerName, filter63, repeatMs));
-                    txWrapped++;
+                    counts[0]++;
                 }
             }
 
@@ -93,64 +103,62 @@ public final class CcsRawTracer {
                     Object value = inField.get(serialReader);
                     if (value instanceof InputStream && !(value instanceof TraceInputStream)) {
                         inField.set(serialReader, new TraceInputStream((InputStream)value, port, serializerName, filter63, repeatMs));
-                        rxWrapped++;
+                        counts[1]++;
                     }
                 }
             }
-        }
 
-        System.out.println(PREFIX + "installed txStreams=" + txWrapped + " rxStreams=" + rxWrapped
-            + " repeatMs=" + repeatMs + " (raw serial bytes; no protocol mutation)");
+            System.out.println(PREFIX + "hook candidate class=" + channel.getClass().getName()
+                + " port=" + port + " serializer=" + shortName(serializerName)
+                + " tx=" + (outField != null) + " rxReader=" + (serialReader != null));
+        } catch (Throwable e) {
+            System.err.println(PREFIX + "hook failed class=" + channel.getClass().getName() + ": " + e);
+        }
     }
 
     private static Object findSerialReader(Object channel, String port) {
         try {
             Map<Thread, StackTraceElement[]> threads = Thread.getAllStackTraces();
+            Field targetField = findField(Thread.class, "target");
+            if (targetField == null) return null;
+            targetField.setAccessible(true);
+
             for (Thread thread : threads.keySet()) {
                 if (thread == null) continue;
                 String name = thread.getName();
                 if (name == null || !name.startsWith("SerialReader-")) continue;
-                if (port != null && port.length() > 0 && name.indexOf(port) < 0) continue;
 
-                Field targetField = findField(Thread.class, "target");
-                if (targetField == null) continue;
-                targetField.setAccessible(true);
                 Object target = targetField.get(thread);
                 if (target == null || target.getClass().getName().indexOf("SerialReader") < 0) continue;
 
                 Field ownerField = findField(target.getClass(), "owner");
-                if (ownerField != null) {
-                    ownerField.setAccessible(true);
-                    Object owner = ownerField.get(target);
-                    if (owner != channel) continue;
-                }
+                if (ownerField == null) continue;
+                ownerField.setAccessible(true);
+                if (ownerField.get(target) != channel) continue;
+
                 return target;
             }
         } catch (Throwable e) {
-            System.err.println(PREFIX + "RX hook lookup failed: " + e);
+            System.err.println(PREFIX + "RX hook lookup failed port=" + port + ": " + e);
         }
         return null;
     }
 
     private static final class TraceOutputStream extends FilterOutputStream {
         private final TraceState state;
-
         TraceOutputStream(OutputStream out, String port, String serializer, boolean filter63, long repeatMs) {
             super(out);
             state = new TraceState("TX", port, serializer, filter63, repeatMs);
         }
-
         public void write(int b) throws IOException {
             out.write(b);
             byte[] one = new byte[] { (byte)b };
             state.observe(one, 0, 1);
         }
-
         public void write(byte[] b) throws IOException {
             out.write(b);
             state.observe(b, 0, b.length);
         }
-
         public void write(byte[] b, int off, int len) throws IOException {
             out.write(b, off, len);
             state.observe(b, off, len);
@@ -159,12 +167,10 @@ public final class CcsRawTracer {
 
     private static final class TraceInputStream extends FilterInputStream {
         private final TraceState state;
-
         TraceInputStream(InputStream in, String port, String serializer, boolean filter63, long repeatMs) {
             super(in);
             state = new TraceState("RX", port, serializer, filter63, repeatMs);
         }
-
         public int read() throws IOException {
             int value = in.read();
             if (value >= 0) {
@@ -173,13 +179,11 @@ public final class CcsRawTracer {
             }
             return value;
         }
-
         public int read(byte[] b) throws IOException {
             int n = in.read(b);
             if (n > 0) state.observe(b, 0, n);
             return n;
         }
-
         public int read(byte[] b, int off, int len) throws IOException {
             int n = in.read(b, off, len);
             if (n > 0) state.observe(b, off, n);
@@ -207,13 +211,11 @@ public final class CcsRawTracer {
         synchronized void observe(byte[] data, int off, int len) {
             if (data == null || len <= 0) return;
             if (filter63 && !contains63(data, off, len)) return;
-
             String hex = hex(data, off, len);
             long now = System.currentTimeMillis();
             if (hex.equals(lastHex) && now - lastLogMs < repeatMs) return;
             lastHex = hex;
             lastLogMs = now;
-
             String decoded = decode(direction, data, off, len);
             System.out.println(PREFIX + direction + " t=" + now + " port=" + port
                 + " serializer=" + serializer + " bytes=" + len + " raw=" + hex
@@ -225,7 +227,6 @@ public final class CcsRawTracer {
         int p = find63(data, off, len);
         if (p < 0) return "";
         int remain = off + len - p;
-
         if ("TX".equals(direction) && remain >= 3) {
             int flags = u8(data[p + 1]);
             int value = u8(data[p + 2]);
@@ -237,8 +238,6 @@ public final class CcsRawTracer {
             return "decoded[action=" + action + ",flags=0x" + hexByte(flags)
                 + ",loggedIn=" + ((flags & 0x80) == 0) + ",value=" + value + "]";
         }
-
-        // QC protocol V3 status frame is 14 bytes starting at 0x63.
         if ("RX".equals(direction) && remain >= 12) {
             int flags = u8(data[p + 1]);
             int soc = u8(data[p + 2]);
@@ -260,10 +259,8 @@ public final class CcsRawTracer {
         for (int i = off; i < end; i++) if (u8(data[i]) == 0x63) return i;
         return -1;
     }
-
-    private static boolean contains63(byte[] data, int off, int len) {
-        return find63(data, off, len) >= 0;
-    }
+    private static boolean contains63(byte[] data, int off, int len) { return find63(data, off, len) >= 0; }
+    private static int u8(byte b) { return b & 0xff; }
 
     private static String hex(byte[] data, int off, int len) {
         StringBuilder sb = new StringBuilder(len * 3);
@@ -274,20 +271,15 @@ public final class CcsRawTracer {
         }
         return sb.toString();
     }
-
     private static String hexByte(int value) {
         final char[] h = "0123456789ABCDEF".toCharArray();
         return new String(new char[] { h[(value >>> 4) & 0x0f], h[value & 0x0f] });
     }
-
-    private static int u8(byte b) { return b & 0xff; }
-
     private static String shortName(String name) {
         if (name == null) return "?";
         int p = name.lastIndexOf('.');
         return p < 0 ? name : name.substring(p + 1);
     }
-
     private static String stringField(Object owner, String name, String fallback) {
         try {
             Field f = findField(owner.getClass(), name);
@@ -295,11 +287,8 @@ public final class CcsRawTracer {
             f.setAccessible(true);
             Object value = f.get(owner);
             return value == null ? fallback : String.valueOf(value);
-        } catch (Throwable e) {
-            return fallback;
-        }
+        } catch (Throwable e) { return fallback; }
     }
-
     private static Field findField(Class<?> type, String name) {
         Class<?> t = type;
         while (t != null) {
@@ -308,12 +297,10 @@ public final class CcsRawTracer {
         }
         return null;
     }
-
     private static int integer(Properties p, String key, int fallback) {
         String v = p.getProperty(key);
         return v == null || v.trim().length() == 0 ? fallback : Integer.parseInt(v.trim());
     }
-
     private static boolean bool(Properties p, String key, boolean fallback) {
         String v = p.getProperty(key);
         return v == null || v.trim().length() == 0 ? fallback : Boolean.parseBoolean(v.trim());
