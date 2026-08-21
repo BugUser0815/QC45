@@ -7,7 +7,7 @@ import java.util.concurrent.Executor;
 /**
  * Lightweight probe for backlog in EVCSD's internal executor.
  *
- * Persistent severe lag can arm an automatic EVCSD restart. The restart is
+ * Persistent severe lag can arm an automatic full-device reboot. The reboot is
  * never executed while a connector has an active transaction or reports
  * charging power. Once armed, the watchdog waits for a stable idle period.
  */
@@ -33,10 +33,10 @@ public final class EvcsdLagMonitor extends Thread {
     public EvcsdLagMonitor(long intervalMs, long warnMs) {
         this(intervalMs, warnMs,
             true,
-            3000L,
+            1000L,
             3,
             30000L,
-            "nohup /home/mobie/evcsd/scripts/start_evcsd.sh >/dev/null 2>&1 &");
+            "sudo -n /sbin/reboot");
     }
 
     public EvcsdLagMonitor(long intervalMs, long warnMs,
@@ -69,7 +69,8 @@ public final class EvcsdLagMonitor extends Thread {
             System.out.println("[QC45] EVCSD lag monitor started executor=" + executorField
                 + " interval=" + intervalMs + "ms warn=" + warnMs + "ms"
                 + " autoRestart=" + autoRestart + " restartLag=" + restartLagMs + "ms"
-                + " consecutive=" + restartConsecutive + " idleStable=" + idleStableMs + "ms");
+                + " consecutive=" + restartConsecutive + " idleStable=" + idleStableMs + "ms"
+                + " action=full-device-reboot");
         } catch (Throwable e) {
             System.err.println("[QC45] EVCSD lag monitor disabled: " + e);
             return;
@@ -123,7 +124,7 @@ public final class EvcsdLagMonitor extends Thread {
                         if (severeLagCount >= restartConsecutive) {
                             restartPending = true;
                             idleSince = 0L;
-                            System.err.println("[QC45] EVCSD AUTO-RESTART ARMED after persistent lag; waiting for all connectors to become idle");
+                            System.err.println("[QC45] EVCSD AUTO-REBOOT ARMED after persistent lag; waiting for all connectors to become idle");
                         }
                     } else {
                         severeLagCount = 0;
@@ -142,7 +143,7 @@ public final class EvcsdLagMonitor extends Thread {
         try {
             if (anyChargingOrTransactionActive()) {
                 if (idleSince != 0L) {
-                    System.out.println("[QC45] EVCSD AUTO-RESTART idle timer reset: charging/session active");
+                    System.out.println("[QC45] EVCSD AUTO-REBOOT idle timer reset: charging/session active");
                 }
                 idleSince = 0L;
                 return;
@@ -151,7 +152,7 @@ public final class EvcsdLagMonitor extends Thread {
             long now = System.currentTimeMillis();
             if (idleSince == 0L) {
                 idleSince = now;
-                System.err.println("[QC45] EVCSD AUTO-RESTART all connectors idle; waiting " + idleStableMs + "ms stable idle");
+                System.err.println("[QC45] EVCSD AUTO-REBOOT all connectors idle; waiting " + idleStableMs + "ms stable idle");
                 return;
             }
             if (now - idleSince < idleStableMs) return;
@@ -159,7 +160,7 @@ public final class EvcsdLagMonitor extends Thread {
             performRestart();
         } catch (Throwable e) {
             idleSince = 0L;
-            System.err.println("[QC45] EVCSD AUTO-RESTART idle check failed; restart deferred: " + e);
+            System.err.println("[QC45] EVCSD AUTO-REBOOT idle check/reboot failed; reboot deferred: " + e);
         }
     }
 
@@ -194,19 +195,29 @@ public final class EvcsdLagMonitor extends Thread {
 
     private void performRestart() throws Exception {
         if (restartCommand.length() == 0) {
-            throw new IllegalStateException("restart command is empty");
+            throw new IllegalStateException("reboot command is empty");
         }
 
-        System.err.println("[QC45] EVCSD AUTO-RESTART executing after lag=" + lastSevereLagMs
+        System.err.println("[QC45] EVCSD AUTO-REBOOT executing after lag=" + lastSevereLagMs
             + "ms and stable idle; command=" + restartCommand);
-
-        // Delay the replacement so the old JVM can release ttyS0, Derby and Tomcat.
-        String shell = "sleep 5; " + restartCommand;
-        Runtime.getRuntime().exec(new String[] { "/bin/sh", "-c", shell });
-        System.err.println("[QC45] EVCSD AUTO-RESTART replacement scheduled; exiting JVM now");
         System.err.flush();
         System.out.flush();
-        System.exit(0);
+
+        Process process = Runtime.getRuntime().exec(new String[] { "/bin/sh", "-c", restartCommand });
+        int rc = process.waitFor();
+        if (rc != 0) {
+            severeLagCount = 0;
+            restartPending = false;
+            idleSince = 0L;
+            throw new IllegalStateException("reboot command failed with exit code " + rc);
+        }
+
+        // A successful reboot request should terminate the complete Linux system.
+        // Do not System.exit() here: if shutdown takes a few seconds, EVCSD keeps
+        // running until the kernel actually tears the system down.
+        System.err.println("[QC45] EVCSD AUTO-REBOOT accepted by OS; waiting for system shutdown");
+        System.err.flush();
+        running = false;
     }
 
     private Executor findExecutor() throws Exception {
