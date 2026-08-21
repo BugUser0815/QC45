@@ -28,6 +28,13 @@ modbus.port=1502
 # Defaults to 30 A if this property is omitted. Derby is not modified.
 evcsd.quickChargeMaxCurrentA=30
 
+# Test-only CCS hardware metadata override for connector 2. EVCSD normally
+# initializes SatelliteStation to 125 A / 50000 W during SatelliteModule.init().
+# These values are applied afterwards to the live object without calling
+# Database.updateEntity(). Remove/comment both lines to disable the override.
+evcsd.ccsHardwareMaxCurrentA=30
+evcsd.ccsHardwareMaxPowerW=11000
+
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
 evcsd.lagmonitor.enabled=true
