@@ -35,6 +35,7 @@ public final class Integration {
     public static Integration start() throws Exception {
         Properties p = loadProperties();
         applyQcProtocolVersion(p);
+        applyQuickChargeMaxCurrent(integer(p, "evcsd.quickChargeMaxCurrentA", 30));
         ReflectionQC45 station = new ReflectionQC45();
         ModbusServer modbus = new ModbusServer(station, integer(p, "modbus.port", 1502));
 
@@ -171,6 +172,41 @@ public final class Integration {
 
         System.out.println("[QC45] EVCSD QCProtocolVersion override " + original + " -> " + requested
             + " in-memory only; serializers=" + serializers + "; Derby unchanged");
+    }
+
+    /** Set the live CCS SatelliteModule quickChargeMaxCurrent in-memory only. */
+    private static void applyQuickChargeMaxCurrent(int amps) throws Exception {
+        if (amps < 1 || amps > 125) {
+            throw new IllegalArgumentException("evcsd.quickChargeMaxCurrentA must be 1..125");
+        }
+
+        Class<?> centralType = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
+        Object central = centralType.getMethod("getCurrentModule").invoke(null);
+        if (central == null) throw new IllegalStateException("CentralModule unavailable for quickChargeMaxCurrent override");
+        Object[] satellites = (Object[])centralType.getMethod("getSatellites").invoke(central);
+        if (satellites == null) throw new IllegalStateException("Satellites unavailable for quickChargeMaxCurrent override");
+
+        for (int i = 0; i < satellites.length; i++) {
+            Object sat = satellites[i];
+            if (sat == null) continue;
+            int connector = ((Number)sat.getClass().getMethod("getSatelliteId").invoke(sat)).intValue();
+            if (connector != 2) continue;
+
+            Field currentField = findField(sat.getClass(), "quickChargeMaxCurrent");
+            if (currentField == null) throw new NoSuchFieldException("SatelliteModule.quickChargeMaxCurrent");
+            currentField.setAccessible(true);
+            int old = ((Number)currentField.get(sat)).intValue();
+            if (currentField.getType() == Integer.TYPE) currentField.setInt(sat, amps);
+            else currentField.set(sat, Integer.valueOf(amps));
+            int effective = ((Number)currentField.get(sat)).intValue();
+            if (effective != amps) throw new IllegalStateException("quickChargeMaxCurrent override did not stick: " + effective);
+
+            System.out.println("[QC45] EVCSD quickChargeMaxCurrent connector=2 " + old + "A -> " + amps
+                + "A in-memory only; Derby unchanged");
+            return;
+        }
+
+        throw new IllegalStateException("CCS connector 2 unavailable for quickChargeMaxCurrent override");
     }
 
     private static int patchQuickChargeSerializers(Object central, int version) throws Exception {
