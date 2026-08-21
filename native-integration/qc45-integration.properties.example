@@ -35,6 +35,13 @@ evcsd.quickChargeMaxCurrentA=30
 evcsd.ccsHardwareMaxCurrentA=30
 evcsd.ccsHardwareMaxPowerW=11000
 
+# Sparse raw serial trace for QuickCharge/CCS diagnosis. The tracer wraps the
+# already-open serial streams in memory and does not modify protocol state.
+# Changed frames are logged immediately; identical frames are repeated at most
+# once per repeatMs. Disable again after Kona/Mini comparison.
+evcsd.ccsRawTrace.enabled=true
+evcsd.ccsRawTrace.repeatMs=1000
+
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
 evcsd.lagmonitor.enabled=true
