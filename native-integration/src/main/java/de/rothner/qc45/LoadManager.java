@@ -2,10 +2,10 @@ package de.rothner.qc45;
 
 /** Native QC45 load manager using KOSTAL KSEM phase currents.
  *
- * Version 1.0 DC control logic with an important start-safety guard:
- * while no DC session is active, all DC-relevant EVCSD limits are continuously
- * pre-armed to minDcKw. This prevents a new CCS/CHAdeMO session from starting
- * from a stale 50/120 kW firmware value before the first load-manager cycle.
+ * Version 1.0 DC control logic with start-safety guards:
+ * - idle DC limits are continuously pre-armed to minDcKw
+ * - a private commanded limit is authoritative for ramp-up
+ * - any higher EVCSD-reported limit is immediately overwritten
  *
  * Connector 3 (Type2/AC) is deliberately never detected or controlled here.
  * Its consumption is still included in the KSEM phase currents and therefore
@@ -27,6 +27,7 @@ public final class LoadManager extends Thread {
     private volatile boolean running = true;
     private boolean prevDcActive;
     private int prevDcConnector;
+    private int commandedDcKw;
     private long lastErrorLog;
     private long lastIdlePreArmLog;
 
@@ -46,6 +47,7 @@ public final class LoadManager extends Thread {
         this.maxDcKw = maxDcKw;
         this.rampUpKwPerLoop = rampUpKwPerLoop;
         this.intervalMs = intervalMs;
+        this.commandedDcKw = minDcKw;
     }
 
     public void shutdown() {
@@ -58,6 +60,7 @@ public final class LoadManager extends Thread {
             + "A ramp=" + rampUpKwPerLoop + "kW/loop control=v1.0 prearm=" + minDcKw + "kW");
 
         try {
+            commandedDcKw = minDcKw;
             preArmDc();
         } catch (Throwable e) {
             System.err.println("[QC45] LoadManager startup pre-arm failed: " + e);
@@ -72,33 +75,29 @@ public final class LoadManager extends Thread {
 
                 boolean newDc = active.dc && (!prevDcActive || active.dcConnector != prevDcConnector);
                 if (newDc) {
-                    // Re-assert the minimum immediately at session discovery. The
-                    // normal ramp may only start on a later loop iteration.
-                    setLimitNative(active.dcConnector, minDcKw);
+                    commandedDcKw = minDcKw;
+                    setLimitNative(active.dcConnector, commandedDcKw);
                     prevDcActive = true;
                     prevDcConnector = active.dcConnector;
                     System.out.println("[QC45] LoadManager session start DC=" + active.dcConnector
-                        + " prearmed=" + minDcKw + "kW");
+                        + " prearmed=" + commandedDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
 
                 if (!active.dc && prevDcActive) {
-                    if (prevDcConnector > 0) setLimitNative(prevDcConnector, minDcKw);
+                    commandedDcKw = minDcKw;
+                    if (prevDcConnector > 0) setLimitNative(prevDcConnector, commandedDcKw);
                     prevDcActive = false;
                     prevDcConnector = 0;
                     preArmDc();
-                    System.out.println("[QC45] LoadManager session end; DC prearmed=" + minDcKw + "kW");
+                    System.out.println("[QC45] LoadManager session end; DC prearmed=" + commandedDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
 
                 if (!active.dc) {
-                    // Critical safety behaviour: keep the firmware's global DC,
-                    // fixed DC and both satellite limits at the minimum while idle.
-                    // EVCSD can otherwise restore a stale high value before a new
-                    // charging session and the vehicle can jump to full power before
-                    // current-based failback gets its first useful sample.
+                    commandedDcKw = minDcKw;
                     if (needsIdlePreArm()) {
                         preArmDc();
                         if (now - lastIdlePreArmLog >= 5000L) {
@@ -113,23 +112,37 @@ public final class LoadManager extends Thread {
                 prevDcActive = true;
                 prevDcConnector = active.dcConnector;
 
+                int rawReportedLimitKw = station.limitKw(active.dcConnector);
+
+                // Never allow an EVCSD-internal reset or another writer to jump
+                // above the limit that this load manager has actually released.
+                // This closes the 5 -> 50 kW startup race completely from the
+                // load-manager side.
+                if (rawReportedLimitKw > commandedDcKw) {
+                    setLimitNative(active.dcConnector, commandedDcKw);
+                    System.err.println("[QC45] LoadManager LIMIT OVERRIDE DC" + active.dcConnector
+                        + " EVCSD=" + rawReportedLimitKw + "kW > released=" + commandedDcKw
+                        + "kW; restored released limit");
+                    sleepLoop();
+                    continue;
+                }
+
                 // Do not merely wait for GridFailback here. If this loop sees the
                 // guard threshold, force the DC limit to minimum immediately as a
                 // second independent safety path.
                 if (criticalA >= failbackGuardA) {
-                    int reported = station.limitKw(active.dcConnector);
-                    if (reported != minDcKw) {
-                        setLimitNative(active.dcConnector, minDcKw);
-                        System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
-                            + "A -> DC" + active.dcConnector + "=" + minDcKw + "kW");
+                    commandedDcKw = minDcKw;
+                    if (rawReportedLimitKw != commandedDcKw) {
+                        setLimitNative(active.dcConnector, commandedDcKw);
                     }
+                    System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
+                        + "A -> DC" + active.dcConnector + "=" + commandedDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
 
                 int actualDcKw = station.powerKw(active.dcConnector);
-                int reportedDcLimitKw = clamp(station.limitKw(active.dcConnector), minDcKw, maxDcKw);
-                int currentTotalLimitKw = reportedDcLimitKw;
+                int currentTotalLimitKw = commandedDcKw;
                 int minTotalKw = minDcKw;
                 int maxTotalKw = maxDcKw;
                 double headroomA = targetA - criticalA;
@@ -159,13 +172,14 @@ public final class LoadManager extends Thread {
                 int targetDcKw = totalTargetKw;
 
                 if (headroomA < -hysteresisA) {
-                    targetDcKw = Math.min(targetDcKw, reportedDcLimitKw);
+                    targetDcKw = Math.min(targetDcKw, currentTotalLimitKw);
                 }
 
-                if (targetDcKw != reportedDcLimitKw) {
-                    setLimitNative(active.dcConnector, targetDcKw);
+                if (targetDcKw != commandedDcKw || rawReportedLimitKw != targetDcKw) {
+                    commandedDcKw = targetDcKw;
+                    setLimitNative(active.dcConnector, commandedDcKw);
                     System.out.println("[QC45] LoadManager set grid=" + one(criticalA)
-                        + "A DC" + active.dcConnector + "=" + targetDcKw + "kW");
+                        + "A DC" + active.dcConnector + "=" + commandedDcKw + "kW");
                 }
 
             } catch (Throwable e) {
@@ -182,9 +196,6 @@ public final class LoadManager extends Thread {
     }
 
     private void preArmDc() throws Exception {
-        // setConnectorLimitKw synchronizes Configuration.maxPower,
-        // DCMaxPowerFixed and Satellite.maxPower. Calling it for both DC
-        // satellites leaves the complete DC start state at minDcKw.
         setLimitNative(1, minDcKw);
         setLimitNative(2, minDcKw);
     }
