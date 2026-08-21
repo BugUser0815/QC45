@@ -3,6 +3,9 @@ package de.rothner.qc45;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.Properties;
 
 /** Owns OCPP bridge, SOAP endpoint, Modbus, load manager and grid failback. */
@@ -31,6 +34,7 @@ public final class Integration {
 
     public static Integration start() throws Exception {
         Properties p = loadProperties();
+        applyQcProtocolVersion(p);
         ReflectionQC45 station = new ReflectionQC45();
         ModbusServer modbus = new ModbusServer(station, integer(p, "modbus.port", 1502));
 
@@ -121,6 +125,91 @@ public final class Integration {
         try { ocppBridge.shutdown(); } catch (Throwable ignored) {}
         try { modbus.shutdown(); } catch (Throwable ignored) {}
         System.out.println("[QC45] native integration stopped");
+    }
+
+    /**
+     * Optional in-memory QC protocol override for testing. This deliberately does
+     * not call Configuration.updateValue(), so the Derby configuration is left
+     * untouched. QuickChargeSerializer caches the protocol version in its own
+     * instance at CentralModule construction time, therefore both Configuration
+     * and the already-created live serializer(s) must be patched.
+     */
+    private static void applyQcProtocolVersion(Properties p) throws Exception {
+        Class<?> centralType = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
+        Object central = centralType.getMethod("getCurrentModule").invoke(null);
+        if (central == null) throw new IllegalStateException("CentralModule unavailable for QC protocol check");
+        Object conf = centralType.getMethod("getConf").invoke(central);
+        if (conf == null) throw new IllegalStateException("Configuration unavailable for QC protocol check");
+
+        Method getter = conf.getClass().getMethod("getQCProtocolVersion");
+        int original = ((Number)getter.invoke(conf)).intValue();
+        String raw = p.getProperty("evcsd.qcProtocolVersion");
+        if (raw == null || raw.trim().length() == 0) {
+            System.out.println("[QC45] EVCSD QCProtocolVersion=" + original + " (native configuration; no override)");
+            return;
+        }
+
+        int requested = Integer.parseInt(raw.trim());
+        if (requested != 2 && requested != 3) {
+            throw new IllegalArgumentException("evcsd.qcProtocolVersion must be 2 or 3");
+        }
+
+        Field versionField = findField(conf.getClass(), "QCProtocolVersion");
+        if (versionField == null) throw new NoSuchFieldException("Configuration.QCProtocolVersion");
+        versionField.setAccessible(true);
+        if (versionField.getType() == Integer.TYPE) versionField.setInt(conf, requested);
+        else versionField.set(conf, Integer.valueOf(requested));
+
+        int serializers = patchQuickChargeSerializers(central, requested);
+        int effective = ((Number)getter.invoke(conf)).intValue();
+        if (effective != requested) {
+            throw new IllegalStateException("QCProtocolVersion override did not stick: " + effective);
+        }
+        if (serializers <= 0) {
+            throw new IllegalStateException("QCProtocolVersion changed in Configuration but no live QuickChargeSerializer was found");
+        }
+
+        System.out.println("[QC45] EVCSD QCProtocolVersion override " + original + " -> " + requested
+            + " in-memory only; serializers=" + serializers + "; Derby unchanged");
+    }
+
+    private static int patchQuickChargeSerializers(Object central, int version) throws Exception {
+        Field commsField = findField(central.getClass(), "commsSatellite");
+        if (commsField == null) throw new NoSuchFieldException("CentralModule.commsSatellite");
+        commsField.setAccessible(true);
+        Object comms = commsField.get(central);
+        if (comms == null || !comms.getClass().isArray()) {
+            throw new IllegalStateException("CentralModule.commsSatellite is unavailable");
+        }
+
+        int patched = 0;
+        int length = Array.getLength(comms);
+        for (int i = 0; i < length; i++) {
+            Object channel = Array.get(comms, i);
+            if (channel == null) continue;
+            Field serializerField = findField(channel.getClass(), "pSerializer");
+            if (serializerField == null) continue;
+            serializerField.setAccessible(true);
+            Object serializer = serializerField.get(channel);
+            if (serializer == null || serializer.getClass().getName().indexOf("QuickChargeSerializer") < 0) continue;
+
+            Field protocolField = findField(serializer.getClass(), "protocolVersion");
+            if (protocolField == null) throw new NoSuchFieldException(serializer.getClass().getName() + ".protocolVersion");
+            protocolField.setAccessible(true);
+            if (protocolField.getType() == Integer.TYPE) protocolField.setInt(serializer, version);
+            else protocolField.set(serializer, Integer.valueOf(version));
+            patched++;
+        }
+        return patched;
+    }
+
+    private static Field findField(Class<?> type, String name) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name); }
+            catch (NoSuchFieldException ignored) { t = t.getSuperclass(); }
+        }
+        return null;
     }
 
     private static Properties loadProperties() throws Exception {
