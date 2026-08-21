@@ -55,10 +55,6 @@ public final class ReflectionQC45 {
         return Math.max(0, ((Number) sat.getClass().getMethod("getMaxPower").invoke(sat)).intValue());
     }
 
-    /**
-     * For CCS, QuickChargeSerializer stores the module reply in SatelliteModule.infoState.voltage.
-     * getCurrentVoltage() reads voltagePhaseValue[] instead, which is normally empty for CCS.
-     */
     public int dcVoltageV(int connector) throws Exception {
         int ccsVoltage = ccsModuleNumber(connector, "voltage", 0);
         if (ccsVoltage >= 100 && ccsVoltage <= 1000) return ccsVoltage;
@@ -75,7 +71,6 @@ public final class ReflectionQC45 {
         return 0;
     }
 
-    /** Read the actual CCS-module values decoded by QuickChargeSerializer.unserialize(). */
     public String ccsModuleTelemetry(int connector) {
         try {
             Object sat = satellite(connector);
@@ -137,10 +132,6 @@ public final class ReflectionQC45 {
         return value instanceof Number ? ((Number)value).intValue() : 0;
     }
 
-    /**
-     * Read the current value that sendCcsStart() places into the firmware's
-     * MessageStateMachines object. This is diagnostic-only and never writes it.
-     */
     public String ccsMessageStateCurrent(int connector) {
         try {
             Object sat = satellite(connector);
@@ -213,68 +204,40 @@ public final class ReflectionQC45 {
     }
 
     /**
-     * Recalculate the CCS current from requested DC power and live DC voltage.
+     * Push the already configured CCS V3 power limit immediately.
      *
-     * Important QC45 firmware detail discovered from evcsd.jar:
-     * QuickChargeSerializer V3 does NOT serialize MessageStateMachines.current.
-     * It serializes MessageStateMachines.maxPower directly into byte 2 of the
-     * CCS V3 START packet. SatelliteModule initializes satelliteMaxPower to 125,
-     * which strongly identifies this V3 field as the charger's DC current limit
-     * (125 A), despite the misleading maxPower name.
-     *
-     * Keep the public/load-manager Satellite.maxPower value in kW, but temporarily
-     * put targetA into Satellite.maxPower while sendCcsStart() builds its message.
-     * sendCcsStart() copies the field synchronously into MessageStateMachines before
-     * CentralStationComms.send(), so restoring the kW value afterwards does not
-     * change the already-created packet/message.
+     * Reverse engineering of the original EVCSD shows that QuickChargeSerializer
+     * V3 serializes MessageStateMachines.maxPower directly into byte 2 of the
+     * 0x63 START_CHARGE packet. SatelliteModule.sendCcsStart() copies
+     * SatelliteModule.satelliteMaxPower into that field. Therefore the value must
+     * remain the requested power in kW; no P/U conversion or temporary Ampere
+     * substitution is valid for CCS V3.
      */
     public int refreshQuickChargeCurrentForPower(int connector, int targetKw) throws Exception {
-        if (connector != 1 && connector != 2) return 0;
+        if (connector != 2) return 0;
         Object sat = satellite(connector);
         Class<?> satType = sat.getClass();
         boolean ccs = ((Boolean) satType.getMethod("isCCSCharge").invoke(sat)).booleanValue();
         if (!ccs) return 0;
 
-        int voltage = dcVoltageV(connector);
-        boolean fallback = false;
-        if (voltage <= 0) {
-            voltage = 400;
-            fallback = true;
-        }
+        int effectiveKw = clamp(targetKw, 0, 50);
+        satType.getMethod("setMaxPower", Integer.TYPE).invoke(sat, Integer.valueOf(effectiveKw));
 
-        int targetA = clamp((int)Math.round((targetKw * 1000.0d) / voltage), 1, 125);
-        Field currentField = findField(satType, "quickChargeMaxCurrent", "QuickChargeMaxCurrent");
-        if (currentField == null) throw new NoSuchFieldException("quickChargeMaxCurrent");
-        currentField.setAccessible(true);
-        int oldA = ((Number) currentField.get(sat)).intValue();
-        if (currentField.getType() == Integer.TYPE) currentField.setInt(sat, targetA);
-        else currentField.set(sat, Integer.valueOf(targetA));
+        Object cm = central();
+        boolean loggedIn = ((Boolean) centralClass.getMethod("isLoggedIn").invoke(cm)).booleanValue();
+        satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.valueOf(loggedIn));
 
-        Method getMaxPower = satType.getMethod("getMaxPower");
-        Method setMaxPower = satType.getMethod("setMaxPower", Integer.TYPE);
-        int publicKwValue = ((Number)getMaxPower.invoke(sat)).intValue();
+        int quickCurrent = 0;
+        try { quickCurrent = quickChargeMaxCurrentA(connector); } catch (Throwable ignored) {}
 
-        // CCS V3 takes byte 2 from satelliteMaxPower. Feed P/U current into that
-        // field only while sendCcsStart() builds/sends the message, then restore
-        // the kW value expected by LoadManager and the rest of the integration.
-        try {
-            setMaxPower.invoke(sat, Integer.valueOf(targetA));
-            satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.TRUE);
-        } finally {
-            setMaxPower.invoke(sat, Integer.valueOf(publicKwValue));
-        }
-
-        String messageCurrent = ccsMessageStateCurrent(connector);
-        System.out.println("[QC45] CCS current target connector=" + connector
-            + " power=" + targetKw + "kW voltage=" + voltage + "V"
-            + (fallback ? " fallback=true" : " fallback=false")
-            + " quickChargeMaxCurrent=" + oldA + "A->" + targetA + "A"
-            + " ccsV3Byte2=" + targetA + " inferredAmpLimit=true"
-            + " messageState=" + messageCurrent
-            + " satelliteMaxPower=" + limitKw(connector) + "kW(restored)"
+        System.out.println("[QC45] CCS power target connector=" + connector
+            + " ccsV3Byte2=" + effectiveKw + "kW"
+            + " loggedIn=" + loggedIn
+            + " quickChargeMaxCurrent=" + quickCurrent + "A diagnostic-only"
+            + " satelliteMaxPower=" + limitKw(connector) + "kW"
             + " actualPower=" + powerKw(connector) + "kW"
             + " ccsRx[" + ccsModuleTelemetry(connector) + "]");
-        return targetA;
+        return quickCurrent;
     }
 
     public long energyRaw(int connector) throws Exception {
@@ -340,13 +303,6 @@ public final class ReflectionQC45 {
 
         satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
 
-        boolean sentCcsStart = false;
-        int quickCurrent = 0;
-        if (ccs && connector == 2 && kw > 0) {
-            quickCurrent = refreshQuickChargeCurrentForPower(connector, kw);
-            sentCcsStart = true;
-        }
-
         if (connector == 3) {
             bestEffortSetMaxPowerACField(conf, kw);
             bestEffortSetAcMaxPowerFixed(conf, kw);
@@ -354,11 +310,18 @@ public final class ReflectionQC45 {
             bestEffortSetDcMaxPowerFixed(conf, kw);
         }
 
+        boolean sentCcsStart = false;
+        int quickCurrent = 0;
+        if (ccs && connector == 2 && kw > 0) {
+            quickCurrent = refreshQuickChargeCurrentForPower(connector, kw);
+            sentCcsStart = true;
+        }
+
         System.out.println("[QC45] NativeLimit connector=" + connector
             + " requested=" + kw + "kW oldSatellite=" + oldTarget
             + " newSatellite=" + limitKw(connector)
             + " ccs=" + ccs + " sentCcsStart=" + sentCcsStart
-            + " quickChargeMaxCurrent=" + quickCurrent + "A"
+            + " quickChargeMaxCurrent=" + quickCurrent + "A diagnostic-only"
             + " messageState=" + (ccs ? ccsMessageStateCurrent(connector) : "n/a")
             + (ccs ? " ccsRx[" + ccsModuleTelemetry(connector) + "]" : "")
             + " globalMaxPower=" + safeGlobalMaxPower()
