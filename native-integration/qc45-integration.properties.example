@@ -24,6 +24,10 @@ modbus.port=1502
 # live QuickChargeSerializer instance(s). It does NOT write the Derby database.
 #evcsd.qcProtocolVersion=3
 
+# CCS quick-charge maximum current. Applied in-memory to connector 2 at startup.
+# Defaults to 30 A if this property is omitted. Derby is not modified.
+evcsd.quickChargeMaxCurrentA=30
+
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
 evcsd.lagmonitor.enabled=true
