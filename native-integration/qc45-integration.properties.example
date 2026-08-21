@@ -18,6 +18,12 @@ ocpp15.bridge.timeoutMs=10000
 # evcc / local load management
 modbus.port=1502
 
+# Optional runtime-only override for the EFACEC QuickCharge protocol.
+# Leave commented to use the value loaded by EVCSD from its normal configuration.
+# Setting 3 patches both Configuration.QCProtocolVersion and the already-created
+# live QuickChargeSerializer instance(s). It does NOT write the Derby database.
+#evcsd.qcProtocolVersion=3
+
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
 evcsd.lagmonitor.enabled=true
