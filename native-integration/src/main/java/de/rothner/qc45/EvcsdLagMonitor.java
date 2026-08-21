@@ -1,17 +1,15 @@
 package de.rothner.qc45;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.concurrent.Executor;
 
 /**
  * Lightweight probe for backlog in EVCSD's internal executor.
  *
- * Persistent severe lag can optionally arm an automatic EVCSD restart. The
- * restart is never executed while a connector has an active transaction or
- * reports charging power. Once armed, the watchdog waits for a stable idle
- * period before starting a replacement EVCSD process and exiting this JVM.
+ * Persistent severe lag can arm an automatic EVCSD restart. The restart is
+ * never executed while a connector has an active transaction or reports
+ * charging power. Once armed, the watchdog waits for a stable idle period.
  */
 public final class EvcsdLagMonitor extends Thread {
     private final long intervalMs;
@@ -30,6 +28,16 @@ public final class EvcsdLagMonitor extends Thread {
     private volatile int severeLagCount;
     private long lastNormalLog;
     private long idleSince;
+
+    /** Backwards-compatible defaults used by Integration. */
+    public EvcsdLagMonitor(long intervalMs, long warnMs) {
+        this(intervalMs, warnMs,
+            true,
+            3000L,
+            3,
+            30000L,
+            "nohup /home/mobie/evcsd/scripts/start_evcsd.sh >/dev/null 2>&1 &");
+    }
 
     public EvcsdLagMonitor(long intervalMs, long warnMs,
                            boolean autoRestart, long restartLagMs,
@@ -80,7 +88,9 @@ public final class EvcsdLagMonitor extends Thread {
             }
 
             try {
-                long sleepMs = restartPending ? 5000L : Math.min(5000L, Math.max(1000L, nextProbeAt - System.currentTimeMillis()));
+                long sleepMs = restartPending
+                    ? 5000L
+                    : Math.min(5000L, Math.max(1000L, nextProbeAt - System.currentTimeMillis()));
                 Thread.sleep(sleepMs);
             } catch (InterruptedException e) {
                 if (!running) break;
@@ -190,8 +200,7 @@ public final class EvcsdLagMonitor extends Thread {
         System.err.println("[QC45] EVCSD AUTO-RESTART executing after lag=" + lastSevereLagMs
             + "ms and stable idle; command=" + restartCommand);
 
-        // Start the replacement after this JVM has had time to release the serial
-        // port, Derby database and Tomcat resources.
+        // Delay the replacement so the old JVM can release ttyS0, Derby and Tomcat.
         String shell = "sleep 5; " + restartCommand;
         Runtime.getRuntime().exec(new String[] { "/bin/sh", "-c", shell });
         System.err.println("[QC45] EVCSD AUTO-RESTART replacement scheduled; exiting JVM now");
