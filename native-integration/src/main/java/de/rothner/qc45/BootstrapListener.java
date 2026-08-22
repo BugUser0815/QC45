@@ -19,11 +19,13 @@ public final class BootstrapListener implements ServletContextListener {
         }
 
         try {
-            CcsHardwareOverride.apply();
+            // Keep the production runtime minimal: only enforce the serializer
+            // generation required by the installed CCS stack. Historical current
+            // and hardware-metadata experiments are deliberately not applied.
             CcsProtocolV3Enforcer.apply();
-            remoteStartAuthorizationFix = RemoteStartAuthorizationFix.start();
             integration = Integration.start();
             CcsProtocolV3Enforcer.apply();
+            remoteStartAuthorizationFix = RemoteStartAuthorizationFix.start();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
                 CcsRawTracerV2.installFromDefaultConfig();
@@ -38,12 +40,12 @@ public final class BootstrapListener implements ServletContextListener {
     }
 
     public void contextDestroyed(ServletContextEvent event) {
-        Integration current = integration;
-        integration = null;
-        if (current != null) current.stop();
-
         RemoteStartAuthorizationFix authFix = remoteStartAuthorizationFix;
         remoteStartAuthorizationFix = null;
         if (authFix != null) authFix.shutdown();
+
+        Integration current = integration;
+        integration = null;
+        if (current != null) current.stop();
     }
 }
