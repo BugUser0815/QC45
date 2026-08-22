@@ -7,12 +7,10 @@ import java.lang.reflect.Method;
  * Keeps the original EVCSD CCS V3 state machine authorized during OCPP
  * RemoteStart sessions.
  *
- * EVCSD builds the CCS V3 START control byte from CentralModule.isLoggedIn().
- * A RemoteStart sets remoteStarted but can leave loggedIn=false, causing the
- * original 500 ms CCS state-machine loop to emit control byte 0x82 instead of
- * the authorized 0x02. This helper mirrors remoteStarted into loggedIn only
- * while a CCS session is selected, and restores the previous false state when
- * the remote session ends.
+ * This is intentionally narrow: the loggedIn mirror is active only while the
+ * EVCSD reports an in-use session, RemoteStart is active, and connector 2 is the
+ * selected CCS connector. The value is restored as soon as any of those
+ * conditions stops being true.
  */
 public final class RemoteStartAuthorizationFix {
     private static final long INTERVAL_MS = 100L;
@@ -36,7 +34,7 @@ public final class RemoteStartAuthorizationFix {
         RemoteStartAuthorizationFix fix = new RemoteStartAuthorizationFix();
         fix.worker.start();
         System.out.println("[QC45] RemoteStart CCS authorization fix started interval="
-            + INTERVAL_MS + "ms control-authorized=0x02");
+            + INTERVAL_MS + "ms connector=2 inUse-required control-authorized=0x02");
         return fix;
     }
 
@@ -69,15 +67,17 @@ public final class RemoteStartAuthorizationFix {
     private void applyOnce() throws Exception {
         Object central = central();
         boolean remoteStarted = booleanMethod(central, "isRemoteStarted");
-        boolean ccsSelected = hasCcsSelected(central);
+        boolean inUse = booleanMethod(central, "isInUse");
+        boolean ccs2Selected = isConnector2CcsSelected(central);
         boolean loggedIn = booleanMethod(central, "isLoggedIn");
+        boolean shouldAuthorize = remoteStarted && inUse && ccs2Selected;
 
-        if (remoteStarted && ccsSelected) {
+        if (shouldAuthorize) {
             if (!loggedIn) {
                 setLoggedIn(central, true);
                 forcedLoggedIn = true;
                 System.out.println("[QC45] RemoteStart CCS AUTH forced loggedIn=false->true"
-                    + " remoteStarted=true ccsSelected=true ccsV3Control=0x02");
+                    + " remoteStarted=true inUse=true connector=2 ccsV3Control=0x02");
             }
             return;
         }
@@ -86,7 +86,9 @@ public final class RemoteStartAuthorizationFix {
             setLoggedIn(central, false);
             forcedLoggedIn = false;
             System.out.println("[QC45] RemoteStart CCS AUTH restored loggedIn=true->false"
-                + " remoteStarted=" + remoteStarted + " ccsSelected=" + ccsSelected);
+                + " remoteStarted=" + remoteStarted
+                + " inUse=" + inUse
+                + " ccs2Selected=" + ccs2Selected);
         }
     }
 
@@ -103,16 +105,16 @@ public final class RemoteStartAuthorizationFix {
         return central;
     }
 
-    private boolean hasCcsSelected(Object central) throws Exception {
+    private boolean isConnector2CcsSelected(Object central) throws Exception {
         Object[] satellites = (Object[]) centralClass.getMethod("getSatellites").invoke(central);
         if (satellites == null) return false;
         for (int i = 0; i < satellites.length; i++) {
             Object sat = satellites[i];
             if (sat == null) continue;
-            try {
-                Object value = sat.getClass().getMethod("isCCSCharge").invoke(sat);
-                if (value instanceof Boolean && ((Boolean)value).booleanValue()) return true;
-            } catch (NoSuchMethodException ignored) {}
+            int id = ((Number)sat.getClass().getMethod("getSatelliteId").invoke(sat)).intValue();
+            if (id != 2) continue;
+            Object value = sat.getClass().getMethod("isCCSCharge").invoke(sat);
+            return value instanceof Boolean && ((Boolean)value).booleanValue();
         }
         return false;
     }
