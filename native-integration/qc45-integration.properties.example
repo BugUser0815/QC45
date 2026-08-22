@@ -18,27 +18,16 @@ ocpp15.bridge.timeoutMs=10000
 # evcc / local load management
 modbus.port=1502
 
-# Optional runtime-only override for the EFACEC QuickCharge protocol.
-# Leave commented to use the value loaded by EVCSD from its normal configuration.
-# Setting 3 patches both Configuration.QCProtocolVersion and the already-created
-# live QuickChargeSerializer instance(s). It does NOT write the Derby database.
-#evcsd.qcProtocolVersion=3
+# CCS protocol handling
+# The integration forces the live EFACEC QuickCharge/MasterProto serializers to
+# protocol V3 in memory. No Derby value is changed. Do not add current or
+# hardware-metadata overrides here; CCS V3 transports the requested power via
+# MessageStateMachines.maxPower / byte 2 of the 0x63 START frame.
 
-# CCS quick-charge maximum current. Applied in-memory to connector 2 at startup.
-# Defaults to 30 A if this property is omitted. Derby is not modified.
-evcsd.quickChargeMaxCurrentA=30
-
-# Test-only CCS hardware metadata override for connector 2. EVCSD normally
-# initializes SatelliteStation to 125 A / 50000 W during SatelliteModule.init().
-# These values are applied afterwards to the live object without calling
-# Database.updateEntity(). Remove/comment both lines to disable the override.
-evcsd.ccsHardwareMaxCurrentA=30
-evcsd.ccsHardwareMaxPowerW=11000
-
-# Sparse raw serial trace for QuickCharge/CCS diagnosis. The tracer wraps the
-# already-open serial streams in memory and does not modify protocol state.
-# Changed frames are logged immediately; identical frames are repeated at most
-# once per repeatMs. Disable again after Kona/Mini comparison.
+# Sparse raw serial trace for QuickCharge/CCS diagnosis. The TX hook wraps the
+# actual OutputStream, therefore a line such as
+#   CCS-RAW2 TX ... raw=63 02 0A ...
+# proves that a 10 kW V3 START frame was handed to the serial/RXTX output path.
 evcsd.ccsRawTrace.enabled=true
 evcsd.ccsRawTrace.repeatMs=1000
 
