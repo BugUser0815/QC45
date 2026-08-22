@@ -6,13 +6,15 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.util.Calendar;
 
-/** Minimal Modbus/TCP server exposing the QC45 to evcc and local UI clients. */
+/** Minimal Modbus/TCP server exposing the QC45 to evcc and the local UI. */
 public final class ModbusServer extends Thread {
     private final ReflectionQC45 station;
     private final int port;
@@ -186,6 +188,25 @@ public final class ModbusServer extends Thread {
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
             case 111: return station.maxPowerAC();
+            case 120: {
+                int dc = activeDcConnector();
+                return dc == 0 ? 0 : station.powerKw(dc);
+            }
+            case 121: {
+                int dc = activeDcConnector();
+                return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
+            }
+            case 122: {
+                int dc = activeDcConnector();
+                return dc == 0 ? 0 : vehicleSocPct(dc);
+            }
+            case 123: {
+                int dc = activeDcConnector();
+                long sec = dc == 0 ? 0L : sessionElapsedSeconds(dc);
+                return (int)Math.min(65535L, Math.max(0L, sec));
+            }
+            case 124: return activeEnergyWord(true);
+            case 125: return activeEnergyWord(false);
             default: throw new ModbusException(2);
         }
     }
@@ -228,6 +249,50 @@ public final class ModbusServer extends Thread {
     private int energyWord(int connector, boolean high) throws Exception {
         long value = energyWh(connector);
         return high ? (int) ((value >>> 16) & 0xffffL) : (int) (value & 0xffffL);
+    }
+
+    private int activeEnergyWord(boolean high) throws Exception {
+        int dc = activeDcConnector();
+        long value = dc == 0 ? 0L : energyWh(dc);
+        return high ? (int)((value >>> 16) & 0xffffL) : (int)(value & 0xffffL);
+    }
+
+    private int vehicleSocPct(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Field f = findField(sat.getClass(), "infoState");
+        if (f == null) return 0;
+        f.setAccessible(true);
+        Object info = f.get(sat);
+        if (info == null) return 0;
+        Field soc = findField(info.getClass(), "battEnergyPct");
+        if (soc == null) return 0;
+        soc.setAccessible(true);
+        Object value = soc.get(info);
+        if (!(value instanceof Number)) return 0;
+        int pct = ((Number)value).intValue();
+        return pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+    }
+
+    private long sessionElapsedSeconds(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Field f = findField(sat.getClass(), "startTime");
+        if (f == null) return 0L;
+        f.setAccessible(true);
+        Object value = f.get(sat);
+        if (!(value instanceof Calendar)) return 0L;
+        long started = ((Calendar)value).getTimeInMillis();
+        if (started <= 0L) return 0L;
+        long delta = System.currentTimeMillis() - started;
+        return delta <= 0L ? 0L : delta / 1000L;
+    }
+
+    private static Field findField(Class<?> type, String name) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name); }
+            catch (NoSuchFieldException e) { t = t.getSuperclass(); }
+        }
+        return null;
     }
 
     private Object satellite(int connector) throws Exception {
