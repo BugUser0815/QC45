@@ -6,15 +6,13 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
-import java.util.Calendar;
 
-/** Minimal Modbus/TCP server exposing the QC45 to evcc and the local UI. */
+/** Minimal multi-client Modbus/TCP server exposing the QC45 to evcc and the local UI. */
 public final class ModbusServer extends Thread {
     private final ReflectionQC45 station;
     private final int port;
@@ -92,18 +90,18 @@ public final class ModbusServer extends Thread {
                 result = process(pdu);
             } catch (ModbusException e) {
                 int fc = pdu.length == 0 ? 0 : pdu[0] & 0xff;
-                result = new byte[] { (byte) (fc | 0x80), (byte) e.code };
+                result = new byte[] { (byte)(fc | 0x80), (byte)e.code };
             } catch (Throwable e) {
                 e.printStackTrace();
                 int fc = pdu.length == 0 ? 0 : pdu[0] & 0xff;
-                result = new byte[] { (byte) (fc | 0x80), 4 };
+                result = new byte[] { (byte)(fc | 0x80), 4 };
             }
 
             byte[] header = new byte[7];
             putU16(header, 0, tx);
             putU16(header, 2, 0);
             putU16(header, 4, result.length + 1);
-            header[6] = (byte) unit;
+            header[6] = (byte)unit;
             out.write(header);
             out.write(result);
             out.flush();
@@ -126,8 +124,8 @@ public final class ModbusServer extends Thread {
         if (count < 1 || count > 125) throw new ModbusException(3);
 
         byte[] result = new byte[2 + count * 2];
-        result[0] = (byte) fc;
-        result[1] = (byte) (count * 2);
+        result[0] = (byte)fc;
+        result[1] = (byte)(count * 2);
         for (int i = 0; i < count; i++) putU16(result, 2 + i * 2, register(address + i));
         return result;
     }
@@ -143,7 +141,8 @@ public final class ModbusServer extends Thread {
         int address = u16(pdu, 1);
         int count = u16(pdu, 3);
         int bytes = pdu[5] & 0xff;
-        if (count < 1 || count > 123 || bytes != count * 2 || pdu.length != 6 + bytes) throw new ModbusException(3);
+        if (count < 1 || count > 123 || bytes != count * 2 || pdu.length != 6 + bytes)
+            throw new ModbusException(3);
 
         for (int i = 0; i < count; i++) validateWritable(address + i);
         for (int i = 0; i < count; i++) writeRegister(address + i, u16(pdu, 6 + i * 2));
@@ -188,25 +187,29 @@ public final class ModbusServer extends Thread {
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
             case 111: return station.maxPowerAC();
-            case 120: {
-                int dc = activeDcConnector();
-                return dc == 0 ? 0 : station.powerKw(dc);
-            }
+
+            // Local charging-screen block.  These values intentionally come from
+            // the live CCS RX stream rather than EVCSD's cached GUI fields.
+            case 120:
+                return CcsRawTracerV2.hasFreshLiveTelemetry() ? CcsRawTracerV2.livePowerKw() : 0;
             case 121: {
                 int dc = activeDcConnector();
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
-            case 122: {
-                int dc = activeDcConnector();
-                return dc == 0 ? 0 : vehicleSocPct(dc);
-            }
+            case 122:
+                return CcsRawTracerV2.hasFreshLiveTelemetry() ? CcsRawTracerV2.liveSocPct() : 0;
             case 123: {
-                int dc = activeDcConnector();
-                long sec = dc == 0 ? 0L : sessionElapsedSeconds(dc);
+                long sec = CcsRawTracerV2.liveElapsedSeconds();
                 return (int)Math.min(65535L, Math.max(0L, sec));
             }
-            case 124: return activeEnergyWord(true);
-            case 125: return activeEnergyWord(false);
+            case 124: {
+                long wh = CcsRawTracerV2.liveEnergyWh();
+                return (int)((wh >>> 16) & 0xffffL);
+            }
+            case 125: {
+                long wh = CcsRawTracerV2.liveEnergyWh();
+                return (int)(wh & 0xffffL);
+            }
             default: throw new ModbusException(2);
         }
     }
@@ -226,7 +229,6 @@ public final class ModbusServer extends Thread {
         if (p1 > 0 && p2 > 0) return p1 >= p2 ? 1 : 2;
         if (p1 > 0) return 1;
         if (p2 > 0) return 2;
-
         boolean s1 = sessionActive(1);
         boolean s2 = sessionActive(2);
         if (s1 && !s2) return 1;
@@ -243,56 +245,12 @@ public final class ModbusServer extends Thread {
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
         Object value = sat.getClass().getMethod("getCurrentEnergy").invoke(sat);
-        return value instanceof Number ? ((Number) value).longValue() & 0xffffffffL : 0L;
+        return value instanceof Number ? ((Number)value).longValue() & 0xffffffffL : 0L;
     }
 
     private int energyWord(int connector, boolean high) throws Exception {
         long value = energyWh(connector);
-        return high ? (int) ((value >>> 16) & 0xffffL) : (int) (value & 0xffffL);
-    }
-
-    private int activeEnergyWord(boolean high) throws Exception {
-        int dc = activeDcConnector();
-        long value = dc == 0 ? 0L : energyWh(dc);
         return high ? (int)((value >>> 16) & 0xffffL) : (int)(value & 0xffffL);
-    }
-
-    private int vehicleSocPct(int connector) throws Exception {
-        Object sat = satellite(connector);
-        Field f = findField(sat.getClass(), "infoState");
-        if (f == null) return 0;
-        f.setAccessible(true);
-        Object info = f.get(sat);
-        if (info == null) return 0;
-        Field soc = findField(info.getClass(), "battEnergyPct");
-        if (soc == null) return 0;
-        soc.setAccessible(true);
-        Object value = soc.get(info);
-        if (!(value instanceof Number)) return 0;
-        int pct = ((Number)value).intValue();
-        return pct < 0 ? 0 : (pct > 100 ? 100 : pct);
-    }
-
-    private long sessionElapsedSeconds(int connector) throws Exception {
-        Object sat = satellite(connector);
-        Field f = findField(sat.getClass(), "startTime");
-        if (f == null) return 0L;
-        f.setAccessible(true);
-        Object value = f.get(sat);
-        if (!(value instanceof Calendar)) return 0L;
-        long started = ((Calendar)value).getTimeInMillis();
-        if (started <= 0L) return 0L;
-        long delta = System.currentTimeMillis() - started;
-        return delta <= 0L ? 0L : delta / 1000L;
-    }
-
-    private static Field findField(Class<?> type, String name) {
-        Class<?> t = type;
-        while (t != null) {
-            try { return t.getDeclaredField(name); }
-            catch (NoSuchFieldException e) { t = t.getSuperclass(); }
-        }
-        return null;
     }
 
     private Object satellite(int connector) throws Exception {
@@ -311,10 +269,13 @@ public final class ModbusServer extends Thread {
         else station.setAcBudgetKw(value);
     }
 
-    private static int u16(byte[] b, int o) { return ((b[o] & 0xff) << 8) | (b[o + 1] & 0xff); }
+    private static int u16(byte[] b, int o) {
+        return ((b[o] & 0xff) << 8) | (b[o + 1] & 0xff);
+    }
+
     private static void putU16(byte[] b, int o, int value) {
-        b[o] = (byte) ((value >>> 8) & 0xff);
-        b[o + 1] = (byte) (value & 0xff);
+        b[o] = (byte)((value >>> 8) & 0xff);
+        b[o + 1] = (byte)(value & 0xff);
     }
 
     private static boolean readFullyOrEof(InputStream in, byte[] b, int off, int len) throws IOException {
