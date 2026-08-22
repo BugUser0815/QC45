@@ -6,6 +6,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -188,26 +189,36 @@ public final class ModbusServer extends Thread {
             }
             case 111: return station.maxPowerAC();
 
-            // Local charging-screen block.  These values intentionally come from
-            // the live CCS RX stream rather than EVCSD's cached GUI fields.
-            case 120:
-                return CcsRawTracerV2.hasFreshLiveTelemetry() ? CcsRawTracerV2.livePowerKw() : 0;
+            // Local charging-screen block. Use the already parsed live EVCSD
+            // SatelliteInfo state. CentralModule refreshes these fields from every
+            // incoming status packet; this is the same state used by the stock UI.
+            case 120: {
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                int p = satelliteInfoInt(dc, "power", -1);
+                return p >= 0 ? p : station.powerKw(dc);
+            }
             case 121: {
                 int dc = activeDcConnector();
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
-            case 122:
-                return CcsRawTracerV2.hasFreshLiveTelemetry() ? CcsRawTracerV2.liveSocPct() : 0;
+            case 122: {
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                return clamp(satelliteInfoInt(dc, "battEnergyPct", 0), 0, 100);
+            }
             case 123: {
-                long sec = CcsRawTracerV2.liveElapsedSeconds();
-                return (int)Math.min(65535L, Math.max(0L, sec));
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                long seconds = satelliteInfoInt(dc, "chargingTime", 0);
+                return (int)Math.min(65535L, Math.max(0L, seconds));
             }
             case 124: {
-                long wh = CcsRawTracerV2.liveEnergyWh();
+                long wh = activeSessionEnergyWh();
                 return (int)((wh >>> 16) & 0xffffL);
             }
             case 125: {
-                long wh = CcsRawTracerV2.liveEnergyWh();
+                long wh = activeSessionEnergyWh();
                 return (int)(wh & 0xffffL);
             }
             default: throw new ModbusException(2);
@@ -242,6 +253,34 @@ public final class ModbusServer extends Thread {
         return 0;
     }
 
+    private int satelliteInfoInt(int connector, String fieldName, int fallback) throws Exception {
+        Object sat = satellite(connector);
+        Field infoField = findField(sat.getClass(), "infoState");
+        if (infoField == null) return fallback;
+        infoField.setAccessible(true);
+        Object info = infoField.get(sat);
+        if (info == null) return fallback;
+        Field valueField = findField(info.getClass(), fieldName);
+        if (valueField == null) return fallback;
+        valueField.setAccessible(true);
+        Object value = valueField.get(info);
+        return value instanceof Number ? ((Number)value).intValue() : fallback;
+    }
+
+    private long activeSessionEnergyWh() throws Exception {
+        int dc = activeDcConnector();
+        if (dc == 0) return 0L;
+
+        int energy = satelliteInfoInt(dc, "energy", -1);
+        int initial = satelliteInfoInt(dc, "initialEnergy", -1);
+        if (energy >= 0 && initial >= 0 && energy >= initial) {
+            return ((long)energy - (long)initial) & 0xffffffffL;
+        }
+
+        // Fallback for meter configurations where initialEnergy is not populated.
+        return energyWh(dc);
+    }
+
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
         Object value = sat.getClass().getMethod("getCurrentEnergy").invoke(sat);
@@ -251,6 +290,15 @@ public final class ModbusServer extends Thread {
     private int energyWord(int connector, boolean high) throws Exception {
         long value = energyWh(connector);
         return high ? (int)((value >>> 16) & 0xffffL) : (int)(value & 0xffffL);
+    }
+
+    private static Field findField(Class<?> type, String name) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name); }
+            catch (NoSuchFieldException e) { t = t.getSuperclass(); }
+        }
+        return null;
     }
 
     private Object satellite(int connector) throws Exception {
@@ -267,6 +315,10 @@ public final class ModbusServer extends Thread {
         validateWritable(address);
         if (address == 110) station.setDcBudgetKw(value);
         else station.setAcBudgetKw(value);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static int u16(byte[] b, int o) {
