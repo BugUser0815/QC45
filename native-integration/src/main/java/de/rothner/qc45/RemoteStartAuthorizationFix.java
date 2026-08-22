@@ -7,10 +7,9 @@ import java.lang.reflect.Method;
  * Keeps the original EVCSD CCS V3 state machine authorized during OCPP
  * RemoteStart sessions.
  *
- * This is intentionally narrow: the loggedIn mirror is active only while the
- * EVCSD reports an in-use session, RemoteStart is active, and connector 2 is the
- * selected CCS connector. The value is restored as soon as any of those
- * conditions stops being true.
+ * This is intentionally narrow: the loggedIn mirror is active only while
+ * RemoteStart is active and connector 2 is the selected CCS connector. The
+ * value is restored as soon as either condition stops being true.
  */
 public final class RemoteStartAuthorizationFix {
     private static final long INTERVAL_MS = 100L;
@@ -34,7 +33,7 @@ public final class RemoteStartAuthorizationFix {
         RemoteStartAuthorizationFix fix = new RemoteStartAuthorizationFix();
         fix.worker.start();
         System.out.println("[QC45] RemoteStart CCS authorization fix started interval="
-            + INTERVAL_MS + "ms connector=2 inUse-required control-authorized=0x02");
+            + INTERVAL_MS + "ms connector=2 control-authorized=0x02");
         return fix;
     }
 
@@ -67,17 +66,16 @@ public final class RemoteStartAuthorizationFix {
     private void applyOnce() throws Exception {
         Object central = central();
         boolean remoteStarted = booleanMethod(central, "isRemoteStarted");
-        boolean inUse = booleanMethod(central, "isInUse");
         boolean ccs2Selected = isConnector2CcsSelected(central);
         boolean loggedIn = booleanMethod(central, "isLoggedIn");
-        boolean shouldAuthorize = remoteStarted && inUse && ccs2Selected;
+        boolean shouldAuthorize = remoteStarted && ccs2Selected;
 
         if (shouldAuthorize) {
             if (!loggedIn) {
                 setLoggedIn(central, true);
                 forcedLoggedIn = true;
                 System.out.println("[QC45] RemoteStart CCS AUTH forced loggedIn=false->true"
-                    + " remoteStarted=true inUse=true connector=2 ccsV3Control=0x02");
+                    + " remoteStarted=true connector=2 ccsV3Control=0x02");
             }
             return;
         }
@@ -87,7 +85,6 @@ public final class RemoteStartAuthorizationFix {
             forcedLoggedIn = false;
             System.out.println("[QC45] RemoteStart CCS AUTH restored loggedIn=true->false"
                 + " remoteStarted=" + remoteStarted
-                + " inUse=" + inUse
                 + " ccs2Selected=" + ccs2Selected);
         }
     }
