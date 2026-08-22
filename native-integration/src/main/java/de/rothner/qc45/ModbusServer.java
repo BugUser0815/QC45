@@ -12,7 +12,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 
-/** Minimal Modbus/TCP server exposing the QC45 to evcc. */
+/** Minimal Modbus/TCP server exposing the QC45 to evcc and local UI clients. */
 public final class ModbusServer extends Thread {
     private final ReflectionQC45 station;
     private final int port;
@@ -36,20 +36,31 @@ public final class ModbusServer extends Thread {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
             serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
-            System.out.println("[QC45] Modbus TCP listening on " + port);
+            System.out.println("[QC45] Modbus TCP listening on " + port + " (multi-client)");
 
             while (running) {
-                Socket socket = null;
                 try {
-                    socket = serverSocket.accept();
+                    final Socket socket = serverSocket.accept();
                     socket.setSoTimeout(10000);
-                    handle(socket);
+                    Thread client = new Thread(new Runnable() {
+                        public void run() {
+                            try {
+                                handle(socket);
+                            } catch (SocketException e) {
+                                if (running) System.err.println("[QC45] Modbus client socket error: " + e);
+                            } catch (Throwable e) {
+                                if (running) e.printStackTrace();
+                            } finally {
+                                try { socket.close(); } catch (Throwable ignored) {}
+                            }
+                        }
+                    }, "qc45-modbus-client-" + socket.getRemoteSocketAddress());
+                    client.setDaemon(true);
+                    client.start();
                 } catch (SocketException e) {
                     if (running) e.printStackTrace();
                 } catch (Throwable e) {
-                    e.printStackTrace();
-                } finally {
-                    try { if (socket != null) socket.close(); } catch (Throwable ignored) {}
+                    if (running) e.printStackTrace();
                 }
             }
         } catch (Throwable e) {
@@ -208,11 +219,6 @@ public final class ModbusServer extends Thread {
         return 0;
     }
 
-    /**
-     * Read only EVCSD's cached energy value. Do NOT call SatelliteModule.getEnergy()
-     * here: that method performs a synchronous satellite request using the global
-     * CentralModule.satRequest lock and can block for up to the firmware timeout.
-     */
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
         Object value = sat.getClass().getMethod("getCurrentEnergy").invoke(sat);
