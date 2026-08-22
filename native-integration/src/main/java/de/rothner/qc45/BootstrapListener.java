@@ -6,6 +6,7 @@ import javax.servlet.ServletContextListener;
 /** Starts/stops the native integration with the existing EVCSD web application. */
 public final class BootstrapListener implements ServletContextListener {
     private volatile Integration integration;
+    private volatile RemoteStartAuthorizationFix remoteStartAuthorizationFix;
 
     public void contextInitialized(ServletContextEvent event) {
         try {
@@ -20,6 +21,7 @@ public final class BootstrapListener implements ServletContextListener {
         try {
             CcsHardwareOverride.apply();
             CcsProtocolV3Enforcer.apply();
+            remoteStartAuthorizationFix = RemoteStartAuthorizationFix.start();
             integration = Integration.start();
             CcsProtocolV3Enforcer.apply();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
@@ -39,5 +41,9 @@ public final class BootstrapListener implements ServletContextListener {
         Integration current = integration;
         integration = null;
         if (current != null) current.stop();
+
+        RemoteStartAuthorizationFix authFix = remoteStartAuthorizationFix;
+        remoteStartAuthorizationFix = null;
+        if (authFix != null) authFix.shutdown();
     }
 }
