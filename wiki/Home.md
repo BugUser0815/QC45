@@ -46,7 +46,7 @@ flowchart LR
 | Thema | Zweck | Status |
 |---|---|---|
 | [CCS QuickCharge V3](CCS-QuickCharge-V3) | internes EFACEC-Protokoll und `maxPower` | ✅ analysiert |
-| [Hyundai Kona – Leistungsbegrenzung](Hyundai-Kona-CCS-Leistungsbegrenzung) | Kona ignoriert wahrscheinlich Power-Limit | 🟠 finale HW-Verifikation offen |
+| [EVSE-Leistungsgrenzen: Kona & weitere Fahrzeuge](Hyundai-Kona-CCS-Leistungsbegrenzung) | Fahrzeugfälle, Stack-Fälle, Schutzlogik und Verifikation | 🟠 QC45-HW-Verifikation offen |
 | [CCS Raw Tracing](CCS-Raw-Tracing) | physischer TX/RX-Nachweis | ✅ integriert |
 | [Reverse Engineering](Reverse-Engineering) | EVCSD-JAR, AVR-Firmware, A19/EVAcharge | 🟠 fortlaufend |
 
