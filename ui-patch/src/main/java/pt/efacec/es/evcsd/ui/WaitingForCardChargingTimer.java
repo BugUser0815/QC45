@@ -242,11 +242,12 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 15));
         centered(g, "Der verfügbare Anschluss wird automatisch erkannt.", 320, 364);
+        drawWakeKeys(g);
         g.setColor(DIVIDER);
         g.drawLine(0, 416, WIDTH, 416);
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 12));
-        centered(g, "Die Ladeleistung wird vom Fahrzeug bestimmt.", 320, 452);
+        centered(g, "Beliebige Gerätetaste öffnet die Anschlussauswahl.", 320, 452);
         g.dispose();
         return new ImageIcon(image);
     }
@@ -258,6 +259,24 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.drawArc(centerX + 3, centerY - 28, 42, 56, -55, 110);
         g.drawArc(centerX + 13, centerY - 19, 28, 38, -55, 110);
         g.drawArc(centerX + 23, centerY - 10, 14, 20, -55, 110);
+    }
+
+    private void drawWakeKeys(Graphics2D g) {
+        drawWakeKey(g, true, 159);
+        drawWakeKey(g, false, 159);
+        drawWakeKey(g, true, 375);
+        drawWakeKey(g, false, 375);
+    }
+
+    private void drawWakeKey(Graphics2D g, boolean left, int centerY) {
+        int outerX = left ? 5 : 635;
+        int innerX = left ? 14 : 626;
+        g.setColor(YELLOW);
+        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.drawLine(innerX, centerY - 10, outerX, centerY);
+        g.drawLine(outerX, centerY, innerX, centerY + 10);
+        if (left) g.fillRect(18, centerY - 1, 24, 3);
+        else g.fillRect(598, centerY - 1, 24, 3);
     }
 
     private void drawGrid(Graphics2D g) {

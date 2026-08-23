@@ -18,21 +18,21 @@ public class OptionsPanel extends AlpitronicPanel implements ActionPanel<MenuInf
     }
 
     protected void paintScreen(Graphics2D g) {
-        title(g, "EINSTELLUNGEN", "Auswahl mit den Navigationstasten ändern");
-        option(g, 145, "DIAGNOSE", "Fehler- und Statusinformationen", 1);
-        option(g, 215, "SPRACHE", "Anzeigesprache auswählen", 2);
-        option(g, 285, "SITZUNG BEENDEN", "Aktive Bedienersitzung schließen", 3);
-        action(g, 18, 426, 190, "ZURÜCK", 0);
-        action(g, 432, 426, 190, "BESTÄTIGEN", 1);
+        title(g, "EINSTELLUNGEN", "Auswahl mit den rechten Gerätetasten ändern");
+        option(g, 139, "DIAGNOSE", 1);
+        option(g, 207, "SPRACHE", 2);
+        option(g, 275, "SITZUNG BEENDEN", 3);
+        softKey(g, KEY_TOP_LEFT, "BESTÄTIGEN", null, true, true);
+        softKey(g, KEY_TOP_RIGHT, "NACH OBEN", "▲", true, false);
+        softKey(g, KEY_BOTTOM_LEFT, "ZURÜCK", null, true, false);
+        softKey(g, KEY_BOTTOM_RIGHT, "NACH UNTEN", "▼", true, false);
     }
 
-    private void option(Graphics2D g, int y, String name, String detail, int index) {
+    private void option(Graphics2D g, int y, String name, int index) {
         g.setColor(selected == index ? YELLOW : PANEL);
-        g.fillRect(110, y, 420, 56);
+        g.fillRect(218, y, 204, 52);
         g.setColor(selected == index ? BG : PRIMARY);
         g.setFont(font(java.awt.Font.BOLD, 17));
-        g.drawString(name, 132, y + 23);
-        g.setFont(font(java.awt.Font.PLAIN, 12));
-        g.drawString(detail, 132, y + 43);
+        centered(g, name, 320, y + 32);
     }
 }

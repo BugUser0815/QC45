@@ -42,9 +42,23 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "WEITEREN ANSCHLUSS WÄHLEN",
             "Bereits belegte Anschlüsse sind gekennzeichnet");
-        connectorCard(g, 18, "CCS", "DC-Schnellladen", isCcs, ccsInUse, ccsOut);
-        connectorCard(g, 228, "CHAdeMO", "DC-Schnellladen", isChademo, chaInUse, chaOut);
-        connectorCard(g, 438, "AC", acType > 0 ? Integer.toString(acType) + " kW" : "Typ 2", isAc, acInUse, acOut);
-        action(g, 432, 426, 190, "EINSTELLUNGEN", 0);
+        softKey(g, KEY_TOP_LEFT, "CCS", connectorState(isCcs, ccsInUse, ccsOut),
+            isCcs && !ccsInUse && !ccsOut && !emergency, true);
+        softKey(g, KEY_TOP_RIGHT, "CHAdeMO", connectorState(isChademo, chaInUse, chaOut),
+            isChademo && !chaInUse && !chaOut && !emergency, true);
+        softKey(g, KEY_BOTTOM_LEFT, "AC", connectorState(isAc, acInUse, acOut),
+            isAc && !acInUse && !acOut && !emergency, true);
+        softKey(g, KEY_BOTTOM_RIGHT, "EINSTELLUNGEN", "SPRACHE · DIAGNOSE", !emergency, false);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(java.awt.Font.PLAIN, 15));
+        centered(g, "Taste neben dem gewünschten Anschluss drücken", 320, 254);
+    }
+
+    private String connectorState(boolean visible, boolean inUse, boolean outOfService) {
+        if (!visible) return "NICHT VERBAUT";
+        if (outOfService) return "AUSSER BETRIEB";
+        if (inUse) return "BELEGT";
+        return "VERFÜGBAR";
     }
 }

@@ -9,6 +9,7 @@ ohne Markenassets oder eine pixelgenaue Kopie zu verwenden.
 - fast schwarzer Hintergrund, weiße Haupt- und graue Nebeninformationen
 - Gelb ausschließlich für aktiven Status, Auswahl und Ladefortschritt
 - identische Kopfzeile mit QC45, Statuspunkt und Uhrzeit
+- feste Funktionsfelder an den Positionen der vier haptischen Gerätetasten
 - rechteckige, eindeutig beschriftete Aktionsflächen
 - keine Werbung, Animationen, Verläufe oder dekorativen Instrumente
 

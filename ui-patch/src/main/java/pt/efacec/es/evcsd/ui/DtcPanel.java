@@ -22,20 +22,20 @@ public class DtcPanel extends AlpitronicPanel implements ActionPanel<DtcInfo> {
     protected void paintScreen(Graphics2D g) {
         title(g, "DIAGNOSE", "Aktueller Gerätestatus");
         DtcInfo current = info;
-        diagnostic(g, 129, "DC", current == null ? "--" : safe(current.getDtc(), "--"));
-        diagnostic(g, 213, "AC", current == null ? "--" : safe(current.getAcDTC(), "--"));
-        diagnostic(g, 297, "ENERGIEZÄHLER", current == null ? "--" : Integer.toString(current.getEnergy()));
-        action(g, 18, 426, 190, "ZURÜCK", 0);
+        diagnostic(g, 139, "DC", current == null ? "--" : safe(current.getDtc(), "--"));
+        diagnostic(g, 207, "AC", current == null ? "--" : safe(current.getAcDTC(), "--"));
+        diagnostic(g, 275, "ENERGIEZÄHLER", current == null ? "--" : Integer.toString(current.getEnergy()));
+        softKey(g, KEY_BOTTOM_LEFT, "ZURÜCK", null, true, false);
     }
 
     private void diagnostic(Graphics2D g, int y, String label, String value) {
         g.setColor(PANEL);
-        g.fillRect(90, y, 460, 64);
+        g.fillRect(218, y, 204, 52);
         g.setColor(SECONDARY);
-        g.setFont(font(java.awt.Font.BOLD, 13));
-        g.drawString(label, 112, y + 25);
+        g.setFont(font(java.awt.Font.BOLD, 11));
+        centered(g, label, 320, y + 18);
         g.setColor(PRIMARY);
-        g.setFont(font(java.awt.Font.BOLD, 20));
-        right(g, value, 528, y + 39);
+        g.setFont(font(java.awt.Font.BOLD, 18));
+        centered(g, value, 320, y + 41);
     }
 }

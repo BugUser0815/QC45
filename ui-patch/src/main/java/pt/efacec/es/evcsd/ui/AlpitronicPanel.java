@@ -17,6 +17,10 @@ import javax.swing.Timer;
 
 /** Shared, code-rendered 640x480 design system for all QC45 operator pages. */
 public abstract class AlpitronicPanel extends JPanel {
+    protected static final int KEY_TOP_LEFT = 0;
+    protected static final int KEY_TOP_RIGHT = 1;
+    protected static final int KEY_BOTTOM_LEFT = 2;
+    protected static final int KEY_BOTTOM_RIGHT = 3;
     protected static final int WIDTH = 640;
     protected static final int HEIGHT = 480;
     protected static final Color BG = new Color(13, 15, 15);
@@ -113,6 +117,54 @@ public abstract class AlpitronicPanel extends JPanel {
         g.setColor(foreground);
         g.setFont(font(Font.BOLD, 14));
         centered(g, text, x + width / 2, y + 27);
+    }
+
+    /** Draws a label aligned with one of the four physical QC45 HMI buttons. */
+    protected final void softKey(Graphics2D g, int position, String label, String detail,
+                                 boolean enabled, boolean emphasized) {
+        boolean left = position == KEY_TOP_LEFT || position == KEY_BOTTOM_LEFT;
+        boolean top = position == KEY_TOP_LEFT || position == KEY_TOP_RIGHT;
+        int x = left ? 18 : 432;
+        int y = top ? 128 : 344;
+        int width = 190;
+        int height = 62;
+        Color border = enabled ? (emphasized ? YELLOW : SECONDARY) : DIVIDER;
+
+        g.setColor(enabled ? PANEL : BG);
+        g.fillRect(x, y, width, height);
+        g.setColor(border);
+        g.setStroke(new BasicStroke(enabled && emphasized ? 3.0f : 1.0f));
+        g.drawRect(x, y, width, height);
+        drawEdgeChevron(g, left, y + height / 2, border);
+
+        g.setColor(enabled ? PRIMARY : SECONDARY);
+        g.setFont(font(Font.BOLD, 15));
+        centered(g, safe(label, "—"), x + width / 2, detail == null ? y + 38 : y + 27);
+        if (detail != null && detail.length() > 0) {
+            g.setColor(enabled ? SECONDARY : DIVIDER);
+            g.setFont(font(Font.PLAIN, 11));
+            centered(g, detail, x + width / 2, y + 47);
+        }
+    }
+
+    private void drawEdgeChevron(Graphics2D g, boolean left, int centerY, Color color) {
+        int outerX = left ? 5 : 635;
+        int innerX = left ? 14 : 626;
+        g.setColor(color);
+        g.setStroke(new BasicStroke(4.0f));
+        g.drawLine(innerX, centerY - 10, outerX, centerY);
+        g.drawLine(outerX, centerY, innerX, centerY + 10);
+    }
+
+    /** Marks a physical button position when every button has the same wake action. */
+    protected final void keyIndicator(Graphics2D g, int position) {
+        boolean left = position == KEY_TOP_LEFT || position == KEY_BOTTOM_LEFT;
+        boolean top = position == KEY_TOP_LEFT || position == KEY_TOP_RIGHT;
+        int centerY = top ? 159 : 375;
+        drawEdgeChevron(g, left, centerY, YELLOW);
+        g.setColor(YELLOW);
+        if (left) g.fillRect(18, centerY - 1, 24, 3);
+        else g.fillRect(598, centerY - 1, 24, 3);
     }
 
     protected final void connectorCard(Graphics2D g, int x, String name, String detail,

@@ -20,6 +20,6 @@ public class AuthorizingCCSChargePanel extends AlpitronicPanel {
         title(g, "LADEVORGANG STARTEN", "CCS");
         drawCard(g, 320, 196);
         instruction(g, message, "Autorisierung wird geprüft.");
-        action(g, 18, 426, 190, "ABBRECHEN", 0);
+        softKey(g, KEY_TOP_LEFT, "ABBRECHEN", null, true, false);
     }
 }

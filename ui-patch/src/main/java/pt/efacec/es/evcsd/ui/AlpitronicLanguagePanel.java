@@ -22,19 +22,21 @@ class AlpitronicLanguagePanel extends AlpitronicPanel implements ActionPanel<Men
     }
 
     protected void paintScreen(Graphics2D g) {
-        title(g, "SPRACHE WÄHLEN", "Auswahl mit den Navigationstasten ändern");
+        title(g, "SPRACHE WÄHLEN", "Auswahl mit den rechten Gerätetasten ändern");
         int first = Math.max(0, selected - 2);
         int last = Math.min(languages.length, first + 5);
         first = Math.max(0, last - 5);
         for (int i = first; i < last; i++) {
-            int y = 137 + (i - first) * 50;
+            int y = 126 + (i - first) * 45;
             g.setColor(i == selected ? YELLOW : PANEL);
-            g.fillRect(150, y, 340, 40);
+            g.fillRect(218, y, 204, 38);
             g.setColor(i == selected ? BG : PRIMARY);
-            g.setFont(font(i == selected ? java.awt.Font.BOLD : java.awt.Font.PLAIN, 18));
-            centered(g, safe(languages[i], ""), 320, y + 27);
+            g.setFont(font(i == selected ? java.awt.Font.BOLD : java.awt.Font.PLAIN, 16));
+            centered(g, safe(languages[i], ""), 320, y + 25);
         }
-        action(g, 18, 426, 190, "ZURÜCK", 0);
-        action(g, 432, 426, 190, "BESTÄTIGEN", 1);
+        softKey(g, KEY_TOP_LEFT, "BESTÄTIGEN", null, true, true);
+        softKey(g, KEY_TOP_RIGHT, "NACH OBEN", "▲", true, false);
+        softKey(g, KEY_BOTTOM_LEFT, "ZURÜCK", null, true, false);
+        softKey(g, KEY_BOTTOM_RIGHT, "NACH UNTEN", "▼", true, false);
     }
 }

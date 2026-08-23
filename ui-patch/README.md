@@ -9,6 +9,7 @@ QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - dunkler, ruhiger Hintergrund mit klarer Informationshierarchie
 - Weiß und Grau für Inhalte; Gelb nur für Auswahl, Status und Fortschritt
 - einheitliche Kopfzeile mit Gerätestatus und lokaler Uhrzeit
+- vier feste Softkey-Felder passend zu den physischen QC45-Gerätetasten
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
 - Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten

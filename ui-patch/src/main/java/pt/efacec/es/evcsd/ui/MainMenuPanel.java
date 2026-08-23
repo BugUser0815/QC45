@@ -45,10 +45,24 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
 
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "ANSCHLUSS WÄHLEN",
-            emergency ? "Der Not-Halt ist betätigt." : "Verfügbaren Ladeanschluss auswählen");
-        connectorCard(g, 18, "CCS", "DC-Schnellladen", showCcs, ccsInUse, ccsOut);
-        connectorCard(g, 228, "CHAdeMO", "DC-Schnellladen", showChademo, chaInUse, chaOut);
-        connectorCard(g, 438, "AC", "Typ 2", showAc, acInUse, acOut);
-        action(g, 432, 426, 190, "EINSTELLUNGEN", 0);
+            emergency ? "Der Not-Halt ist betätigt." : "Die vier Felder entsprechen den vier Gerätetasten");
+        softKey(g, KEY_TOP_LEFT, "CCS", connectorState(showCcs, ccsInUse, ccsOut),
+            showCcs && !ccsInUse && !ccsOut && !emergency, true);
+        softKey(g, KEY_TOP_RIGHT, "CHAdeMO", connectorState(showChademo, chaInUse, chaOut),
+            showChademo && !chaInUse && !chaOut && !emergency, true);
+        softKey(g, KEY_BOTTOM_LEFT, "AC", connectorState(showAc, acInUse, acOut),
+            showAc && !acInUse && !acOut && !emergency, true);
+        softKey(g, KEY_BOTTOM_RIGHT, "EINSTELLUNGEN", "SPRACHE · DIAGNOSE", !emergency, false);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(java.awt.Font.PLAIN, 15));
+        centered(g, emergency ? "Laden gesperrt" : "Taste neben dem gewünschten Anschluss drücken", 320, 254);
+    }
+
+    private String connectorState(boolean visible, boolean inUse, boolean outOfService) {
+        if (!visible) return "NICHT VERBAUT";
+        if (outOfService) return "AUSSER BETRIEB";
+        if (inUse) return "BELEGT";
+        return "VERFÜGBAR";
     }
 }

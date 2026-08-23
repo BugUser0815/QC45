@@ -22,6 +22,10 @@ public class WaitingForCard extends AlpitronicPanel implements ActionPanel<NoInf
         title(g, "LADEN STARTEN", "Fahrzeug verbinden und anschließend authentifizieren");
         drawCard(g, 320, 203);
         instruction(g, "Karte vorhalten oder App benutzen.", "Der verfügbare Anschluss wird automatisch erkannt.");
-        footer(g, "Die Ladeleistung wird vom Fahrzeug bestimmt.");
+        keyIndicator(g, KEY_TOP_LEFT);
+        keyIndicator(g, KEY_TOP_RIGHT);
+        keyIndicator(g, KEY_BOTTOM_LEFT);
+        keyIndicator(g, KEY_BOTTOM_RIGHT);
+        footer(g, "Beliebige Gerätetaste öffnet die Anschlussauswahl.");
     }
 }
