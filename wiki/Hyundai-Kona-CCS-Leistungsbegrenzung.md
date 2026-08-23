@@ -1,4 +1,4 @@
-# 🚗 Hyundai Kona – CCS-Leistungsbegrenzung wird ignoriert
+# 🚗 Hyundai Kona und weitere Fahrzeuge – CCS-Leistungsgrenzen
 
 > [!IMPORTANT]
 > **Aktueller Hauptverdacht:** Die QC45 setzt die gewünschte Leistung auf EVCSD-/QuickCharge-Ebene korrekt. Der Fehler liegt sehr wahrscheinlich **danach**, auf dem CCS-HLC-Pfad: Der Kona kann `EVSEMaximumPowerLimit` ignorieren, während `EVSEMaximumCurrentLimit` offenbar nicht dynamisch genug reduziert wird.
@@ -8,7 +8,7 @@
 | **Status** | 🟠 Ursache stark eingegrenzt |
 | **Betroffener Pfad** | EFACEC QC45 → EVCSD → QuickCharge → CCS → DIN SPEC 70121 |
 | **Reproduzierbar** | Ja, beim Hyundai Kona |
-| **Andere Fahrzeuge** | Tesla Model Y / Mini Cooper SE zeigten dieses Verhalten nicht |
+| **Weitere Fälle** | VW e-Up, MINI SE, BMW iX3, Kia Soul EV, Tesla sowie Stack-/Interop-Fälle dokumentiert |
 | **Nächster Beweis** | physisches V3-TX-Paket + A19/CCS-Controller identifizieren |
 | **Stand** | 23.08.2026 |
 
@@ -391,7 +391,166 @@ Anschließend muss dieser Wert so in den CCS-Stack gelangen, dass `CurrentDemand
 
 ---
 
-# 11. Offene Punkte
+# 11. Dokumentierte Fahrzeug-, Feld- und Stackfälle
+
+Die folgenden Fälle sind nach Beweiskraft getrennt. Nur der Kona- und der e-Up-Befund stammen aus einer veröffentlichten Versuchsreihe, die das Verhalten gegenüber den konkreten HLC-Grenzfeldern beschreibt. GitHub-Issues und Stack-Tests sind technisch nützlich, aber keine Typfreigabe und kein Beleg für das Verhalten aller Fahrzeuge einer Baureihe.
+
+## Evidenzstufen
+
+| Stufe | Bedeutung | Zulässige Aussage |
+|---|---|---|
+| **A – direkter Fahrzeugtest** | Fahrzeug, Feld und Reaktion sind in einer nachvollziehbaren Versuchsreihe beschrieben | belastbarer Präzedenzfall für das getestete Fahrzeug/Baujahr |
+| **B – Feldbericht mit Logbezug** | reales Fahrzeug und Ladevorgang sind dokumentiert, die Kausalität des Limitfelds ist aber nicht isoliert | Hinweis für Reproduktion und Logvergleich |
+| **C – Stack, Simulator oder Aggregat** | Softwareverhalten, simuliertes EVCC oder anonymisierte Interoperabilitätsdaten | Architektur- und Diagnosehinweis, kein Fahrzeugnachweis |
+
+## Fallmatrix
+
+| Fahrzeug / System | Jahr / Kontext | Evidenz | Dokumentiertes Verhalten | Aussage für QC45 | Abgrenzung |
+|---|---|---:|---|---|---|
+| **Hyundai Kona** | Modelljahr 2019, DIN SPEC 70121, veröffentlichter DC-Test | **A** | `EVSEMaximumPowerLimit` wurde ignoriert; dynamisch geänderte `EVSEMaximumCurrentLimit`-Werte wurden in der Versuchsreihe befolgt | Power-Limit allein ist für den Kona kein belastbarer Regler; Stromlimit und Netzteilbegrenzung sind erforderlich | Aussage gilt für das geprüfte Fahrzeug/den damaligen Softwarestand, nicht automatisch für jeden Kona |
+| **VW e-Up** | Modelljahr 2019, gleiche Versuchsreihe | **A** | Stromgrenzen unter **5 A** wurden missachtet; deshalb nicht für die Lastmanagement-Validierung verwendet | Sehr kleine Sollleistungen können eine fahrzeugspezifische Mindeststromstrategie oder Ladepause benötigen | Kein Nachweis, dass der e-Up normale Stromgrenzen oberhalb 5 A ignoriert |
+| **MINI Cooper SE** | Modelljahr 2020, gleiche Publikation | **A/B** | In der Publikation als Vergleichsfahrzeug und bei Ladeendverläufen gezeigt; nicht als Ausnahme bei dynamischen Stromgrenzen genannt | Positiver Gegenvergleich für dynamische Strombegrenzung und Ladeende | Kein isolierter Nachweis, dass gerade `EVSEMaximumPowerLimit` allein befolgt wird |
+| **BMW iX3** | pyPLC/OpenV2Gx-Feldtest, Abbruch nach Charge Parameter Discovery bei 45 % und 80 % SoC | **B** | Im Logkontext stehen 200 A Maximalstrom und 10 kW Maximalleistung; die Verbindung endet bereits nach der Parameterermittlung | Prüffall für CPD-Konsistenz, Einheiten und Statusfelder | Belegt **nicht**, dass der iX3 eines der beiden Limitfelder ignoriert |
+| **Kia Soul EV 30 kWh** | Modelljahr 2019, Feldbericht 2026 | **B** | Vergleich: erfolgreiche 49-kW-Sitzung; eine 24-kW-Sitzung endet nach etwa sechs Minuten | Interessanter Regressionsfall für dynamische Leistungs-/Stromänderungen und Abbruchursachen | Issue ist ohne isolierten Grenzfeldtest abgeschlossen; Kausalität offen |
+| **Tesla, Modell nicht genannt** | Battery-Emulator-Feldbeobachtung, Fahrzeugsoftware 2024.45.32.2 | **B/C** | Eine Erhöhung von `EVSEMaximumPowerLimit` auf 250 kW löste etwa 6 kW Batterieheizung aus | Das Feld kann Fahrzeug-Nebenverbraucher und Vorkonditionierung beeinflussen, nicht nur den DC-Batteriestrom | Kein Limit-Compliance-Test; Fahrzeugmodell und vollständiger Versuchsaufbau fehlen |
+| **EVerest + simuliertes EVCC** | Interop-Lauf 2026 | **C** | EVCC forderte 120 A bei 400 V; die EVSE senkte das Schleifenlimit von 200 A auf 55,2 A, der Simulator las außer dem ResponseCode keine `CurrentDemandRes`-Felder | Zeigt exakt, wie ein EVCC ein dynamisch reduziertes Limit technisch übersehen kann | Simulatorfehler, kein Serienfahrzeug |
+
+## A. Hyundai Kona (2019): direkter Treffer
+
+Die Energies-Publikation beschreibt den für QC45 wichtigsten Präzedenzfall ausdrücklich: Das indirekte Leistungslimit wurde von einzelnen Serienfahrzeugen ignoriert, konkret vom Hyundai Kona (2019). Das direkte Stromlimit wurde von den getesteten Fahrzeugen während der laufenden Ladung auch bei dynamischen Änderungen befolgt. `CurrentDemandReq` und `CurrentDemandRes` wurden dabei ungefähr alle **150–200 ms** ausgetauscht.
+
+Die gleiche Arbeit zeigt außerdem einen auffälligen Kona-Ladeendverlauf um etwa **93 % SoC**: Der Zielstrom kann länger als eine Minute auf ungefähr 2 A fallen und anschließend wieder auf mehr als 40 A steigen. Für die QC45 bedeutet das, dass ein kurzzeitig kleiner Fahrzeugzielstrom nicht als dauerhafte externe Leistungsfreigabe interpretiert werden darf.
+
+**Konsequenz:**
+
+```text
+EVSEMaximumPowerLimit = weiterhin korrekt senden
+EVSEMaximumCurrentLimit = dynamisch aus Leistung und Istspannung ableiten
+Netzteil-Sollwert = zusätzlich unabhängig hart begrenzen
+```
+
+## B. VW e-Up (2019): Untergrenze von 5 A
+
+Der e-Up ist der einzige in der Publikation ausdrücklich genannte Ausnahmefall beim dynamischen Stromlimit: Werte unter 5 A wurden nicht beachtet. Die Autoren nahmen das Fahrzeug deshalb nicht in die Validierung des Lastmanagements auf.
+
+Das ist eine andere Fehlerklasse als beim Kona:
+
+- Kona: Power-Limit kann wirkungslos sein, Stromlimit ist der robuste Hebel.
+- e-Up: Ein Stromlimit ist grundsätzlich der richtige Hebel, aber extrem kleine Werte können fahrzeugseitig nicht sauber umgesetzt werden.
+
+Für ein 350–400-V-Fahrzeug entsprechen 5 A nur etwa 1,75–2,0 kW. Unterhalb dieses Bereichs sollte QC45 nicht auf eine fein aufgelöste Dauerladung vertrauen, sondern eine definierte Mindestleistung, Pause oder Abschaltung vorsehen.
+
+## C. MINI Cooper SE (2020): positiver Vergleich mit enger Aussagegrenze
+
+Der MINI SE erscheint in der gleichen Arbeit als reales Vergleichsfahrzeug, unter anderem bei den unterschiedlichen Enden von Ladesitzungen. Da die Autoren bei dynamischen Stromlimits nur den VW e-Up als Ausnahme nennen, ist der MINI ein positiver Vergleich für den Stromlimitpfad.
+
+Nicht zulässig wäre daraus die stärkere Aussage abzuleiten, der MINI halte ein isoliertes `EVSEMaximumPowerLimit` sicher ein. Dieser Teil wurde in der Veröffentlichung nicht fahrzeugspezifisch ausgewiesen.
+
+## D. BMW iX3: Abbruch nach Charge Parameter Discovery
+
+Im pyPLC-Issue wird ein BMW iX3 beschrieben, der sowohl bei 45 % als auch bei 80 % SoC nach der Charge Parameter Discovery beendet. Im zugehörigen Logkontext werden `EVSEMaximumCurrentLimit = 200 A` und `EVSEMaximumPowerLimit = 10.000 W` sichtbar.
+
+Dieser Fall ist für QC45 wichtig, weil er zeigt, dass eine scheinbar plausible Kombination aus Strom- und Leistungsgrenze nicht automatisch eine lauffähige Sitzung ergibt. Er beweist jedoch kein Ignorieren der Limits: Der Abbruch liegt vor der stabilen CurrentDemand-Regelung und kann ebenso durch Status-, Einheiten-, Isolations- oder Nachrichtenkonsistenz ausgelöst werden.
+
+## E. Kia Soul EV (2019): 24-kW-Abbruch gegenüber 49-kW-Erfolg
+
+Der Feldbericht stellt zwei reale Sitzungen gegenüber:
+
+- 49 kW: erfolgreich ohne Unterbrechung
+- 24 kW: Abbruch nach ungefähr sechs Minuten
+
+Die Diskussion fragt ausdrücklich, ob die 24 kW vom Ladegerät vorgegeben wurden. Ein sauberer A/B-Test von `EVSEMaximumPowerLimit` gegen `EVSEMaximumCurrentLimit` ist aber nicht dokumentiert. Der Fall gehört deshalb in die Regressionsliste, nicht in die Beweiskette gegen ein bestimmtes Feld.
+
+## F. Tesla: Power-Limit beeinflusst Batterieheizung
+
+Im Battery-Emulator-Issue wird für ein nicht näher bezeichnetes Tesla-Fahrzeug mit Software 2024.45.32.2 berichtet, dass eine Erhöhung von `EVSEMaximumPowerLimit` auf 250 kW etwa 6 kW Batterieheizung aktiviert.
+
+Das ist kein Nachweis korrekter Strombegrenzung. Es zeigt aber, dass das kommunizierte Leistungslimit auch die Fahrzeugstrategie und Nebenverbraucher beeinflussen kann. Deshalb sollte QC45 den Power-Wert trotz zusätzlicher Strom- und Netzteilgrenze weiterhin konsistent und wahrheitsgemäß senden.
+
+## G. EVerest und simuliertes EVCC: dieselbe Fehlerform im Labor
+
+Ein dokumentierter Interoperabilitätslauf zeigt:
+
+```text
+ChargeParameterDiscoveryRes: EVSEMaximumCurrentLimit = 200 A
+CurrentDemandReq:            EVTargetCurrent = 120 A bei 400 V
+CurrentDemandRes:            EVSEMaximumCurrentLimit = 55,2 A
+```
+
+Das simulierte EVCC verwendete weiterhin seinen konstanten Zielwert und wertete aus `CurrentDemandRes` nur den Antwortcode aus. Dieser reproduzierbare Softwarefehler ist kein Fahrzeugfall, erklärt aber technisch exakt, wie eine während der Ladeschleife abgesenkte Grenze übersehen werden kann.
+
+Auf EVSE-Seite wurde dieses Fehlermuster in EVerest zusätzlich abgefedert: Release-Hinweise nennen den Fix **„Apply EVSE limits on DC target values if EV doesnt update its target values“**. Das ist ein starkes Architekturargument für eine stationsseitige Klammer, unabhängig davon, wie das Fahrzeug reagiert.
+
+## H. Interoperabilität allgemein: CharIN VOLTS 2023
+
+Die öffentliche VOLTS-Auswertung umfasst 174 EV-EVSE-Paarungen und mehr als 1.000 Einzeltests. Die Daten sind anonymisiert und prüfen überwiegend Interoperabilität, ISO-15118-Funktionen und Smart-Charging-Szenarien; sie erlauben keine Zuordnung zu Kona, iX3 oder anderen konkreten Modellen.
+
+Für QC45 ist die Aussage trotzdem relevant: Erfolgreicher Sitzungsstart ist kein Beleg für belastbares dynamisches Lastmanagement. Feld-/PMax-Unterstützung und die korrekte Reaktion auf laufend veränderte Grenzen müssen separat geprüft werden.
+
+## I. Decoder- und Einheitenfehler nicht mit Fahrzeugverhalten verwechseln
+
+Im SmartEVSE/OpenV2Gx-Umfeld wurde zeitweise `EVSEMaximumPowerLimit.Unit = "h"` ausgegeben. Der Fehler wurde durch Aktualisierung des OpenV2Gx-Decoders behoben. Solche Fälle zeigen, warum vor einer Fahrzeugdiagnose immer Rohdaten, EXI-Decoder-Version und physikalische Einheit gegengeprüft werden müssen.
+
+Ein falscher Decoder kann wie eine nicht normkonforme EVSE oder ein wählerisches Fahrzeug aussehen, obwohl lediglich die Darstellung falsch ist.
+
+## J. Robuste Begrenzungslogik für QC45
+
+Die Leistungsgrenze darf nicht nur als HLC-Hinweis existieren. Der an das Netzteil weitergegebene Zielstrom sollte jederzeit durch alle verfügbaren Grenzen geklammert werden:
+
+```text
+I_from_power = P_external_limit / EVSEPresentVoltage
+
+I_PSU_target = min(
+    EVTargetCurrent,
+    EVSEMaximumCurrentLimit,
+    I_from_power,
+    I_hardware_limit
+)
+```
+
+Konservative Beispielwerte:
+
+| Istspannung | 5 kW | 10 kW | 15 kW | 20 kW |
+|---:|---:|---:|---:|---:|
+| 350 V | 14,29 A | 28,57 A | 42,86 A | 57,14 A |
+| 375 V | 13,33 A | 26,67 A | 40,00 A | 53,33 A |
+| 400 V | 12,50 A | 25,00 A | 37,50 A | 50,00 A |
+
+Bei ganzzahliger Auflösung muss zur sicheren Leistungsbegrenzung abgerundet werden. Rampen, Regelverzögerung, Messfehler und die technisch zulässige Mindeststromgrenze sind zusätzlich zu berücksichtigen.
+
+## K. Verifikationsmatrix für reale Fahrzeuge
+
+| Schritt | Aufzuzeichnen | Bestehenskriterium |
+|---|---|---|
+| Start / CPD | ausgehandeltes DIN/ISO-Protokoll, EV-Maxima, EVSE-Maxima, Einheiten | Werte sind intern konsistent und korrekt decodiert |
+| CurrentDemand-Schleife | `EVTargetCurrent`, `EVTargetVoltage`, `EVSEMaximumCurrentLimit`, `EVSEMaximumPowerLimit`, Present-Werte | jedes dynamische Limit ist zeitlich nachvollziehbar |
+| Netzteilpfad | PSU-Sollstrom, PSU-Iststrom, PSU-Istspannung | Sollstrom überschreitet die Min-Klammer nicht |
+| Externes Lastmanagement | kW-Budget, KSEM-Werte, Grid-Failback-Zustand | keine Überschreitung des freigegebenen Budgets |
+| Abbruch | letzte 30 s aller Ebenen, ResponseCodes, Isolation, CP/PLC | Ursache lässt sich einer Ebene zuordnen |
+
+Empfohlene A/B-Reihe je Fahrzeug:
+
+1. 5, 10, 15 und 20 kW bei möglichst stabiler Batteriespannung.
+2. Leistungsänderung während aktiver CurrentDemand-Schleife.
+3. Nur Power-Limit ändern und Reaktion protokollieren.
+4. Danach Power- und Stromlimit gemeinsam ändern.
+5. Physische PSU-Klammer unabhängig prüfen.
+6. Ladeende und hohen SoC separat testen.
+
+Zu jedem Lauf gehören synchronisierte Zeitstempel aus LoadManager, Java/EVCSD, EFACEC-QuickCharge-Link, CCS-HLC-Decodierung und Netzteilmessung.
+
+## L. Was aus den Fällen nicht folgt
+
+- Ein Kona-2019-Befund beweist nicht das Verhalten jeder Kona-Generation oder Firmware.
+- Der BMW-iX3- und der Kia-Soul-Fall beweisen kein Ignorieren eines bestimmten Limitfelds.
+- Der Tesla-Hinweis zeigt Feldwirkung, aber keine Einhaltung einer Leistungsgrenze.
+- Ein Stack-Fix oder Simulatorfehler ist kein Serienfahrzeugtest.
+- Ein korrekt angezeigter HLC-Wert beweist noch nicht, dass das Netzteil physisch geklammert wird.
+
+Die belastbare Kernaussage bleibt daher eng: **Mindestens ein dokumentierter Hyundai Kona (2019) ignorierte `EVSEMaximumPowerLimit`; ein dynamisches `EVSEMaximumCurrentLimit` ist der besser belegte Fahrzeughebel, und die EVSE muss die physische Ausgangsleistung trotzdem selbst sicher begrenzen.**
+
+---
+# 12. Offene Punkte
 
 - [ ] Aktuelles TX-Paket bei 5 kW als `... 05 ...` bestätigen
 - [ ] A19 als EFACEC 20090007 / EVAcharge SE bestätigen
@@ -421,6 +580,17 @@ Anschließend muss dieser Wert so in den CCS-Stack gelangen, dass `CurrentDemand
 ### Hyundai Kona / Power- vs. Current-Limit
 
 - [Weisbach et al. – Intelligent Multi-Vehicle DC/DC Charging Station Powered by a Trolley Bus Catenary Grid](https://www.mdpi.com/1996-1073/14/24/8399)
+
+### Weitere Fahrzeug-, Stack- und Interoperabilitätsfälle
+
+- [uhi22/pyPLC #14 – BMW iX3: Abbruch nach Charge Parameter Discovery](https://github.com/uhi22/pyPLC/issues/14)
+- [osexpert/ccs32clara-chademo #54 – Kia Soul EV (2019): 24-kW-Abbruch](https://github.com/osexpert/ccs32clara-chademo/issues/54)
+- [dalathegreat/Battery-Emulator #202 – Tesla: Power-Limit und Batterieheizung](https://github.com/dalathegreat/Battery-Emulator/issues/202)
+- [EVerest Releases – EVSE-Limits auf DC-Zielwerte anwenden, Fix #1893](https://github.com/EVerest/EVerest/releases)
+- [OpenChargingCloud – Interop-Lauf mit dynamischem 200-A-→-55,2-A-Limit](https://github.com/OpenChargingCloud/ISO15118ConformanceTests/blob/master/docs/interop-runs/2026-08-10-everest-session-log-lengths/notes.md)
+- [SmartEVSE-3 #25 – OpenV2Gx-Decoder/Einheitenfehler](https://github.com/SmartEVSE/SmartEVSE-3/issues/25?timeline_page=2)
+- [CharIN VOLTS 2023 – öffentliche Interoperabilitätsdaten](https://www.charin.global/events/volts-2023)
+- [ISO-15118-2-XSD – optionale MaximumCurrent/MaximumPower-Felder](https://github.com/FlUxIuS/V2Gdecoder/blob/master/schemas/V2G_CI_MsgBody.xsd)
 
 ---
 
