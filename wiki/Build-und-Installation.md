@@ -53,11 +53,12 @@ Die proprietäre EVCSD-UI-JAR wird nicht im Repository abgelegt. Das Buildskript
 verwendet die aktuell eingesetzte JAR als Basis und ersetzt ausschließlich den
 reproduzierbar versionierten Lademonitor:
 
-Auf dem Raspberry werden OpenJDK 21 für `jar`/`javap` und `ecj` für den
-Java-7-Bytecode verwendet:
+Auf dem Raspberry wird OpenJDK 21 für `java`/`jar`/`javap` verwendet. Der
+Deployer lädt einen fest gepinnten ECJ 3.32.0 aus Maven Central und prüft ihn
+per SHA-256, bevor damit Java-7-Bytecode erzeugt wird:
 
 ```bash
-sudo apt install -y openjdk-21-jdk-headless ecj
+sudo apt install -y openjdk-21-jdk-headless curl
 ```
 
 ```bash

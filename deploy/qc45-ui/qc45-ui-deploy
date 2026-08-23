@@ -21,14 +21,28 @@ source "$config_file"
 readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
 readonly QC45_BRANCH="native-integration"
 readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-ui-deployer"
+readonly QC45_ECJ_JAR="${HOME}/.local/share/qc45-ui-deployer/ecj-3.32.0.jar"
+readonly QC45_ECJ_SHA256="07e034c44a019c0c6394a06ee7b5c344e5518f6083c0fd046f2d8fd16a6760e2"
 
-required_commands=(git tar ssh scp ecj javap jar sha256sum mktemp awk grep flock)
+required_commands=(git tar ssh scp java javap jar sha256sum mktemp awk grep flock)
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         exit 2
     fi
 done
+
+if [[ ! -r "$QC45_ECJ_JAR" ]]; then
+    echo "Pinned ECJ compiler not found: $QC45_ECJ_JAR" >&2
+    echo "Run deploy/qc45-ui/install.sh again." >&2
+    exit 2
+fi
+
+ecj_sha256=$(sha256sum "$QC45_ECJ_JAR" | awk '{print $1}')
+if [[ "$ecj_sha256" != "$QC45_ECJ_SHA256" ]]; then
+    echo "Pinned ECJ compiler checksum mismatch" >&2
+    exit 2
+fi
 
 if [[ ! "$QC45_SSH_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]]; then
     echo "Invalid QC45_SSH_TARGET: $QC45_SSH_TARGET" >&2
@@ -132,7 +146,7 @@ scp "${scp_args[@]}" "${QC45_SSH_TARGET}:${QC45_REMOTE_JAR}" "$base_jar"
 
 mkdir -p "$classes_dir"
 echo "Compiling the charging screen as Java 7 bytecode..."
-ecj -1.7 -encoding UTF-8 \
+java -jar "$QC45_ECJ_JAR" -proc:none -1.7 -encoding UTF-8 \
     -classpath "$base_jar" \
     -d "$classes_dir" \
     "$source_file"

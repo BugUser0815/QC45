@@ -27,17 +27,20 @@ EVCSD/Tomcat, Modbus und die Ladesteuerung werden nicht neu gestartet.
 
 ## 1. Voraussetzungen auf dem Raspberry
 
-OpenJDK 21 stellt `jar` und `javap` bereit. Da dessen `javac` keinen
-Java-7-Zielstand mehr erzeugt, übernimmt `ecj` die Kompilierung der alten
-QC45-Klasse:
+OpenJDK 21 stellt `java`, `jar` und `javap` bereit. Da dessen `javac` keinen
+Java-7-Zielstand mehr erzeugt, lädt der Installer den fest auf Version 3.32.0
+gesetzten Eclipse-Compiler direkt aus Maven Central. Die Datei wird vor der
+Installation per SHA-256 geprüft. Das fehlerhafte Debian-`ecj`-Startskript
+wird nicht verwendet.
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-21-jdk-headless ecj
+sudo apt install -y openjdk-21-jdk-headless curl
 ```
 
-Der Installer prüft zusätzlich, ob `ecj` tatsächlich Java-7-Bytecode
-(Class-Major-Version 51) für die alte QC45-Laufzeit erzeugen kann.
+Der Installer prüft anschließend durch eine Testkompilierung, ob der gepinnte
+Compiler tatsächlich Java-7-Bytecode (Class-Major-Version 51) für die alte
+QC45-Laufzeit erzeugt.
 
 ## 2. SSH-Schlüssel für die alte QC45
 
