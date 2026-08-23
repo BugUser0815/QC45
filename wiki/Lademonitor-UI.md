@@ -17,6 +17,29 @@ Das System gilt für Anschlussauswahl, Vorbereitung, Autorisierung, Bereitschaft
 Laden, Abschluss, Einstellungen, Sprachwahl und Diagnose. Die Konstruktoren und
 EVCSD-Nachrichtenverträge der Originalklassen bleiben erhalten.
 
+## Bedienung über die vier QC45-Tasten
+
+Die Felder sind an die festen Tastenpositionen oben links, oben rechts, unten
+links und unten rechts gebunden:
+
+| Zustand | oben links | oben rechts | unten links | unten rechts |
+|---|---|---|---|---|
+| Anschlussauswahl | CCS | CHAdeMO | AC | Einstellungen |
+| AC/CHAdeMO verbinden | Abbrechen | Start | unbelegt | unbelegt |
+| CCS verbinden/autorisieren | Abbrechen | unbelegt | unbelegt | unbelegt |
+| Einstellungen oder Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
+| Diagnose | unbelegt | unbelegt | Zurück | unbelegt |
+| Bereitschaftsanzeige | beliebige Taste öffnet die Anschlussauswahl | wie links | wie links | wie links |
+| Laufende Ladung | keine lokale Funktion | keine lokale Funktion | keine lokale Funktion | keine lokale Funktion |
+
+Unbelegte Tasten erhalten keine aktive Fläche. Die laufende Ladung zeigt
+bewusst keine Stop- oder Fortsetzen-Funktion an. Die Session wird per Karte oder
+App beendet.
+
+Die Tastenerfassung selbst verbleibt unverändert in der originalen EVCSD-UI:
+`MainForm` übergibt die Tastencodes weiterhin an die bestehende
+Zustandsmaschine. Der Patch ändert ausschließlich Darstellung und Beschriftung.
+
 ## Aktiver Ladevorgang
 
 Aktuelle Ladeleistung und Fahrzeug-SoC sind die Hauptwerte. DC-Sollleistung,

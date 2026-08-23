@@ -26,6 +26,28 @@ Original-JAR.
 Alle öffentlichen Konstruktoren und `ActionPanel`-Datenverträge der ersetzten
 Klassen bleiben kompatibel zur EVCSD-Zustandsmaschine.
 
+## Vier physische Gerätetasten
+
+Die Bedienfelder liegen fest an den Positionen der vier haptischen QC45-Tasten.
+Die Zuordnung wird nicht zwischen den Ansichten verschoben:
+
+| Ansicht | oben links | oben rechts | unten links | unten rechts |
+|---|---|---|---|---|
+| Anschlussauswahl | CCS | CHAdeMO | AC | Einstellungen |
+| AC-/CHAdeMO-Vorbereitung | Abbrechen | Start | – | – |
+| CCS-Vorbereitung/Autorisierung | Abbrechen | – | – | – |
+| Einstellungen/Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
+| Diagnose | – | – | Zurück | – |
+| Bereitschaft | beliebige Taste öffnet die Anschlussauswahl | wie links | wie links | wie links |
+| Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
+
+Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. Während des
+Ladens bleiben alle vier Gerätetasten ohne Stop-/Fortsetzen-Beschriftung; die
+Session wird entsprechend dem angezeigten Hinweis per Karte oder App beendet.
+
+`MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
+verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung.
+
 ## Datenquellen des Ladebildschirms
 
 Die Ladeanzeige liest einmal pro Sekunde den dokumentierten lokalen Modbus-Block
