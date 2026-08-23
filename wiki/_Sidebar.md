@@ -24,7 +24,7 @@
 
 **CCS & Diagnose**
 - [CCS QuickCharge V3](CCS-QuickCharge-V3)
-- [Hyundai Kona](Hyundai-Kona-CCS-Leistungsbegrenzung)
+- [EVSE-Limits: Fahrzeugfälle](Hyundai-Kona-CCS-Leistungsbegrenzung)
 - [CCS Raw Tracing](CCS-Raw-Tracing)
 - [Reverse Engineering](Reverse-Engineering)
 
