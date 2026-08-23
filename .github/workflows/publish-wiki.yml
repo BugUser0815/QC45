@@ -1,0 +1,43 @@
+name: Publish Wiki
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - native-integration
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/publish-wiki.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Publish wiki pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" /tmp/qc45-wiki
+
+          cp -f wiki/*.md /tmp/qc45-wiki/
+
+          cd /tmp/qc45-wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Wiki is already up to date."
+            exit 0
+          fi
+
+          git commit -m "Sync wiki from QC45 ${GITHUB_SHA}"
+          git push origin HEAD
