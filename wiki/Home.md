@@ -1,93 +1,64 @@
-# ⚡ EFACEC QC45 Engineering Wiki
+# EFACEC QC45 – Technik-Wiki
 
-> Technische Wissensbasis für Reverse Engineering, Integration und Lastmanagement der **EFACEC QC45**.
->
-> Fokus: EVCSD · QuickCharge · CCS / DIN SPEC 70121 · ISO 15118 · Peak Shaving · Hardware / Firmware
+> [!NOTE]
+> Dieses Wiki dokumentiert den aktuellen technischen Stand der QC45-Integration sowie die dazugehörigen Peak-Shaving- und EVCC-Komponenten. **Produktiv maßgeblich ist der Branch `native-integration`.** Historische Versuche sind separat gekennzeichnet.
 
----
-
-## Projektstatus
-
-| Bereich | Stand | Status |
-|---|---|---|
-| Native Integration | Modbus, LoadManager, Failback und OCPP-Bridge integriert | 🟢 aktiv |
-| EFACEC QuickCharge V3 | Paketformat und `maxPower`-Semantik aus Original-EVCSD bestätigt | ✅ bestätigt |
-| Kona-Leistungsbegrenzung | Ursache bis auf CCS-HLC-/Controller-Ebene eingegrenzt | 🟠 Analyse |
-| CCS-Controller A19 | EVAcharge SE sehr wahrscheinlich, Hardwarebestätigung ausstehend | 🟡 offen |
-| `EVSEMaximumCurrentLimit` | wahrscheinlich entscheidender fehlender Regelpfad | 🟠 Analyse |
-
----
-
-## Einstieg
-
-| Thema | Worum geht es? | Stand |
-|---|---|---|
-| **[[Hyundai Kona – CCS-Leistungsbegrenzung|Hyundai-Kona-CCS-Leistungsbegrenzung]]** | Warum der Kona trotz 5–6 kW Sollwert deutlich höher lädt und wo die Regelung vermutlich verloren geht | 🟠 Ursache stark eingegrenzt |
-
----
-
-## Systemüberblick
+## System auf einen Blick
 
 ```mermaid
 flowchart LR
-    LM[LoadManager] -->|Sollleistung kW| RI[Native Integration]
-    RI --> EVCSD[EVCSD / SatelliteModule]
-    EVCSD -->|EFACEC QuickCharge V3| MASTER[EFACEC Master]
-    MASTER -->|serieller QuickCharge-Pfad| CCS[CCS Controller / A19]
-    CCS -->|PLC · DIN 70121 / ISO 15118| EV[Fahrzeug]
-
-    KSEM[KSEM / Netzstrom] --> LM
-    SOC[Pufferbatterie / SoC] --> LM
-
-    style CCS stroke-width:3px
+    CP[ChargePoint Backend] <-->|OCPP 1.6 JSON / WSS| NI[qc45-integration.jar]
+    EV[EVCSD / Tomcat] <-->|OCPP 1.5 SOAP lokal| NI
+    EVCC[evcc] <-->|Modbus TCP :1502| NI
+    NI -->|Reflection| EV
+    KSEM[KOSTAL KSEM] -->|Modbus TCP| LM[LoadManager + GridFailback]
+    LM --> NI
+    PS[PeakShaving lean] -->|SMA Speedwire Multicast| SI[Sunny Island Cluster]
+    KSEM -->|Modbus TCP| PS
+    SI -->|SoC Modbus| PS
+    EV --> QC[QC45 Hardware / CCS / CHAdeMO / Type2]
 ```
 
-> [!NOTE]
-> Die interne EFACEC-Bezeichnung **CCS V2/V3** ist **nicht** die vom Fahrzeug ausgehandelte DIN-/ISO-Protokollversion. Es handelt sich um die proprietäre Kommunikation innerhalb der QC45.
+## Betrieb & Integration
+
+| Thema | Zweck | Status |
+|---|---|---|
+| [Systemarchitektur](Systemarchitektur) | Gesamtaufbau und Datenflüsse | ✅ aktuell |
+| [Native Integration](Native-Integration) | JAR im EVCSD/Tomcat, Bootstrap und Reflection | ✅ produktiv |
+| [Modbus TCP](Modbus-TCP) | Register, Schreibzugriffe und UI-Daten | ✅ produktiv |
+| [EVCC Integration](EVCC-Integration) | eigener QC45-Treiber im EVCC-Fork | ✅ vorhanden |
+| [OCPP Bridge](OCPP-Bridge) | OCPP 1.5 SOAP → OCPP 1.6 JSON/WSS | ✅ produktiv |
+| [RemoteStart & Autorisierung](RemoteStart-und-Autorisierung) | CCS-RemoteStart-Login-Fix | ✅ aktiv |
+| [Konfiguration & Betrieb](Konfiguration-und-Betrieb) | Properties, Ports, Standardwerte | ✅ aktuell |
+
+## Lastmanagement & Speicher
+
+| Thema | Zweck | Status |
+|---|---|---|
+| [KSEM-Anbindung](KSEM-Anbindung) | Phasenströme und bewusste Kurzzeitverbindungen | ✅ produktiv |
+| [LoadManager](LoadManager) | dynamisches DC-Leistungsbudget | ✅ produktiv |
+| [Grid-Failback](Grid-Failback) | unabhängige Überstrom-Schutzebene | ✅ produktiv |
+| [Peak Shaving & Sunny Island](Peak-Shaving-und-Sunny-Island) | virtuelles SMA Energy Meter | ✅ Branch `lean` |
+| [SoC-Derating](SoC-Derating) | sanfte Entladebegrenzung 20 → 11 % SoC | ✅ Branch `lean` |
+
+## CCS & Diagnose
+
+| Thema | Zweck | Status |
+|---|---|---|
+| [CCS QuickCharge V3](CCS-QuickCharge-V3) | internes EFACEC-Protokoll und `maxPower` | ✅ analysiert |
+| [Hyundai Kona – Leistungsbegrenzung](Hyundai-Kona-CCS-Leistungsbegrenzung) | Kona ignoriert wahrscheinlich Power-Limit | 🟠 finale HW-Verifikation offen |
+| [CCS Raw Tracing](CCS-Raw-Tracing) | physischer TX/RX-Nachweis | ✅ integriert |
+| [Reverse Engineering](Reverse-Engineering) | EVCSD-JAR, AVR-Firmware, A19/EVAcharge | 🟠 fortlaufend |
+
+## UI, Stabilität & Entwicklung
+
+| Thema | Zweck | Status |
+|---|---|---|
+| [Lademonitor UI](Lademonitor-UI) | kW statt kWh, Ist/Soll, SoC und Sessiondaten | ✅ Modbus-Unterbau; UI als JAR-Artefakt |
+| [EVCSD Lag Monitor](EVCSD-Lag-Monitor) | Executor-Lag und sicherer Reboot | ✅ integriert |
+| [Build & Installation](Build-und-Installation) | Maven, Deployment, PeakShaving-Build | ✅ dokumentiert |
+| [Historie & verworfene Ansätze](Historie-und-verworfene-Ansaetze) | verhindert Wiederholung alter Fehlversuche | ✅ gepflegt |
 
 ---
 
-## Aktuell wichtigste Erkenntnisse
-
-### ✅ Bestätigt
-
-- CCS-V3-START transportiert `maxPower` in **kW**.
-- Byte 2 des V3-Pakets ist **kein Amperewert**.
-- `quickChargeMaxCurrent` wird vom CCS-V3-START-Serializer nicht als separater Stromgrenzwert übertragen.
-- Der LoadManager setzt den gewünschten kW-Sollwert auf EVCSD-Seite nachvollziehbar.
-
-### 🟠 Sehr wahrscheinlich
-
-- Die Begrenzung geht erst **hinter der EFACEC-QuickCharge-Schnittstelle** verloren.
-- A19 ist sehr wahrscheinlich eine **EVAcharge SE** bzw. ein darauf basierender CCS-Kommunikationscontroller.
-- Der Kona reagiert nicht zuverlässig auf `EVSEMaximumPowerLimit`, benötigt aber eine wirksame `EVSEMaximumCurrentLimit`-Vorgabe.
-
-### ⬜ Noch offen
-
-- Aktuelles physisches V3-TX-Paket bei festem 5-kW-Sollwert bestätigen.
-- A19-Boardrevision und Firmwarestand erfassen.
-- Protokoll zwischen EFACEC-Master und CCS-Controller vollständig rekonstruieren.
-- Dynamische Strombegrenzung im HLC-Pfad implementieren.
-
----
-
-## Evidenzstufen
-
-| Kennzeichnung | Bedeutung |
-|---|---|
-| ✅ **Bestätigt** | Direkt aus Original-EVCSD, Firmware, Logs oder Primär-/Herstellerdokumentation nachgewiesen |
-| 🟠 **Sehr wahrscheinlich** | Mehrere unabhängige Befunde passen zusammen; letzte Hardware-/Live-Bestätigung fehlt |
-| ⬜ **Offen** | Muss durch Live-Mitschnitt, Hardwareidentifikation oder weitere Firmwareanalyse verifiziert werden |
-| ⛔ **Verworfen** | Ansatz wurde geprüft und ist technisch falsch oder nicht zielführend |
-
----
-
-## Code & Branches
-
-- **Aktueller Entwicklungsstand:** [`native-integration`](https://github.com/BugUser0815/QC45/tree/native-integration)
-- **Native Java-Integration:** [`native-integration/src/main/java/de/rothner/qc45`](https://github.com/BugUser0815/QC45/tree/native-integration/native-integration/src/main/java/de/rothner/qc45)
-- **Wiki-Quellen:** [`wiki/`](https://github.com/BugUser0815/QC45/tree/native-integration/wiki)
-
----
-
-<sub>Letzte inhaltliche Aktualisierung: 23.08.2026 · Diese Dokumentation ist eine technische Reverse-Engineering-Dokumentation und keine offizielle EFACEC-Unterlage.</sub>
+**Stand:** 23.08.2026 · **QC45-Code:** `BugUser0815/QC45` → `native-integration` · **Peak Shaving:** `BugUser0815/PeakShaving` → `lean` · **EVCC:** `BugUser0815/evcc` → `QC45`

@@ -1,0 +1,99 @@
+# Build & Installation
+
+## QC45 Native Integration
+
+Voraussetzungen: Maven und ein JDK, das den Java-7-Zielstand bauen kann.
+
+```bash
+cd native-integration
+mvn clean package
+```
+
+Ergebnis:
+
+```text
+target/qc45-integration-0.1.0.jar
+```
+
+### Installation auf der QC45
+
+```bash
+cp target/qc45-integration-0.1.0.jar \
+  /home/mobie/evcsd/webapps/ROOT/WEB-INF/lib/qc45-integration.jar
+```
+
+Konfiguration:
+
+```bash
+cp qc45-integration.properties.example \
+  /home/mobie/evcsd/qc45-integration.properties
+```
+
+In `/home/mobie/evcsd/webapps/ROOT/WEB-INF/web.xml` innerhalb von `<web-app>`:
+
+```xml
+<listener>
+  <listener-class>de.rothner.qc45.BootstrapListener</listener-class>
+</listener>
+```
+
+Danach EVCSD/Tomcat neu starten.
+
+Erwartete Meldungen sind unter anderem:
+
+```text
+[QC45] native integration started
+[QC45] Modbus TCP listening on 1502 (multi-client)
+[QC45] OCPP15 bridge listening on http://127.0.0.1:9000/QC45
+```
+
+## PeakShaving `lean`
+
+```bash
+git switch lean
+git pull --ff-only
+git submodule update --init --recursive
+cmake -S . -B build
+cmake --build build -j
+```
+
+Start ohne SoC-Limiter:
+
+```bash
+./build/peakshaving
+```
+
+Mit Sunny-Island-SoC:
+
+```bash
+./build/peakshaving <ksem-ip> <peak-watt> <ksem-port> <ksem-unit> <si-ip> [si-port] [si-unit]
+```
+
+## EVCC-Fork
+
+Für den selbst gebauten EVCC-Fork wurden unter anderem folgende Buildschritte verwendet:
+
+```bash
+make clean
+make install
+make install-ui
+make
+```
+
+Für spätere Builds kann je nach Repo-Stand `make build` genügen. Der relevante Treiber liegt im Branch `QC45`.
+
+## Vor Änderungen sichern
+
+Vor dem Austausch des JARs mindestens sichern:
+
+- bestehendes `WEB-INF/lib`
+- `web.xml`
+- `qc45-integration.properties`
+- ggf. Original-UI-JAR
+- relevante EVCSD-Datenbank-/Konfigurationsdateien
+
+## Wiki-Sync
+
+Der Branch enthält `.github/workflows/publish-wiki.yml`. Änderungen unter `wiki/**` werden dadurch in das separat von GitHub geführte QC45-Wiki synchronisiert.
+
+Siehe auch: [Konfiguration & Betrieb](Konfiguration-und-Betrieb).

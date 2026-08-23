@@ -1,27 +1,36 @@
-## ⚡ QC45 Engineering
+## ⚡ QC45 Wiki
 
-**[[🏠 Startseite|Home]]**
+**Übersicht**
+- [Home](Home)
+- [Systemarchitektur](Systemarchitektur)
 
----
+**Integration**
+- [Native Integration](Native-Integration)
+- [Konfiguration & Betrieb](Konfiguration-und-Betrieb)
+- [Build & Installation](Build-und-Installation)
 
-### 🚗 CCS & Fahrzeuge
+**Schnittstellen**
+- [Modbus TCP](Modbus-TCP)
+- [EVCC Integration](EVCC-Integration)
+- [OCPP Bridge](OCPP-Bridge)
+- [RemoteStart & Autorisierung](RemoteStart-und-Autorisierung)
+- [KSEM-Anbindung](KSEM-Anbindung)
 
-- [[Hyundai Kona – Leistungsbegrenzung|Hyundai-Kona-CCS-Leistungsbegrenzung]]
+**Lastmanagement**
+- [LoadManager](LoadManager)
+- [Grid-Failback](Grid-Failback)
+- [Peak Shaving & Sunny Island](Peak-Shaving-und-Sunny-Island)
+- [SoC-Derating](SoC-Derating)
 
-### 🧩 Themen
+**CCS & Diagnose**
+- [CCS QuickCharge V3](CCS-QuickCharge-V3)
+- [Hyundai Kona](Hyundai-Kona-CCS-Leistungsbegrenzung)
+- [CCS Raw Tracing](CCS-Raw-Tracing)
+- [Reverse Engineering](Reverse-Engineering)
 
-- EVCSD / QuickCharge
-- DIN SPEC 70121 / ISO 15118
-- Peak Shaving / LoadManager
-- Hardware / Firmware
+**UI & Stabilität**
+- [Lademonitor UI](Lademonitor-UI)
+- [EVCSD Lag Monitor](EVCSD-Lag-Monitor)
 
----
-
-### 🔗 Repository
-
-- [native-integration](https://github.com/BugUser0815/QC45/tree/native-integration)
-- [Java-Integration](https://github.com/BugUser0815/QC45/tree/native-integration/native-integration/src/main/java/de/rothner/qc45)
-
----
-
-<sub>✅ bestätigt · 🟠 Analyse · ⬜ offen · ⛔ verworfen</sub>
+**Referenz**
+- [Historie & verworfene Ansätze](Historie-und-verworfene-Ansaetze)
