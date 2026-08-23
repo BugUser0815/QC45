@@ -47,11 +47,12 @@ Erwartete Meldungen sind unter anderem:
 [QC45] OCPP15 bridge listening on http://127.0.0.1:9000/QC45
 ```
 
-## QC45 Lademonitor-UI
+## Vollständige QC45 Oberfläche
 
 Die proprietäre EVCSD-UI-JAR wird nicht im Repository abgelegt. Das Buildskript
-verwendet die aktuell eingesetzte JAR als Basis und ersetzt ausschließlich den
-reproduzierbar versionierten Lademonitor:
+verwendet die aktive JAR als Basis und ersetzt die versionierten operativen
+Ansichten gemeinsam. Die Zustandsmaschine und nicht ersetzte Wartungsseiten
+bleiben aus der Basis-JAR erhalten.
 
 Auf dem Raspberry wird OpenJDK 21 für `java`/`jar`/`javap` verwendet. Der
 Deployer lädt einen fest gepinnten ECJ 3.32.0 aus Maven Central und prüft ihn
@@ -70,7 +71,7 @@ chmod +x build.sh
 Ergebnis:
 
 ```text
-ui-patch/target/evcsdUI-qc45-clean-charge-screen.jar
+ui-patch/target/evcsdUI-qc45-alpitronic-ui.jar
 ```
 
 Vor dem Austausch die aktive Datei sichern. Danach die neue JAR unter dem
@@ -88,7 +89,7 @@ Der Ablauf ist bewusst auf die vorhandene Säule zugeschnitten:
 
 1. aktive Basis-JAR von
    `/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar` laden,
-2. neue UI-Klasse als Java-7-Bytecode bauen und prüfen,
+2. vollständigen UI-Klassensatz als Java-7-Bytecode bauen und prüfen,
 3. Übertragung per SHA-256 verifizieren,
 4. aktive JAR sichern und atomar ersetzen,
 5. ausschließlich `pt.efacec.es.evcsd.ui.Main 5678` beenden,

@@ -1,9 +1,9 @@
 # Automatisches QC45-UI-Deployment
 
 Der Raspberry prüft im Minutentakt den UI-Quellstand des Branches
-`native-integration`. Nur wenn sich `ui-patch/src` geändert hat, wird die
-aktuell eingesetzte UI-JAR von der QC45 geladen, der Patch dagegen gebaut und
-die neue JAR zurück auf die Säule übertragen.
+`native-integration`. Wenn sich `ui-patch/src` geändert hat, wird die aktive
+UI-JAR von der QC45 geladen, die vollständige operative Oberfläche dagegen als
+Java-7-Bytecode gebaut und die neue JAR zurück auf die Säule übertragen.
 
 Der Deployer führt dabei keine aus GitHub geladenen Shellskripte aus. Er
 extrahiert ausschließlich `ui-patch/src` und verwendet das lokal installierte
@@ -121,5 +121,7 @@ systemctl --user disable --now qc45-ui-deploy.timer
 ## Ablauf nach späteren Änderungen
 
 Nach einem Push in den Branch `native-integration` erkennt der Raspberry die
-geänderte UI innerhalb von ungefähr einer Minute. Änderungen außerhalb von
+geänderte UI innerhalb von ungefähr einer Minute. Dabei werden alle
+versionierten UI-Klassen gemeinsam kompiliert und vor dem Upload auf
+Vollständigkeit und Class-Major-Version 51 geprüft. Änderungen außerhalb von
 `ui-patch/src` lösen keinen Austausch auf der QC45 aus.

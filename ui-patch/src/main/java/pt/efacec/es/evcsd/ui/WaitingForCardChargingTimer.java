@@ -176,6 +176,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         try {
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
+            if (!isChargingSession()) return renderIdlePage();
             refreshBufferSoc(now);
 
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -196,6 +197,67 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             LOGGER.warning("charge page: " + error);
             return null;
         }
+    }
+
+    private boolean isChargingSession() {
+        int state = AlpitronicSessionState.get();
+        if (state != AlpitronicSessionState.UNKNOWN) return state == AlpitronicSessionState.CHARGING;
+        ChargeInfo latest = ChargeInfo.getLatest();
+        if (latest != null) return latest.isCharging();
+        return value(0, 0) > 0 || (value(1, 0) > 0 && value(3, 0) > 0);
+    }
+
+    private ImageIcon renderIdlePage() {
+        BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        textAA(g);
+        g.setColor(BACKGROUND);
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 18));
+        g.drawString("QC45", 18, 28);
+        g.setColor(new Color(72, 184, 106));
+        g.fillOval(157, 17, 10, 10);
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 17));
+        g.drawString("BEREIT", 176, 29);
+        g.setFont(font(Font.BOLD, 18));
+        rightAligned(g, new SimpleDateFormat("HH:mm").format(new Date()), 622, 28);
+        g.setColor(DIVIDER);
+        g.drawLine(0, 42, WIDTH, 42);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 32));
+        centered(g, "LADEN STARTEN", 320, 94);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 15));
+        centered(g, "Fahrzeug verbinden und authentifizieren", 320, 120);
+
+        drawCardSymbol(g, 320, 217);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 24));
+        centered(g, "Karte vorhalten oder App benutzen.", 320, 332);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 15));
+        centered(g, "Der verfügbare Anschluss wird automatisch erkannt.", 320, 364);
+        g.setColor(DIVIDER);
+        g.drawLine(0, 416, WIDTH, 416);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 12));
+        centered(g, "Die Ladeleistung wird vom Fahrzeug bestimmt.", 320, 452);
+        g.dispose();
+        return new ImageIcon(image);
+    }
+
+    private void drawCardSymbol(Graphics2D g, int centerX, int centerY) {
+        g.setColor(YELLOW);
+        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.drawRoundRect(centerX - 58, centerY - 38, 78, 76, 8, 8);
+        g.drawArc(centerX + 3, centerY - 28, 42, 56, -55, 110);
+        g.drawArc(centerX + 13, centerY - 19, 28, 38, -55, 110);
+        g.drawArc(centerX + 23, centerY - 10, 14, 20, -55, 110);
     }
 
     private void drawGrid(Graphics2D g) {

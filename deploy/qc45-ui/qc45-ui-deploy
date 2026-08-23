@@ -111,13 +111,21 @@ fi
 work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
 git -C "$repo_dir" archive --format=tar "$commit_sha" ui-patch/src | tar -xf - -C "$work_dir"
 
-source_file="$work_dir/ui-patch/src/main/java/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.java"
+source_root="$work_dir/ui-patch/src/main/java"
+sources_file="$work_dir/ui-sources.txt"
 base_jar="$work_dir/base-ui.jar"
-output_jar="$work_dir/evcsdUI-qc45-clean-charge-screen.jar"
+output_jar="$work_dir/evcsdUI-qc45-alpitronic-ui.jar"
 classes_dir="$work_dir/classes"
 
-if [[ ! -r "$source_file" ]]; then
-    echo "Expected UI source is missing at commit $commit_sha" >&2
+if [[ ! -d "$source_root/pt/efacec/es/evcsd/ui" ]]; then
+    echo "Expected UI source tree is missing at commit $commit_sha" >&2
+    exit 1
+fi
+
+find "$source_root" -type f -name '*.java' | sort >"$sources_file"
+source_count=$(wc -l <"$sources_file")
+if ((source_count < 20)); then
+    echo "Full UI source set is incomplete at commit $commit_sha ($source_count files)" >&2
     exit 1
 fi
 
@@ -145,35 +153,45 @@ echo "Downloading the active QC45 UI JAR..."
 scp "${scp_args[@]}" "${QC45_SSH_TARGET}:${QC45_REMOTE_JAR}" "$base_jar"
 
 mkdir -p "$classes_dir"
-echo "Compiling the charging screen as Java 7 bytecode..."
+echo "Compiling the complete Alpitronic-style UI as Java 7 bytecode..."
 java -jar "$QC45_ECJ_JAR" -proc:none -1.7 -encoding UTF-8 \
     -classpath "$base_jar" \
     -d "$classes_dir" \
-    "$source_file"
+    @"$sources_file"
 
 cp -p "$base_jar" "$output_jar"
-shopt -s nullglob
-class_files=("$classes_dir"/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer*.class)
-if ((${#class_files[@]} == 0)); then
-    echo "Compilation produced no WaitingForCardChargingTimer classes" >&2
+class_count=$(find "$classes_dir/pt/efacec/es/evcsd/ui" -type f -name '*.class' | wc -l)
+if ((class_count < 25)); then
+    echo "Compilation produced an incomplete UI class set ($class_count classes)" >&2
     exit 1
 fi
 
-for class_file in "${class_files[@]}"; do
-    relative_path=${class_file#"$classes_dir"/}
-    jar uf "$output_jar" -C "$classes_dir" "$relative_path"
+jar uf "$output_jar" -C "$classes_dir" pt/efacec/es/evcsd/ui
+
+required_ui_classes=(
+    WaitingForCardChargingTimer
+    MainMenuPanel
+    PrepareCCSChargePanel
+    InCCSChargingPanel
+    CCSChargeStoppedPanel
+    OptionsPanel
+    DtcPanel
+)
+jar_listing="$work_dir/output-jar.list"
+jar tf "$output_jar" >"$jar_listing"
+for ui_class in "${required_ui_classes[@]}"; do
+    class_path="pt/efacec/es/evcsd/ui/${ui_class}.class"
+    if ! grep -Fqx "$class_path" "$jar_listing"; then
+        echo "Patched class is missing from the output JAR: $class_path" >&2
+        exit 1
+    fi
+    javap_output="$work_dir/javap-${ui_class}.txt"
+    javap -verbose -classpath "$output_jar" "pt.efacec.es.evcsd.ui.${ui_class}" >"$javap_output"
+    if ! grep -Fq 'major version: 51' "$javap_output"; then
+        echo "$ui_class is not Java 7 bytecode (major version 51)" >&2
+        exit 1
+    fi
 done
-
-if ! jar tf "$output_jar" | grep -qx 'pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.class'; then
-    echo "Patched class is missing from the output JAR" >&2
-    exit 1
-fi
-
-if ! javap -verbose -classpath "$output_jar" pt.efacec.es.evcsd.ui.WaitingForCardChargingTimer \
-    | grep -q 'major version: 51'; then
-    echo "Patched class is not Java 7 bytecode (major version 51)" >&2
-    exit 1
-fi
 
 jar_sha256=$(sha256sum "$output_jar" | awk '{print $1}')
 remote_dir=${QC45_REMOTE_JAR%/*}

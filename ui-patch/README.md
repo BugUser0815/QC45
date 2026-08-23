@@ -1,21 +1,34 @@
-# QC45 Lademonitor-UI
+# QC45 Oberfläche im reduzierten Schnelllader-Design
 
-Dieser Patch ersetzt ausschließlich den Ladesession-Screensaver
-`WaitingForCardChargingTimer` der vorhandenen EVCSD-UI-JAR.
+Dieser Patch ersetzt die operativen Ansichten der vorhandenen EVCSD-UI-JAR
+durch eine einheitliche, codegerenderte Oberfläche für das 640×480-Display der
+QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 
-## Darstellung
+## Gestaltungsprinzipien
 
-- 640×480 Pixel, passend zum QC45-Display
-- aktuelle Ladeleistung und Fahrzeug-SoC als Hauptwerte
-- Soll-Leistung, Energie, Ladezeit und Pufferbatterie-SoC als Nebenwerte
-- lokaler Zeitstempel
-- Hinweis: `zum beenden Karte vorhalten oder App benutzen.`
-- keine Animationen, Verläufe oder dekorativen Grafiken
+- dunkler, ruhiger Hintergrund mit klarer Informationshierarchie
+- Weiß und Grau für Inhalte; Gelb nur für Auswahl, Status und Fortschritt
+- einheitliche Kopfzeile mit Gerätestatus und lokaler Uhrzeit
+- keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
+- feste Aktionsflächen an den ursprünglichen Bedienpositionen
+- Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
+- Beenden-Hinweis: `zum beenden Karte vorhalten oder App benutzen.`
 
-## Datenquellen
+## Ersetzte Betriebsansichten
 
-Die Ladeanzeige liest pro Sekunde ausschließlich den dokumentierten lokalen
-Modbus-Block auf `127.0.0.1:1502`:
+Der Patch umfasst Start, Anschlussauswahl, Mehrfachladung, Vorbereitung für AC,
+CCS und CHAdeMO, Autorisierung, Bereitschaft/Kartenleser, aktive AC-/CCS-/CHAdeMO-
+Ladung, Warten auf das Fahrzeug, Sitzungsabschluss, Einstellungen, Sprache und
+Diagnose. Seltene Firmware-/Wartungshintergründe verbleiben bewusst in der
+Original-JAR.
+
+Alle öffentlichen Konstruktoren und `ActionPanel`-Datenverträge der ersetzten
+Klassen bleiben kompatibel zur EVCSD-Zustandsmaschine.
+
+## Datenquellen des Ladebildschirms
+
+Die Ladeanzeige liest einmal pro Sekunde den dokumentierten lokalen Modbus-Block
+auf `127.0.0.1:1502`:
 
 | Register | Inhalt |
 |---:|---|
@@ -38,27 +51,21 @@ Optionale Java-Systemparameter:
 
 ## Build
 
-Benötigt werden `jar` sowie entweder der Eclipse-Compiler `ecj` oder ein
-`javac`, das noch Java-7-Bytecode erzeugen kann. Unter OpenJDK 21 wird `ecj`
-verwendet. Die aktuell eingesetzte UI-JAR wird als Basis übergeben und bleibt
-selbst unverändert:
+Benötigt werden `jar` sowie entweder ECJ oder ein `javac`, das Java-7-Bytecode
+erzeugen kann. Die aktive UI-JAR wird als Basis übergeben:
 
 ```bash
 cd ui-patch
 chmod +x build.sh
-./build.sh /pfad/evcsdUI-global-charge-cache-refresh.jar
+./build.sh /pfad/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar
 ```
 
 Ergebnis:
 
 ```text
-target/evcsdUI-qc45-clean-charge-screen.jar
+target/evcsdUI-qc45-alpitronic-ui.jar
 ```
 
-Die Klasse wird mit Java-7-Bytecode gebaut, passend zur originalen QC45-UI.
-Vor dem Austausch die aktive UI-JAR sichern und die neue Datei unter dem Namen
-der bisherigen JAR nach `/home/mobie/evcsd/ui/lib/` kopieren.
-
-Für automatische Builds und ein abgesichertes Deployment mit Backup,
-UI-only-Neustart und Rollback steht im Repository
-[`deploy/qc45-ui`](../deploy/qc45-ui/README.md) bereit.
+Alle Patchklassen werden als Java-7-Bytecode (Class-Major-Version 51) gebaut und
+in eine Kopie der Basis-JAR eingesetzt. Für das automatische, abgesicherte
+Deployment siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
