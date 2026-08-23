@@ -38,8 +38,10 @@ Optionale Java-Systemparameter:
 
 ## Build
 
-Benötigt wird ein JDK mit `javac` und `jar`. Die aktuell eingesetzte UI-JAR
-wird als Basis übergeben und bleibt selbst unverändert:
+Benötigt werden `jar` sowie entweder der Eclipse-Compiler `ecj` oder ein
+`javac`, das noch Java-7-Bytecode erzeugen kann. Unter OpenJDK 21 wird `ecj`
+verwendet. Die aktuell eingesetzte UI-JAR wird als Basis übergeben und bleibt
+selbst unverändert:
 
 ```bash
 cd ui-patch

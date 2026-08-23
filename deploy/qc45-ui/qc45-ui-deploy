@@ -22,7 +22,7 @@ readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
 readonly QC45_BRANCH="native-integration"
 readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-ui-deployer"
 
-required_commands=(git tar ssh scp javac javap jar sha256sum mktemp awk grep flock)
+required_commands=(git tar ssh scp ecj javap jar sha256sum mktemp awk grep flock)
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
@@ -132,7 +132,7 @@ scp "${scp_args[@]}" "${QC45_SSH_TARGET}:${QC45_REMOTE_JAR}" "$base_jar"
 
 mkdir -p "$classes_dir"
 echo "Compiling the charging screen as Java 7 bytecode..."
-javac -source 7 -target 7 -encoding UTF-8 \
+ecj -1.7 -encoding UTF-8 \
     -classpath "$base_jar" \
     -d "$classes_dir" \
     "$source_file"

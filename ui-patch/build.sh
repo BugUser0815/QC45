@@ -16,10 +16,20 @@ source_file="$script_dir/src/main/java/pt/efacec/es/evcsd/ui/WaitingForCardCharg
 rm -rf "$classes_dir"
 mkdir -p "$classes_dir" "$(dirname -- "$output_jar")"
 
-javac -source 7 -target 7 -encoding UTF-8 \
-    -classpath "$base_jar" \
-    -d "$classes_dir" \
-    "$source_file"
+if command -v ecj >/dev/null 2>&1; then
+    ecj -1.7 -encoding UTF-8 \
+        -classpath "$base_jar" \
+        -d "$classes_dir" \
+        "$source_file"
+elif command -v javac >/dev/null 2>&1; then
+    javac -source 7 -target 7 -encoding UTF-8 \
+        -classpath "$base_jar" \
+        -d "$classes_dir" \
+        "$source_file"
+else
+    echo "Neither ecj nor javac was found" >&2
+    exit 2
+fi
 
 cp "$base_jar" "$output_jar"
 

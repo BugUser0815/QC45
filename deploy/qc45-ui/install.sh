@@ -6,11 +6,11 @@ bin_dir="${HOME}/.local/bin"
 config_dir="${HOME}/.config/qc45-ui-deployer"
 systemd_dir="${HOME}/.config/systemd/user"
 
-for command_name in install systemctl javac javap jar git ssh scp; do
+for command_name in install systemctl ecj javap jar git ssh scp; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
-        echo "On Raspberry Pi OS/Debian 12 install JDK 17 with:" >&2
-        echo "  sudo apt update && sudo apt install -y openjdk-17-jdk-headless" >&2
+        echo "Install OpenJDK 21 and the Eclipse Java compiler with:" >&2
+        echo "  sudo apt update && sudo apt install -y openjdk-21-jdk-headless ecj" >&2
         exit 2
     fi
 done
@@ -22,9 +22,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 printf 'final class Java7Check {}\n' >"$compiler_test_dir/Java7Check.java"
-if ! javac -source 7 -target 7 -d "$compiler_test_dir" "$compiler_test_dir/Java7Check.java" >/dev/null 2>&1; then
-    echo "The installed javac cannot generate Java 7 bytecode." >&2
-    echo "Install OpenJDK 17 JDK and run this installer again." >&2
+if ! ecj -1.7 -d "$compiler_test_dir" "$compiler_test_dir/Java7Check.java" >/dev/null 2>&1; then
+    echo "The installed ecj cannot generate Java 7 bytecode." >&2
+    echo "Install the ecj package and run this installer again." >&2
     exit 2
 fi
 
