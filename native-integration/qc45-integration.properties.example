@@ -15,21 +15,34 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
-# Direct HTTPS API for QC45 Monitor iOS app
-remoteapi.enabled=true
-remoteapi.bind=0.0.0.0
-remoteapi.port=9443
-remoteapi.token=CHANGE_TO_AT_LEAST_32_RANDOM_CHARACTERS
-remoteapi.tls.keyStore=/home/mobie/evcsd/qc45-api.jks
-remoteapi.tls.keyStoreType=JKS
-remoteapi.tls.keyStorePassword=CHANGE_ME_KEYSTORE_PASSWORD
-remoteapi.tls.keyPassword=CHANGE_ME_KEYSTORE_PASSWORD
-remoteapi.tls.certificateAlias=qc45-api
-
 # evcc / local load management
 modbus.port=1502
 
-# KOSTAL KSEM shared by LoadManager, GridFailback and Remote API
+# CCS protocol handling
+# The integration forces the live EFACEC QuickCharge/MasterProto serializers to
+# protocol V3 in memory. No Derby value is changed. Do not add current or
+# hardware-metadata overrides here; CCS V3 transports the requested power via
+# MessageStateMachines.maxPower / byte 2 of the 0x63 START frame.
+
+# Sparse raw serial trace for QuickCharge/CCS diagnosis. The TX hook wraps the
+# actual OutputStream, therefore a line such as
+#   CCS-RAW2 TX ... raw=63 02 0A ...
+# proves that a 10 kW V3 START frame was handed to the serial/RXTX output path.
+evcsd.ccsRawTrace.enabled=true
+evcsd.ccsRawTrace.repeatMs=1000
+
+# Lightweight EVCSD internal executor lag probe.
+# One tiny marker task per interval; warnings are logged above warnMs.
+# Persistent lag >= 1000 ms for three consecutive probes arms a FULL DEVICE
+# reboot. Reboot is deferred until all connectors have no active transaction,
+# report 0 kW, and remain idle for 30 seconds. The Java process executes
+# `sudo -n /sbin/reboot`, therefore the EVCSD runtime user must have passwordless
+# permission for /sbin/reboot or the reboot attempt will be rejected and logged.
+evcsd.lagmonitor.enabled=true
+evcsd.lagmonitor.intervalMs=60000
+evcsd.lagmonitor.warnMs=250
+
+# KOSTAL KSEM shared by LoadManager and GridFailback
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
@@ -38,6 +51,7 @@ ksem.legacyLowWord=true
 ksem.currentScale=0.001
 
 # Native load manager
+# Normal balancing controls DC connectors only. Type2 is not manipulated.
 loadmanager.enabled=true
 loadmanager.targetA=32.0
 loadmanager.hysteresisA=0.8
@@ -58,6 +72,8 @@ failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=38.0
 failback.intervalMs=200
+# Hard-trip latch clears automatically after this many ms continuously below reduceA.
+failback.resetDelayMs=60000
 # KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
 failback.tripOnMeterFailure=true
 failback.meterFailureMs=3000

@@ -6,19 +6,19 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 
-/** Minimal Modbus/TCP server exposing the QC45 to evcc. */
+/** Minimal multi-client Modbus/TCP server exposing the QC45 to evcc and the local UI. */
 public final class ModbusServer extends Thread {
     private final ReflectionQC45 station;
     private final int port;
     private volatile boolean running = true;
     private volatile ServerSocket serverSocket;
-    private final long[] lastEnergyQueryMs = new long[4];
 
     public ModbusServer(ReflectionQC45 station, int port) {
         super("qc45-modbus-" + port);
@@ -37,20 +37,31 @@ public final class ModbusServer extends Thread {
             serverSocket = new ServerSocket();
             serverSocket.setReuseAddress(true);
             serverSocket.bind(new InetSocketAddress("0.0.0.0", port));
-            System.out.println("[QC45] Modbus TCP listening on " + port);
+            System.out.println("[QC45] Modbus TCP listening on " + port + " (multi-client)");
 
             while (running) {
-                Socket socket = null;
                 try {
-                    socket = serverSocket.accept();
+                    final Socket socket = serverSocket.accept();
                     socket.setSoTimeout(10000);
-                    handle(socket);
+                    Thread client = new Thread(new Runnable() {
+                        public void run() {
+                            try {
+                                handle(socket);
+                            } catch (SocketException e) {
+                                if (running) System.err.println("[QC45] Modbus client socket error: " + e);
+                            } catch (Throwable e) {
+                                if (running) e.printStackTrace();
+                            } finally {
+                                try { socket.close(); } catch (Throwable ignored) {}
+                            }
+                        }
+                    }, "qc45-modbus-client-" + socket.getRemoteSocketAddress());
+                    client.setDaemon(true);
+                    client.start();
                 } catch (SocketException e) {
                     if (running) e.printStackTrace();
                 } catch (Throwable e) {
-                    e.printStackTrace();
-                } finally {
-                    try { if (socket != null) socket.close(); } catch (Throwable ignored) {}
+                    if (running) e.printStackTrace();
                 }
             }
         } catch (Throwable e) {
@@ -80,18 +91,18 @@ public final class ModbusServer extends Thread {
                 result = process(pdu);
             } catch (ModbusException e) {
                 int fc = pdu.length == 0 ? 0 : pdu[0] & 0xff;
-                result = new byte[] { (byte) (fc | 0x80), (byte) e.code };
+                result = new byte[] { (byte)(fc | 0x80), (byte)e.code };
             } catch (Throwable e) {
                 e.printStackTrace();
                 int fc = pdu.length == 0 ? 0 : pdu[0] & 0xff;
-                result = new byte[] { (byte) (fc | 0x80), 4 };
+                result = new byte[] { (byte)(fc | 0x80), 4 };
             }
 
             byte[] header = new byte[7];
             putU16(header, 0, tx);
             putU16(header, 2, 0);
             putU16(header, 4, result.length + 1);
-            header[6] = (byte) unit;
+            header[6] = (byte)unit;
             out.write(header);
             out.write(result);
             out.flush();
@@ -114,8 +125,8 @@ public final class ModbusServer extends Thread {
         if (count < 1 || count > 125) throw new ModbusException(3);
 
         byte[] result = new byte[2 + count * 2];
-        result[0] = (byte) fc;
-        result[1] = (byte) (count * 2);
+        result[0] = (byte)fc;
+        result[1] = (byte)(count * 2);
         for (int i = 0; i < count; i++) putU16(result, 2 + i * 2, register(address + i));
         return result;
     }
@@ -131,7 +142,8 @@ public final class ModbusServer extends Thread {
         int address = u16(pdu, 1);
         int count = u16(pdu, 3);
         int bytes = pdu[5] & 0xff;
-        if (count < 1 || count > 123 || bytes != count * 2 || pdu.length != 6 + bytes) throw new ModbusException(3);
+        if (count < 1 || count > 123 || bytes != count * 2 || pdu.length != 6 + bytes)
+            throw new ModbusException(3);
 
         for (int i = 0; i < count; i++) validateWritable(address + i);
         for (int i = 0; i < count; i++) writeRegister(address + i, u16(pdu, 6 + i * 2));
@@ -159,14 +171,12 @@ public final class ModbusServer extends Thread {
             case 30: return station.remoteStarted() ? 1 : 0;
             case 40: return station.globalMaxPower();
             case 41: return station.maxPowerAC();
-            // Energy counters are unsigned 32-bit Wh, high word first.
             case 50: return energyWord(1, true);
             case 51: return energyWord(1, false);
             case 52: return energyWord(2, true);
             case 53: return energyWord(2, false);
             case 54: return energyWord(3, true);
             case 55: return energyWord(3, false);
-            // Overall state: 0=idle, 1=session/connected, 2=charging.
             case 60: return overallStatus();
             case 100: {
                 int dc = activeDcConnector();
@@ -178,15 +188,43 @@ public final class ModbusServer extends Thread {
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
             case 111: return station.maxPowerAC();
+
+            // Local charging-screen block. Use the already parsed live EVCSD
+            // SatelliteInfo state. CentralModule refreshes these fields from every
+            // incoming status packet; this is the same state used by the stock UI.
+            case 120: {
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                int p = satelliteInfoInt(dc, "power", -1);
+                return p >= 0 ? p : station.powerKw(dc);
+            }
+            case 121: {
+                int dc = activeDcConnector();
+                return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
+            }
+            case 122: {
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                return clamp(satelliteInfoInt(dc, "battEnergyPct", 0), 0, 100);
+            }
+            case 123: {
+                int dc = activeDcConnector();
+                if (dc == 0) return 0;
+                long seconds = satelliteInfoInt(dc, "chargingTime", 0);
+                return (int)Math.min(65535L, Math.max(0L, seconds));
+            }
+            case 124: {
+                long wh = activeSessionEnergyWh();
+                return (int)((wh >>> 16) & 0xffffL);
+            }
+            case 125: {
+                long wh = activeSessionEnergyWh();
+                return (int)(wh & 0xffffL);
+            }
             default: throw new ModbusException(2);
         }
     }
 
-    /**
-     * A real EVCSD transaction is authoritative. The idTag/power fallback keeps
-     * compatibility with firmware states where the transaction object is not yet
-     * attached during the short start/stop transition.
-     */
     private boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
         try {
@@ -196,14 +234,12 @@ public final class ModbusServer extends Thread {
         return station.powerKw(connector) > 0 || station.idTag(connector).length() > 0;
     }
 
-    /** Logical DC connector, including a paused zero-power transaction. */
     private int activeDcConnector() throws Exception {
         int p1 = station.powerKw(1);
         int p2 = station.powerKw(2);
         if (p1 > 0 && p2 > 0) return p1 >= p2 ? 1 : 2;
         if (p1 > 0) return 1;
         if (p2 > 0) return 2;
-
         boolean s1 = sessionActive(1);
         boolean s2 = sessionActive(2);
         if (s1 && !s2) return 1;
@@ -217,28 +253,54 @@ public final class ModbusServer extends Thread {
         return 0;
     }
 
-    /**
-     * EVCSD getEnergy() only triggers an asynchronous satellite query. The
-     * actual cached meter value is returned by getCurrentEnergy() in Wh.
-     */
+    private int satelliteInfoInt(int connector, String fieldName, int fallback) throws Exception {
+        Object sat = satellite(connector);
+        Field infoField = findField(sat.getClass(), "infoState");
+        if (infoField == null) return fallback;
+        infoField.setAccessible(true);
+        Object info = infoField.get(sat);
+        if (info == null) return fallback;
+        Field valueField = findField(info.getClass(), fieldName);
+        if (valueField == null) return fallback;
+        valueField.setAccessible(true);
+        Object value = valueField.get(info);
+        return value instanceof Number ? ((Number)value).intValue() : fallback;
+    }
+
+    private long activeSessionEnergyWh() throws Exception {
+        int dc = activeDcConnector();
+        if (dc == 0) return 0L;
+
+        int energy = satelliteInfoInt(dc, "energy", -1);
+        int initial = satelliteInfoInt(dc, "initialEnergy", -1);
+        if (energy >= 0 && initial >= 0 && energy >= initial) {
+            return ((long)energy - (long)initial) & 0xffffffffL;
+        }
+
+        // Fallback for meter configurations where initialEnergy is not populated.
+        return energyWh(dc);
+    }
+
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
-        long now = System.currentTimeMillis();
-        if (connector >= 1 && connector <= 3 && now - lastEnergyQueryMs[connector] >= 1000L) {
-            try { sat.getClass().getMethod("getEnergy").invoke(sat); }
-            catch (NoSuchMethodException ignored) {}
-            lastEnergyQueryMs[connector] = now;
-        }
         Object value = sat.getClass().getMethod("getCurrentEnergy").invoke(sat);
-        return value instanceof Number ? ((Number) value).longValue() & 0xffffffffL : 0L;
+        return value instanceof Number ? ((Number)value).longValue() & 0xffffffffL : 0L;
     }
 
     private int energyWord(int connector, boolean high) throws Exception {
         long value = energyWh(connector);
-        return high ? (int) ((value >>> 16) & 0xffffL) : (int) (value & 0xffffL);
+        return high ? (int)((value >>> 16) & 0xffffL) : (int)(value & 0xffffL);
     }
 
-    /** Access the already existing live EVCSD SatelliteModule through the adapter. */
+    private static Field findField(Class<?> type, String name) {
+        Class<?> t = type;
+        while (t != null) {
+            try { return t.getDeclaredField(name); }
+            catch (NoSuchFieldException e) { t = t.getSuperclass(); }
+        }
+        return null;
+    }
+
     private Object satellite(int connector) throws Exception {
         Method method = ReflectionQC45.class.getDeclaredMethod("satellite", Integer.TYPE);
         method.setAccessible(true);
@@ -255,10 +317,17 @@ public final class ModbusServer extends Thread {
         else station.setAcBudgetKw(value);
     }
 
-    private static int u16(byte[] b, int o) { return ((b[o] & 0xff) << 8) | (b[o + 1] & 0xff); }
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static int u16(byte[] b, int o) {
+        return ((b[o] & 0xff) << 8) | (b[o + 1] & 0xff);
+    }
+
     private static void putU16(byte[] b, int o, int value) {
-        b[o] = (byte) ((value >>> 8) & 0xff);
-        b[o + 1] = (byte) (value & 0xff);
+        b[o] = (byte)((value >>> 8) & 0xff);
+        b[o + 1] = (byte)(value & 0xff);
     }
 
     private static boolean readFullyOrEof(InputStream in, byte[] b, int off, int len) throws IOException {
