@@ -1,159 +1,191 @@
-# Hyundai Kona: CCS-Leistungsbegrenzung wird ignoriert
+# 🚗 Hyundai Kona – CCS-Leistungsbegrenzung wird ignoriert
 
-**Stand:** 23.08.2026  
-**Betroffener Pfad:** EFACEC QC45 / EVCSD / CCS / DIN SPEC 70121  
-**Status:** Ursache stark eingegrenzt, finale Bestätigung am CCS-Controller steht noch aus.
+> [!IMPORTANT]
+> **Aktueller Hauptverdacht:** Die QC45 setzt die gewünschte Leistung auf EVCSD-/QuickCharge-Ebene korrekt. Der Fehler liegt sehr wahrscheinlich **danach**, auf dem CCS-HLC-Pfad: Der Kona kann `EVSEMaximumPowerLimit` ignorieren, während `EVSEMaximumCurrentLimit` offenbar nicht dynamisch genug reduziert wird.
+
+| | |
+|---|---|
+| **Status** | 🟠 Ursache stark eingegrenzt |
+| **Betroffener Pfad** | EFACEC QC45 → EVCSD → QuickCharge → CCS → DIN SPEC 70121 |
+| **Reproduzierbar** | Ja, beim Hyundai Kona |
+| **Andere Fahrzeuge** | Tesla Model Y / Mini Cooper SE zeigten dieses Verhalten nicht |
+| **Nächster Beweis** | physisches V3-TX-Paket + A19/CCS-Controller identifizieren |
+| **Stand** | 23.08.2026 |
+
+---
 
 ## Kurzfassung
 
-Beim Hyundai Kona wird die von der QC45 vorgegebene DC-Ladeleistung nicht zuverlässig eingehalten. Die Java-/EVCSD-Seite setzt den gewünschten Leistungswert korrekt bis zur internen EFACEC-QuickCharge-Schnittstelle. Der entscheidende Verdacht liegt inzwischen **hinter** EVCSD: Der nachgeschaltete CCS-Kommunikationscontroller dürfte den EFACEC-Leistungswert als `EVSEMaximumPowerLimit` an das Fahrzeug weitergeben, ohne gleichzeitig `EVSEMaximumCurrentLimit` dynamisch zu reduzieren.
+Die QC45 bekommt beispielsweise **5 kW Sollleistung** vorgegeben. Auf Java-/EVCSD-Seite bleibt dieser Wert korrekt gesetzt, während der Hyundai Kona trotzdem auf deutlich höhere Ströme und Leistungen hochläuft.
 
-Das passt exakt zu dokumentiertem Verhalten des Hyundai Kona: Eine wissenschaftliche Untersuchung mit kommerziellen Fahrzeugen beschreibt, dass ein Hyundai Kona (2019) den von der EVSE gesetzten `EVSEMaximumPowerLimit` ignorierte, während getestete Fahrzeuge dynamische `EVSEMaximumCurrentLimit`-Vorgaben befolgten.
+Die bisherigen Analysen ergeben drei zentrale Punkte:
 
-Für die Lösung muss daher wahrscheinlich **nicht der LoadManager**, sondern die Umsetzung auf dem CCS-Controller angepasst werden: aus der gewünschten Leistung muss bei laufender Ladung eine passende Stromgrenze erzeugt und als `EVSEMaximumCurrentLimit` in der `CurrentDemandRes`-Schleife an das Fahrzeug gegeben werden.
+1. **EFACEC QuickCharge V3 transportiert Leistung in kW.** Byte 2 des CCS-START-Pakets ist `maxPower`, nicht Strom.
+2. **`quickChargeMaxCurrent` ist im V3-CCS-START wirkungslos.** Der originale Serializer verwendet dieses Feld nicht als separaten Stromgrenzwert.
+3. Für den **Hyundai Kona (2019)** ist in einer wissenschaftlichen Untersuchung dokumentiert, dass er `EVSEMaximumPowerLimit` ignorieren kann. Eine direkte Begrenzung über `EVSEMaximumCurrentLimit` wurde dagegen befolgt.
 
----
-
-## 1. Problembeobachtung
-
-Die native QC45-Integration kann beispielsweise 5 kW oder 6 kW als DC-Sollwert setzen. Beim Kona steigt die reale Ladeleistung trotzdem weiter an.
-
-In den bisherigen Versuchen wurden unter anderem Größenordnungen wie folgende beobachtet:
-
-- Sollwert 5–6 kW
-- DC-Spannung etwa 360–365 V
-- tatsächlicher Strom steigt über 20 A, 40 A, 50 A bis über 70 A
-- reale Ladeleistung steigt entsprechend deutlich über den Sollwert
-
-Der Fehler ist damit nicht einfach ein Anzeigeproblem: die QC45 liefert real mehr Leistung als vorgegeben und kann dadurch den Netz-Failback auslösen.
-
-Wichtig: Ein Teil der vorhandenen Logs stammt aus einer **verworfenenen Zwischenversion**, in der fälschlich ein aus Leistung/Spannung berechneter Amperewert in Byte 2 des EFACEC-V3-Pakets geschrieben wurde. Diese Logs beweisen das Fahrzeugverhalten, **beweisen aber nicht**, dass im aktuellen korrigierten Stand physisch `05` für 5 kW auf der Leitung gesendet wurde. Dieser Nachweis muss mit dem aktuellen Branch noch einmal sauber erfolgen.
+Damit verschiebt sich der Fokus klar vom LoadManager auf den **CCS-Kommunikationscontroller bzw. dessen EFACEC-Adapter**.
 
 ---
 
-## 2. Zwei getrennte Protokollebenen
+## Kommunikationskette
 
-Für die Fehlersuche ist die Trennung der beiden Kommunikationsstrecken entscheidend.
+```mermaid
+flowchart LR
+    LM[LoadManager] -->|5 kW| RI[ReflectionQC45]
+    RI --> EVCSD[EVCSD / SatelliteModule]
+    EVCSD -->|QuickCharge V3\n63 .. 05 .. ..| MASTER[EFACEC Master]
+    MASTER --> CCS[CCS Controller / A19]
+    CCS -->|CurrentDemandRes| KONA[Hyundai Kona]
 
-### Ebene A: EVCSD / Linux -> EFACEC-QuickCharge-System
+    CCS -. vermutlich .-> PWR[EVSEMaximumPowerLimit = 5 kW]
+    CCS -. vermutlich .-> CUR[EVSEMaximumCurrentLimit = zu hoch / statisch]
 
-Die Java-Anwendung EVCSD kommuniziert über ein proprietäres EFACEC-Protokoll mit dem nachgeschalteten QuickCharge-System.
+    KONA -->|ignoriert ggf. PowerLimit| HIGH[höhere Stromanforderung]
+```
 
-Im Repo relevant:
-
-- [`CcsProtocolV3Enforcer.java`](../native-integration/src/main/java/de/rothner/qc45/CcsProtocolV3Enforcer.java)
-- [`ReflectionQC45.java`](../native-integration/src/main/java/de/rothner/qc45/ReflectionQC45.java)
-- [`CcsRawTracerV2.java`](../native-integration/src/main/java/de/rothner/qc45/CcsRawTracerV2.java)
-- [`LoadManager.java`](../native-integration/src/main/java/de/rothner/qc45/LoadManager.java)
-
-### Ebene B: CCS-Controller -> Fahrzeug
-
-Der eigentliche CCS-Controller kommuniziert über PLC/SLAC und DIN SPEC 70121 bzw. ISO 15118 mit dem Fahrzeug.
-
-Während des aktiven DC-Ladens werden unter anderem `CurrentDemandReq` und `CurrentDemandRes` regelmäßig ausgetauscht. Auf dieser Ebene existieren getrennte Grenzwerte für Leistung und Strom, unter anderem:
-
-- `EVSEMaximumPowerLimit`
-- `EVSEMaximumCurrentLimit`
-- `EVSEMaximumVoltageLimit`
-
-**Das interne EFACEC „CCS V2/V3“ ist nicht die vom Fahrzeug ausgehandelte DIN-/ISO-Protokollversion.** Es ist eine interne EFACEC-Protokollgeneration zwischen EVCSD und QuickCharge-Hardware.
+> [!NOTE]
+> **EFACEC „CCS V2/V3“ und DIN/ISO sind zwei verschiedene Ebenen.** Das interne V2/V3 bezeichnet die proprietäre Kommunikation innerhalb der QC45. Das Fahrzeug selbst kommuniziert anschließend über DIN SPEC 70121 bzw. ISO 15118.
 
 ---
 
-## 3. Bestätigt: Verhalten des originalen EVCSD
+## Beobachtetes Verhalten
 
-Das originale `evcsd.jar` wurde dekompiliert und insbesondere folgende Klassen untersucht:
+| Größe | Erwartung | Beobachtung beim Kona |
+|---|---:|---:|
+| DC-Sollwert | 5–6 kW | 5–6 kW bleibt in EVCSD gesetzt |
+| Batteriespannung | ca. 360–365 V | ca. 360–365 V |
+| Erwarteter Strom bei 5 kW | ca. 14 A | steigt deutlich darüber |
+| Beobachteter Strom | ≤ ca. 14–17 A | >20 A, >40 A, >50 A, teils >70 A |
+| Reale Leistung | nahe Sollwert | deutlich >20 kW möglich |
+| Folge | stabiles Peak Shaving | Netz-Failback kann auslösen |
+
+> [!WARNING]
+> Ein Teil der älteren Logs stammt aus einer **verworfenen Zwischenversion**, in der fälschlich ein berechneter Amperewert in Byte 2 des V3-Pakets geschrieben wurde. Diese Logs beweisen das Hochlaufen des Kona, aber **nicht**, dass der aktuelle korrigierte Stand physisch `05` für 5 kW übertragen hat. Dieser Nachweis steht noch aus.
+
+---
+
+## Befunde auf einen Blick
+
+| Befund | Bewertung |
+|---|---|
+| V3-START verwendet `maxPower` | ✅ bestätigt |
+| Byte 2 ist Leistung in kW | ✅ bestätigt |
+| `quickChargeMaxCurrent` begrenzt CCS V3 nicht direkt | ✅ bestätigt |
+| LoadManager hält seinen kW-Sollwert | ✅ bestätigt |
+| alter EFACEC-Master leitet QuickCharge-Payload weiter | ✅ für analysiertes Firmwareimage |
+| A19 ist EVAcharge SE | 🟠 sehr wahrscheinlich |
+| Kona ignoriert `EVSEMaximumPowerLimit` | ✅ dokumentierter Präzedenzfall |
+| `EVSEMaximumCurrentLimit` bleibt in der QC45 zu hoch | 🟠 Hauptverdacht |
+| aktuelle A19-Firmware / Protokollumsetzung | ⬜ noch offen |
+
+---
+
+# 1. Original-EVCSD: Was wird wirklich gesendet?
+
+Analysiert wurden unter anderem:
 
 - `pt.efacec.es.mobie.agent.stationcomponents.comms.quickcharge.QuickChargeSerializer`
 - `pt.efacec.es.mobie.agent.stationcomponents.SatelliteModule`
 - `MessageStateMachines`
 
-### 3.1 `SatelliteModule.sendCcsStart()`
+## `SatelliteModule.sendCcsStart()`
 
-Beim Senden eines CCS-Startkommandos baut EVCSD ein `MessageStateMachines`-Objekt auf und setzt unter anderem:
+Beim CCS-Start baut EVCSD ein `MessageStateMachines`-Objekt auf und setzt unter anderem:
 
-- `satelliteAction = START_CHARGE`
-- `device = SATELLITE_CCS_CHARGE`
-- `current = quickChargeMaxCurrent`
-- `maxPower = satelliteMaxPower`
-- Login-/Autorisierungsstatus
+```text
+satelliteAction = START_CHARGE
+device          = SATELLITE_CCS_CHARGE
+current         = quickChargeMaxCurrent
+maxPower        = satelliteMaxPower
+```
 
-Danach wird die Nachricht über `CentralStationComms.send()` verschickt.
+Anschließend wird die Nachricht über `CentralStationComms.send()` verschickt.
 
-### 3.2 CCS V3 verwendet `maxPower`, nicht `current`
+## Entscheidend: V3 verwendet `maxPower`
 
-Der entscheidende Befund aus `QuickChargeSerializer`:
+Der originale `QuickChargeSerializer` verwendet für **CCS V3** den Wert aus `MessageStateMachines.maxPower`.
 
-Für **CCS V3** wird beim START-Paket der Wert aus `MessageStateMachines.maxPower` verwendet.
-
-Das resultierende QuickCharge-Paket besteht aus fünf Bytes:
+Das resultierende Paket ist fünf Byte lang:
 
 ```text
 0x63  <flags>  <maxPower_kW>  <CRC16 low/high>
 ```
 
-Beispiel für 5 kW, abhängig vom Flag-/Loginstatus sinngemäß:
+Bei 5 kW also sinngemäß:
 
 ```text
 63 02 05 xx xx
 ```
 
-oder
+oder mit entsprechend gesetztem Status-/Loginbit:
 
 ```text
 63 82 05 xx xx
 ```
 
-Byte 2 ist damit **Leistung in kW**.
+### Ergebnis
 
-### 3.3 `quickChargeMaxCurrent` ist im V3-CCS-START wirkungslos
-
-Obwohl `sendCcsStart()` auch das Feld `current` setzt, verwendet der CCS-V3-Serializer dieses Feld nicht für den START-Befehl.
-
-Daraus folgt:
-
-> Ein aus `P/U` berechneter Amperewert darf **nicht** in Byte 2 des V3-Pakets geschrieben werden.
-
-Der frühere Versuch, dort z. B. 14 für 14 A einzutragen, war protokollseitig falsch. Für 5 kW muss dort `05` stehen.
-
-### 3.4 CCS V2 ist ebenfalls keine Lösung
-
-Der untersuchte CCS-V2-START-Pfad enthält keinen vergleichbaren dynamischen Leistungswert. Ein Zurückfallen auf die interne EFACEC-V2-Variante würde die Regelung daher nicht verbessern.
-
-Der aktuelle Branch erzwingt deshalb mit `CcsProtocolV3Enforcer` gezielt die V3-Verwendung.
+> [!TIP]
+> **Byte 2 ist Leistung in kW.** Für 5 kW muss dort `05` stehen. Ein Wert `14` würde 14 kW bedeuten – nicht 14 A.
 
 ---
 
-## 4. Aktueller Stand der nativen Integration
+# 2. Warum `quickChargeMaxCurrent` nicht hilft
 
-### 4.1 `CcsProtocolV3Enforcer`
+Obwohl `sendCcsStart()` das Feld `current` setzt, benutzt der CCS-V3-Serializer dieses Feld **nicht** für das START-Paket.
 
-Die native Integration erzwingt `QCProtocolVersion = 3` an den relevanten EVCSD-Objekten bzw. Serializern. Die Anwendung soll fehlschlagen, wenn die V3-Erzwingung nicht gelingt.
+Damit ist der frühere Ansatz verworfen:
 
-Damit ist ein versehentliches Zurückfallen auf den internen EFACEC-V2-Pfad nach aktuellem Stand nicht die wahrscheinlichste Ursache.
+```text
+5 kW / 361 V ≈ 14 A
+```
 
-### 4.2 `ReflectionQC45.setConnectorLimitKw()`
+und anschließend `14` in Byte 2 zu schreiben.
 
-Beim Setzen eines DC-Limits wird unter anderem:
+Das ist protokollseitig falsch.
 
-- der globale DC-Maximalwert aktualisiert,
-- `Satellite.setMaxPower(kw)` gesetzt,
-- `DCMaxPowerFixed` aktualisiert,
-- für CCS anschließend `sendCcsStart()` ausgelöst.
-
-Das entspricht der im Original-JAR gefundenen V3-Semantik.
-
-### 4.3 `LoadManager`
-
-Der LoadManager führt einen eigenen autoritativen DC-Sollwert (`commandedDcKw`) und stellt ihn wieder her, falls EVCSD intern einen abweichenden Wert meldet.
-
-Die bisherige Analyse zeigt daher **keinen plausiblen Fehler im Regelalgorithmus**, der erklären würde, warum ein korrekt gesetzter Wert von 5 kW fahrzeugseitig zu mehr als 20 kW wird.
-
-Der wahrscheinlichere Fehler liegt weiter hinten im Kommunikationspfad.
+| Ansatz | Ergebnis |
+|---|---|
+| `Satellite.maxPower = 5` | ✅ korrekt für V3 |
+| `quickChargeMaxCurrent = 14` | ⚠️ Feld existiert, wird im V3-CCS-START aber nicht verwendet |
+| Byte 2 = `14` | ⛔ falsch, entspricht 14 kW |
+| Byte 2 = `05` | ✅ korrekt für 5 kW |
 
 ---
 
-## 5. Analyse von `mobie-master.bin`
+# 3. Aktueller Stand im `native-integration`-Branch
+
+## `CcsProtocolV3Enforcer`
+
+Die Integration erzwingt `QCProtocolVersion = 3` an den relevanten EVCSD-/Serializer-Objekten.
+
+➡️ [`CcsProtocolV3Enforcer.java`](https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/CcsProtocolV3Enforcer.java)
+
+Damit ist ein unbemerkter Rückfall auf das interne EFACEC-V2-Format nach aktuellem Stand **nicht die wahrscheinlichste Ursache**.
+
+## `ReflectionQC45.setConnectorLimitKw()`
+
+Beim Setzen eines DC-Limits werden unter anderem aktualisiert:
+
+- globales DC-Maximum,
+- `Satellite.setMaxPower(kw)`,
+- `DCMaxPowerFixed`,
+- anschließend CCS-START/Refresh.
+
+➡️ [`ReflectionQC45.java`](https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/ReflectionQC45.java)
+
+## `LoadManager`
+
+Der LoadManager hält einen eigenen autoritativen DC-Sollwert (`commandedDcKw`) und stellt diesen wieder her, wenn EVCSD einen abweichenden Wert meldet.
+
+➡️ [`LoadManager.java`](https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/LoadManager.java)
+
+**Aktueller Befund:** Es gibt keinen plausiblen LoadManager-Fehler, der einen gesetzten 5-kW-Wert selbstständig in >20 kW verwandelt.
+
+---
+
+# 4. Analyse von `mobie-master.bin`
 
 Im ursprünglichen EVCSD-Paket befindet sich:
 
@@ -161,163 +193,114 @@ Im ursprünglichen EVCSD-Paket befindet sich:
 evcsd/micro_images/mobie-master.bin
 ```
 
-Größe: **8.960 Byte**.
+**Größe:** 8.960 Byte
 
-### 5.1 Mikrocontroller
+## Mikrocontroller
 
-Die Firmwarestruktur und die AVR-Vektortabelle passen zu einem **ATmega1280**.
+Die Firmwarestruktur und AVR-Vektortabelle passen zu einem **ATmega1280**.
 
-Der ATmega1280 besitzt mehrere UARTs, aber keinen integrierten CAN-Controller. Die Kommunikation des untersuchten Master-Images erfolgt daher auf dieser Ebene seriell.
+Der ATmega1280 besitzt mehrere UARTs, aber keinen integrierten CAN-Controller. Das untersuchte Master-Image arbeitet auf dieser Ebene also seriell.
 
-### 5.2 Weiterleitung zum QuickCharge-Pfad
+## QuickCharge-Weiterleitung
 
-Die Disassemblierung zeigt für den QuickCharge-Gerätepfad eine Weiterleitung des Payloads auf einen separaten USART-Kanal. Der Master interpretiert den darin enthaltenen Leistungswert in diesem alten Firmwarestand nicht als `P/U`-Rechenwert, sondern leitet die Nutzdaten weiter.
-
-Das stützt folgende Architektur:
+Die Disassemblierung zeigt für den QuickCharge-Gerätepfad, dass der Payload auf einen separaten USART-Kanal weitergereicht wird. In diesem alten Firmwarestand wird der Leistungswert dort nicht in `P/U` umgerechnet.
 
 ```text
-EVCSD/Linux
-   |
-   | proprietäres EFACEC Master-Frame
-   v
+Linux / EVCSD
+      │
+      │ proprietäres EFACEC Master-Frame
+      ▼
 EFACEC Master Controller
-   |
-   | serieller QuickCharge-Kanal
-   v
+      │
+      │ serieller QuickCharge-Kanal
+      ▼
 CCS-Kommunikationscontroller
-   |
-   | PLC / DIN 70121 / ISO 15118
-   v
+      │
+      │ PLC / DIN 70121 / ISO 15118
+      ▼
 Fahrzeug
 ```
 
-### 5.3 Einschränkung
-
-Das im Softwarepaket enthaltene `mobie-master.bin` ist offenbar **älter als der aktuell in der Säule eingesetzte Stand**.
-
-Hinweis darauf: Die alte Firmware kennt auf dem Rückweg ein älteres QuickCharge-Telegrammformat, während die laufende Säule neuere `0x63`-Statusdaten liefert.
-
-Deshalb gilt:
-
-- die Analyse ist ein **starker Architekturhinweis**,
-- sie ist **kein vollständiger Beweis** für die aktuell geflashte Master-Firmware.
-
-Für die aktuelle Hardware muss der reale serielle Datenstrom verwendet werden.
+> [!CAUTION]
+> Das im Softwarepaket enthaltene `mobie-master.bin` ist offenbar **älter als der aktuell geflashte Stand der Säule**. Die Architektur ist damit stark gestützt, aber die aktuelle Master-Firmware ist noch nicht vollständig bewiesen.
 
 ---
 
-## 6. Sehr wahrscheinlich: EVAcharge SE als CCS-Controller
+# 5. A19: sehr wahrscheinlich EVAcharge SE
 
-Öffentliche Ersatzteilkataloge identifizieren die EFACEC-Teilenummer **20090007** ausdrücklich als:
+Öffentliche Ersatzteilinformationen führen die EFACEC-Teilenummer **20090007** als EVAcharge-SE-Board für EFACEC-Ladestationen.
 
-> EVAcharge SE Board für EFACEC-Elektrofahrzeug-Ladegeräte
+Die EVAcharge SE ist ein EVSE-Kommunikationscontroller für DIN 70121 / ISO 15118 und verfügt je nach Revision unter anderem über:
 
-Quelle: Costa-Rica-SICOP-Katalog, Einträge zu EFACEC 20090007.
+- Embedded Linux,
+- Qualcomm QCA7000 Green PHY,
+- Ethernet,
+- USB,
+- CAN / RS232,
+- ECommStack / EVSE-Kommunikationsfunktionen.
 
-Die EVAcharge SE ist ein CCS-Kommunikationscontroller, der für DIN 70121 und ISO 15118 ausgelegt ist. Herstellerinformationen nennen unter anderem:
+### Für diese konkrete QC45 noch zu bestätigen
 
-- Freescale i.MX287
-- Qualcomm QCA7000 Green PHY
-- Embedded Linux
-- Ethernet
-- USB
-- CAN/RS232
-- Einsatz als EVSE-Kommunikationscontroller
+- [ ] A19 = EFACEC 20090007
+- [ ] Boardrevision erfassen
+- [ ] Firmwarestand erfassen
+- [ ] Aufkleber / Herstellerkennzeichnung fotografieren
+- [ ] Verbindung A5 ↔ A19 ↔ A21 dokumentieren
 
-Ältere EVAcharge-SE-Unterlagen nennen außerdem den zugehörigen ECommStack.
-
-Damit ist **sehr wahrscheinlich**, dass der EFACEC-QuickCharge-Pfad am Ende auf einer EVAcharge-SE-/Auronik-/chargebyte-Lösung landet.
-
-### Noch zu bestätigen
-
-Für die konkrete QC45 muss die Platine physisch identifiziert werden:
-
-- A19 / CCS Board
-- Teilenummer 20090007
-- Boardrevision, z. B. V0R…
-- Aufkleber/Firmwareangaben
-- Verkabelung zwischen A5/A19/A21
-
-Solange diese Hardwareidentifikation nicht fotografisch bestätigt ist, bleibt dieser Punkt formal „sehr wahrscheinlich“ und nicht „bewiesen“.
+Solange diese Hardwareidentifikation fehlt, ist **EVAcharge SE sehr wahrscheinlich, aber noch nicht endgültig bewiesen**.
 
 ---
 
-## 7. Der entscheidende Kona-Befund
+# 6. Der entscheidende Hyundai-Kona-Befund
 
-Die Publikation **“Intelligent Multi-Vehicle DC/DC Charging Station Powered by a Trolley Bus Catenary Grid”**, Energies 2021, 14, 8399, untersucht Lastmanagement bei DIN-SPEC-70121-DC-Ladung mit kommerziellen Fahrzeugen.
+Die Publikation *Intelligent Multi-Vehicle DC/DC Charging Station Powered by a Trolley Bus Catenary Grid* (Energies 2021, 14, 8399) untersucht dynamisches Lastmanagement mit realen Serienfahrzeugen unter DIN SPEC 70121.
 
-Dort wird beschrieben:
+Dabei wurde dokumentiert:
 
-1. Die Regelung während der aktiven Ladung erfolgt über `CurrentDemandReq` / `CurrentDemandRes`.
-2. Die Nachrichten werden ungefähr alle 150–200 ms ausgetauscht.
-3. `EVSEMaximumPowerLimit` kann die Fahrzeuganforderung indirekt begrenzen.
-4. Einige Serienfahrzeuge ignorieren diese Leistungsgrenze.
-5. Als konkretes Beispiel wird **Hyundai Kona (2019)** genannt.
-6. Eine direkte Begrenzung über `EVSEMaximumCurrentLimit` wurde von den getesteten Fahrzeugen auch bei dynamischer Änderung eingehalten; als gesonderte Ausnahme wird dort ein VW e-Up bei sehr kleinen Strömen beschrieben.
+- `CurrentDemandReq` / `CurrentDemandRes` werden während der aktiven Ladung laufend ausgetauscht.
+- `EVSEMaximumPowerLimit` kann als indirekte Leistungsgrenze verwendet werden.
+- Einige Fahrzeuge ignorieren diesen Wert.
+- Als konkretes Beispiel wird ein **Hyundai Kona (2019)** genannt.
+- Eine dynamische Begrenzung über `EVSEMaximumCurrentLimit` wurde von den getesteten Fahrzeugen befolgt.
 
-Damit existiert für genau unser beobachtetes Verhalten ein dokumentierter Präzedenzfall.
+Das passt auffällig genau zu unserem Fehlerbild.
 
----
-
-## 8. CharIN-Anforderung zur Strombegrenzung
-
-Die CharIN-Richtlinie für DC CCS 1.0 beschreibt die Reduzierung des Ladestroms durch die Ladestation ausdrücklich über `EVSEMaximumCurrentLimit` in `CurrentDemandRes`.
-
-Sinngemäß fordert die Guideline:
-
-- Das CCS-Fahrzeug soll `EVSEMaximumCurrentLimit` befolgen.
-- Reduziert die EVSE diesen Wert, muss das Fahrzeug seinen Zielstrom innerhalb von etwa 1 s entsprechend anpassen.
-- Die Funktion ist unter anderem für Leistungsreduzierung und geteilte Leistung zwischen mehreren Ladeabgängen vorgesehen.
-
-Das ist funktional genau das, was unser Peak-Shaving benötigt.
+> [!IMPORTANT]
+> Der Kona kann aus Sicht des HLC-Stacks weiterhin hohen Strom anfordern, wenn nur das Power-Limit reduziert wird, aber der direkt wirksame `EVSEMaximumCurrentLimit` hoch bleibt.
 
 ---
 
-## 9. Wahrscheinlichste Fehlerursache
+# 7. Wahrscheinlichste Fehlerursache
 
-Die derzeit plausibelste Kette lautet:
+Die derzeit plausibelste Umsetzung im CCS-Controller sieht so aus:
 
 ```text
-LoadManager: 5 kW
-      |
-      v
-ReflectionQC45 / EVCSD
-Satellite.maxPower = 5
-      |
-      v
-EFACEC V3 QuickCharge
-63 .. 05 .. ..
-      |
-      v
-CCS-Controller / EVAcharge SE
-      |
-      +--> EVSEMaximumPowerLimit = 5 kW     vermutlich korrekt
-      |
-      +--> EVSEMaximumCurrentLimit = 125 A  vermutlich statisch/falsch
-      |
-      v
-Hyundai Kona
+LoadManager                 = 5 kW
+Satellite.maxPower          = 5
+EFACEC V3 Paket             = 63 .. 05 .. ..
+
+CCS Controller:
+EVSEMaximumPowerLimit       = 5 kW      ← vermutlich korrekt
+EVSEMaximumCurrentLimit     = 125 A     ← vermutlich statisch / zu hoch
+
+Hyundai Kona:
+PowerLimit                  = wird ggf. ignoriert
+CurrentLimit                = erlaubt weiterhin hohen Strom
 ```
 
-Wenn der Kona `EVSEMaximumPowerLimit` ignoriert, aber die hohe statische Stromgrenze sieht, darf er aus seiner Sicht weiterhin einen deutlich höheren Strom anfordern.
+Damit lassen sich gleichzeitig erklären:
 
-Der EVSE-Leistungsteil folgt dann dieser Fahrzeuganforderung, solange keine andere Schutzgrenze eingreift.
-
-Das würde gleichzeitig erklären:
-
-- warum EVCSD weiterhin 5–6 kW als Sollwert meldet,
-- warum der reale CCS-Strom trotzdem hochläuft,
-- warum Änderungen an `quickChargeMaxCurrent` im Java-Objekt keine Wirkung haben,
-- warum andere Fahrzeuge den Fehler möglicherweise nicht zeigen,
-- warum der Failback trotz scheinbar kleinem EVCSD-Leistungslimit auslösen kann.
+- der korrekte kW-Sollwert in EVCSD,
+- das trotzdem steigende CCS-Stromsignal,
+- die Wirkungslosigkeit von `quickChargeMaxCurrent` auf Java-Seite,
+- das unterschiedliche Verhalten verschiedener Fahrzeuge,
+- das Auslösen des Netz-Failbacks trotz kleinem EVCSD-Sollwert.
 
 ---
 
-## 10. Ziel für die Korrektur
+# 8. Ziel der Korrektur
 
-Die Sollleistung muss auf CCS-HLC-Ebene zusätzlich in eine dynamische Stromgrenze umgesetzt werden.
-
-Grundsätzlich:
+Die gewünschte Leistung muss zusätzlich in einen **dynamischen CCS-Stromgrenzwert** umgesetzt werden:
 
 ```text
 I_max = P_limit / U_present
@@ -326,141 +309,123 @@ I_max = P_limit / U_present
 Beispiel:
 
 ```text
-P_limit = 5.000 W
-U_present = 365 V
-I_max = 13,70 A
+P_limit   = 5.000 W
+U_present =   365 V
+I_max     = 13,70 A
 ```
 
-Der genaue zu übertragende Wert hängt von Skalierung und Datentyp des EVAcharge-/ECommStack-Interfaces ab.
+Bei ganzzahliger Stromauflösung wäre konservativ beispielsweise:
 
-Wichtig:
+| Stromlimit | resultierende Leistung bei 365 V |
+|---:|---:|
+| 13 A | 4,75 kW |
+| 14 A | 5,11 kW |
 
-- **Nicht** 13 oder 14 A in Byte 2 des EFACEC-V3-START-Pakets schreiben.
-- Dort bleibt der Wert in **kW**.
-- Die Stromumrechnung gehört **hinter** diese Schnittstelle, auf dem CCS-Controller bzw. dessen Adapter.
-
-Für ein hartes Leistungsmaximum sollte bei ganzzahliger Stromauflösung konservativ gerundet werden. Bei 365 V wären 13 A ca. 4,75 kW und 14 A ca. 5,11 kW.
+> [!WARNING]
+> Diese Umrechnung gehört **nicht** in Byte 2 des EFACEC-V3-Pakets. Dort bleibt weiterhin der kW-Wert. Die Strombegrenzung muss **hinter dieser Schnittstelle** auf dem CCS-Controller bzw. dessen Adapter wirken.
 
 ---
 
-## 11. Nächste Verifikation
+# 9. Nächste Verifikation
 
-### Schritt 1: Aktuelles V3-Paket physisch bestätigen
+## 1 · Aktuelles V3-Paket physisch bestätigen
 
-Mit dem aktuellen `native-integration`-Stand:
+- [ ] Kona anschließen
+- [ ] DC-Limit fest auf 5 kW setzen
+- [ ] Sollwert während des Tests konstant halten
+- [ ] `CcsRawTracerV2` aktivieren
+- [ ] reales TX-Paket erfassen
+- [ ] Bytefolge mit `... 05 ...` bestätigen
 
-1. Kona anschließen.
-2. DC-Limit fest auf 5 kW setzen.
-3. Ramp-up möglichst unterbinden bzw. Sollwert konstant halten.
-4. `CcsRawTracerV2` aktivieren.
-5. TX-Daten des realen seriellen Pfads erfassen.
-
-Erwartet wird ein V3-START mit `05` als Leistungsbyte, z. B.:
+Erwartet:
 
 ```text
 63 02 05 xx xx
 ```
 
-oder entsprechend mit gesetztem Loginbit.
+oder entsprechend mit gesetzten Flags.
 
-Wenn dieses Paket auf der physischen Leitung sicher nachgewiesen ist und der Kona anschließend trotzdem deutlich mehr als 5 kW zieht, ist die Java-/EVCSD-Seite als Hauptursache praktisch ausgeschlossen.
+➡️ [`CcsRawTracerV2.java`](https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/CcsRawTracerV2.java)
 
-### Schritt 2: A19 identifizieren
+## 2 · A19 identifizieren
 
-Benötigt werden scharfe Fotos von:
+Benötigt werden Fotos von:
 
-- kompletter A19-Platine,
-- Teilenummer/Aufkleber,
+- kompletter Platine,
+- Teilenummer,
 - Boardrevision,
 - Steckverbindern,
 - Verbindung zu A5 und A21.
 
-### Schritt 3: Schnittstelle zum EVAcharge-Controller bestimmen
+## 3 · CCS-Interface rekonstruieren
 
 Zu klären:
 
-- seriell, CAN oder kundenspezifischer Adapter,
-- welches Protokoll auf dieser Verbindung läuft,
-- ob `EVSEMaxCurrentLimit` bereits als getrenntes Feld existiert,
-- ob das EFACEC-Adapterprogramm nur `EVSEMaxPowerLimit` setzt.
+- welche physische Schnittstelle benutzt wird,
+- welches Protokoll EFACEC ↔ CCS-Controller läuft,
+- ob ein getrenntes `EVSEMaxCurrentLimit` bereits existiert,
+- ob EFACEC aktuell nur das Power-Limit setzt.
 
-### Schritt 4: Current-Limit dynamisch setzen
+## 4 · Stromlimit dynamisch setzen
 
-Zielverhalten während aktiver Ladung:
+Ziel:
 
 ```text
-powerLimitKw = LoadManager-Sollwert
+powerLimitKw  = LoadManager-Sollwert
 presentVoltage = aktuelle CCS-Spannung
-currentLimitA = powerLimitKw * 1000 / presentVoltage
+currentLimitA  = powerLimitKw * 1000 / presentVoltage
 ```
 
-Danach muss der entsprechende Stromgrenzwert im CCS-Stack laufend aktualisiert werden, sodass die `CurrentDemandRes`-Antwort den reduzierten `EVSEMaximumCurrentLimit` enthält.
-
-Die Aktualisierung muss schnell genug für Lastmanagement sein; der HLC-Dialog selbst läuft deutlich schneller als unser 1-s-LoadManager.
+Anschließend muss dieser Wert so in den CCS-Stack gelangen, dass `CurrentDemandRes` einen entsprechend reduzierten `EVSEMaximumCurrentLimit` enthält.
 
 ---
 
-## 12. Was aktuell nicht weiterverfolgt werden sollte
+# 10. Verworfen oder derzeit nicht sinnvoll
 
-### Ampere in EFACEC-V3-Byte 2 schreiben
-
-**Verworfen.** Byte 2 ist beim CCS-V3-START `maxPower` in kW.
-
-### `quickChargeMaxCurrent` in EVCSD ändern
-
-Allein nicht ausreichend. Der originale V3-CCS-Serializer verwendet dieses Feld nicht für das START-Paket.
-
-### Auf EFACEC CCS V2 zurückschalten
-
-Keine sinnvolle Lösung. Der analysierte V2-START transportiert keinen entsprechenden dynamischen Leistungswert.
-
-### LoadManager neu schreiben
-
-Derzeit nicht begründet. Der LoadManager setzt die gewünschten kW-Werte. Der Fehler tritt danach in der CCS-Kette auf.
+| Ansatz | Bewertung | Grund |
+|---|---|---|
+| Ampere in V3-Byte 2 schreiben | ⛔ verworfen | Byte 2 ist `maxPower` in kW |
+| nur `quickChargeMaxCurrent` ändern | ⛔ nicht ausreichend | V3-Serializer verwendet es nicht im CCS-START |
+| auf internes EFACEC CCS V2 wechseln | ⛔ keine Lösung | kein entsprechender dynamischer Leistungswert im analysierten START-Pfad |
+| LoadManager neu schreiben | ⛔ derzeit unbegründet | Sollwert wird korrekt gesetzt; Fehler liegt danach |
 
 ---
 
-## 13. Offene Punkte
+# 11. Offene Punkte
 
-- [ ] Aktuelles TX-Paket mit korrigiertem V3-Branch physisch als `... 05 ...` bei 5 kW bestätigen.
-- [ ] A19-Platine als EFACEC 20090007 / EVAcharge SE identifizieren.
-- [ ] Boardrevision und Firmwarestand erfassen.
-- [ ] A5/A19/A21-Verkabelung dokumentieren.
-- [ ] Protokoll zwischen EFACEC-Master und CCS-Controller rekonstruieren.
-- [ ] Prüfen, welchen Wert der Controller aktuell als `EVSEMaximumCurrentLimit` sendet.
-- [ ] Dynamische Stromgrenze implementieren.
-- [ ] Kona erneut mit 5, 10, 15 und 20 kW Sollwert testen.
-- [ ] Gegenprobe mit Fahrzeugen durchführen, die die Leistungsbegrenzung bereits korrekt befolgen.
+- [ ] Aktuelles TX-Paket bei 5 kW als `... 05 ...` bestätigen
+- [ ] A19 als EFACEC 20090007 / EVAcharge SE bestätigen
+- [ ] Boardrevision und Firmwarestand erfassen
+- [ ] A5/A19/A21-Verkabelung dokumentieren
+- [ ] Protokoll zum CCS-Controller rekonstruieren
+- [ ] tatsächliches `EVSEMaximumCurrentLimit` während Kona-Ladung bestimmen
+- [ ] dynamische Stromgrenze implementieren
+- [ ] Kona mit 5 / 10 / 15 / 20 kW Sollwert testen
+- [ ] Gegenprobe mit Mini / Tesla durchführen
 
 ---
 
-## 14. Quellen
+# Quellen
 
-### QC45 / EFACEC / Hardware
+### EFACEC / Hardware
 
-- SICOP-Katalog: EFACEC 20090007 wird als **EVAcharge SE Board** geführt:  
-  https://www.sicop.go.cr/moduloBid/common/co/EpSearchItemDetail.jsp?page_no=142422
-- chargebyte EVAcharge SE Produktseite:  
-  https://chargebyte.com/products/controllers-modules/evse-controllers/evacharge-se
-- EVAcharge SE BSP – Netzwerk/Interfaces:  
-  https://evacharge-se-bsp.readthedocs.io/en/latest/networking.html
+- [SICOP – EFACEC 20090007 / EVAcharge SE](https://www.sicop.go.cr/moduloBid/common/co/EpSearchItemDetail.jsp?page_no=142422)
+- [chargebyte – EVAcharge SE](https://chargebyte.com/products/controllers-modules/evse-controllers/evacharge-se)
+- [EVAcharge SE BSP – Networking / Interfaces](https://evacharge-se-bsp.readthedocs.io/en/latest/networking.html)
 
 ### CCS / DIN SPEC 70121
 
-- CharIN – Technical Details CCS:  
-  https://www.charin.global/technology/technical-details-ccs-basic/
-- CharIN Guideline for DC CCS 1.0 Implementation:  
-  https://www.charin.global/media/pages/home/technical-details-ccs-basic/b70e776669-1645622498/ccs_guideline_v1p6.pdf
+- [CharIN – Technical Details CCS](https://www.charin.global/technology/technical-details-ccs-basic/)
+- [CharIN Guideline for DC CCS 1.0 Implementation](https://www.charin.global/media/pages/home/technical-details-ccs-basic/b70e776669-1645622498/ccs_guideline_v1p6.pdf)
 
 ### Hyundai Kona / Power- vs. Current-Limit
 
-- M. Weisbach et al., **Intelligent Multi-Vehicle DC/DC Charging Station Powered by a Trolley Bus Catenary Grid**, Energies 2021, 14, 8399:  
-  https://www.mdpi.com/1996-1073/14/24/8399
+- [Weisbach et al. – Intelligent Multi-Vehicle DC/DC Charging Station Powered by a Trolley Bus Catenary Grid](https://www.mdpi.com/1996-1073/14/24/8399)
 
 ---
 
-## 15. Fazit
+## Fazit
 
-Der bisherige Befund spricht stark dafür, dass die Leistungsbegrenzung **bis zur EFACEC-V3-QuickCharge-Schnittstelle korrekt** ist. Der Kona-spezifische Fehler entsteht sehr wahrscheinlich danach: auf der CCS-HLC-Ebene wird offenbar nur eine Leistungsgrenze wirksam kommuniziert, während die direkte Stromgrenze zu hoch bleibt.
+> **Der LoadManager ist nach aktuellem Kenntnisstand nicht der Hauptfehler.** Die QC45 transportiert den kW-Sollwert korrekt bis zur proprietären EFACEC-V3-Schnittstelle. Der wahrscheinlichste Fehler liegt danach: Der CCS-Controller muss zusätzlich einen dynamisch passenden `EVSEMaximumCurrentLimit` an das Fahrzeug kommunizieren.
 
-Der nächste sinnvolle Eingriff ist deshalb nicht ein weiterer Umbau des LoadManagers, sondern die Untersuchung und gegebenenfalls Anpassung des CCS-Controllers beziehungsweise seines EFACEC-Adapters, sodass `EVSEMaximumCurrentLimit` dynamisch aus dem aktuellen Leistungssollwert und der Batteriespannung gebildet wird.
+[[← Zurück zur Startseite|Home]]
