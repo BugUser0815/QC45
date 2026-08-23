@@ -1,32 +1,30 @@
 # Lademonitor UI
 
-Neben der Backend-Integration wurde die lokale QC45-Anzeige angepasst. Ziel war ausdrücklich **keine Neugestaltung der originalen Ladeanzeige**, sondern eine technische Korrektur und Ergänzung bei möglichst unverändertem Layout.
+Die lokale QC45-Ladeanzeige wird durch einen reproduzierbaren Patch der
+vorhandenen EVCSD-UI-JAR ergänzt. Der aktuelle Entwurf orientiert sich an der
+klaren Informationshierarchie moderner DC-Lader: Ladeleistung und Fahrzeug-SoC
+sind die Hauptwerte, Sessiondaten stehen in einer ruhigeren zweiten Ebene.
 
-## Umgesetzte/erarbeitete Punkte
+## Darstellung
 
-### kW statt kWh
+Die Oberfläche ist fest auf das QC45-Display mit **640×480 Pixeln** ausgelegt:
 
-Die Originalanzeige verwendete an einer Stelle `kWh`, obwohl dort die aktuelle Ladeleistung dargestellt werden sollte. Die angepasste UI zeigt:
+- aktuelle Ladeleistung groß links
+- Fahrzeug-SoC groß rechts
+- DC-Sollleistung direkt unter der Ist-Leistung
+- Energie, Ladezeit und Pufferbatterie-SoC in einer zweiten Zeile
+- lokale Uhrzeit in der Kopfzeile
+- Gelb nur für Ladestatus und Fortschritt
+- keine Animationen, Verläufe oder dekorativen Instrumente
+- Hinweis zum Beenden: `zum beenden Karte vorhalten oder App benutzen.`
 
-- Live-Leistung in **kW**
-- passende Beschriftung ebenfalls **kW**
-- keine unnötigen Nachkommastellen
-- ursprüngliche Positionierung/Anmutung beibehalten
-
-### Ist / Soll
-
-Zusätzlich wurde vorgesehen, neben der realen Ladeleistung die aktuell freigegebene bzw. maximal mögliche Leistung des Load Balancers darzustellen, z. B. sinngemäß:
-
-```text
-20 / 30 kW
-Ist / Soll
-```
-
-Der Sollwert liegt bereits intern bzw. über den Modbus-Bridge-Registern vor und muss nicht noch einmal separat vom KSEM gelesen werden.
+Der rote Bereich ist kein lokaler Stop-Taster. Er erklärt, dass die laufende
+OCPP-/ChargePoint-Session mit Karte oder App beendet wird.
 
 ## Modbus-Block für den lokalen Lademonitor
 
-Dafür stellt die native Integration den Bereich 120–125 bereit:
+Die Oberfläche liest die Ladedaten ausschließlich aus dem lokalen
+Modbus-Server der Native Integration auf `127.0.0.1:1502`:
 
 | Register | Inhalt |
 |---:|---|
@@ -36,17 +34,34 @@ Dafür stellt die native Integration den Bereich 120–125 bereit:
 | 123 | Ladezeit [s] |
 | 124/125 | Sessionenergie [Wh] U32 |
 
-Die Werte werden vorzugsweise aus dem bereits von EVCSD aktualisierten `SatelliteInfo` gelesen. Dadurch entsteht keine zusätzliche Hardware-Abfrage.
+Der gesamte Block wird einmal pro Sekunde in einer einzigen FC03-Abfrage
+gelesen. Bei einem kurzen Kommunikationsfehler bleiben die letzten gültigen
+Werte höchstens fünf Sekunden sichtbar; anschließend erscheinen Platzhalter.
 
-## Hinweis zur reduzierten Ladeleistung
+## Pufferbatterie
 
-Für Screensaver/Hinweistext wurde ein neutraler Hinweis vorgesehen, dass die Ladeleistung aufgrund eines begrenzten Netzanschlusses und der eingesetzten Pufferbatterie zeitweise reduziert sein kann. Es sollte **kein Werbebanner** werden.
+Der Pufferbatterie-SoC ist kein QC45-Wert und wird deshalb weiterhin über evcc
+gelesen. Standard ist `http://10.0.0.179:7070`; die URL kann mit
+`-Devcc.url=...` überschrieben werden. Der Wert wird höchstens alle fünf
+Sekunden aktualisiert und ist in der Anzeige bewusst nachgeordnet.
 
-## Artefaktstatus
+## Reproduzierbarer Patch
 
-Die UI-Anpassungen wurden an vorhandenen EVCSD-UI-JARs durchgeführt. Die binären Original-/Patch-Artefakte sind derzeit nicht als reproduzierbarer Source-Build im QC45-Repo abgelegt. Der Daten-Unterbau im `ModbusServer` ist dagegen versioniert.
+Der Quellcode liegt unter:
 
-> [!NOTE]
-> Für langfristige Reproduzierbarkeit wäre es sinnvoll, die konkreten UI-Patches später als dokumentierten Patch-/Buildprozess ins Repo zu übernehmen.
+```text
+ui-patch/src/main/java/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.java
+```
 
-Siehe auch: [Modbus TCP](Modbus-TCP).
+Das Buildskript kompiliert Java-7-Bytecode gegen die aktuell eingesetzte
+EVCSD-UI-JAR und ersetzt darin nur diese Klasse samt ihrer inneren Klassen:
+
+```bash
+cd ui-patch
+./build.sh /pfad/zur/aktuellen-evcsdUI.jar
+```
+
+Die proprietäre Basis-JAR wird nicht im Repository gespeichert. Das Ergebnis
+liegt unter `ui-patch/target/evcsdUI-qc45-clean-charge-screen.jar`.
+
+Siehe auch: [Modbus TCP](Modbus-TCP) und [Build & Installation](Build-und-Installation).

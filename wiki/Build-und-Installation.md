@@ -47,6 +47,29 @@ Erwartete Meldungen sind unter anderem:
 [QC45] OCPP15 bridge listening on http://127.0.0.1:9000/QC45
 ```
 
+## QC45 Lademonitor-UI
+
+Die proprietäre EVCSD-UI-JAR wird nicht im Repository abgelegt. Das Buildskript
+verwendet die aktuell eingesetzte JAR als Basis und ersetzt ausschließlich den
+reproduzierbar versionierten Lademonitor:
+
+```bash
+cd ui-patch
+chmod +x build.sh
+./build.sh /pfad/evcsdUI-global-charge-cache-refresh.jar
+```
+
+Ergebnis:
+
+```text
+ui-patch/target/evcsdUI-qc45-clean-charge-screen.jar
+```
+
+Vor dem Austausch die aktive Datei sichern. Danach die neue JAR unter dem
+Namen der bisherigen UI-JAR nach `/home/mobie/evcsd/ui/lib/` kopieren und den
+UI-Prozess neu starten. Details und Datenquellen stehen unter
+[Lademonitor UI](Lademonitor-UI).
+
 ## PeakShaving `lean`
 
 ```bash
@@ -84,12 +107,12 @@ Für spätere Builds kann je nach Repo-Stand `make build` genügen. Der relevant
 
 ## Vor Änderungen sichern
 
-Vor dem Austausch des JARs mindestens sichern:
+Vor dem Austausch der JARs mindestens sichern:
 
 - bestehendes `WEB-INF/lib`
 - `web.xml`
 - `qc45-integration.properties`
-- ggf. Original-UI-JAR
+- aktive Original-/Patch-UI-JAR
 - relevante EVCSD-Datenbank-/Konfigurationsdateien
 
 ## Wiki-Sync
