@@ -56,3 +56,7 @@ target/evcsdUI-qc45-clean-charge-screen.jar
 Die Klasse wird mit Java-7-Bytecode gebaut, passend zur originalen QC45-UI.
 Vor dem Austausch die aktive UI-JAR sichern und die neue Datei unter dem Namen
 der bisherigen JAR nach `/home/mobie/evcsd/ui/lib/` kopieren.
+
+Für automatische Builds und ein abgesichertes Deployment mit Backup,
+UI-only-Neustart und Rollback steht im Repository
+[`deploy/qc45-ui`](../deploy/qc45-ui/README.md) bereit.

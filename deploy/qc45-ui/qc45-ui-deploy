@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+config_file=${QC45_DEPLOY_CONFIG:-"${HOME}/.config/qc45-ui-deployer/config"}
+
+if [[ ! -r "$config_file" ]]; then
+    echo "QC45 deploy config not found: $config_file" >&2
+    exit 2
+fi
+
+# shellcheck source=/dev/null
+source "$config_file"
+
+: "${QC45_SSH_TARGET:=root@10.0.0.156}"
+: "${QC45_SSH_PORT:=22}"
+: "${QC45_REMOTE_JAR:=/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar}"
+: "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
+
+readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
+readonly QC45_BRANCH="native-integration"
+readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-ui-deployer"
+
+required_commands=(git tar ssh scp javac javap jar sha256sum mktemp awk grep flock)
+for command_name in "${required_commands[@]}"; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Required command not found: $command_name" >&2
+        exit 2
+    fi
+done
+
+if [[ ! "$QC45_SSH_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid QC45_SSH_TARGET: $QC45_SSH_TARGET" >&2
+    exit 2
+fi
+
+if [[ ! "$QC45_SSH_PORT" =~ ^[0-9]+$ ]] || ((QC45_SSH_PORT < 1 || QC45_SSH_PORT > 65535)); then
+    echo "Invalid QC45_SSH_PORT: $QC45_SSH_PORT" >&2
+    exit 2
+fi
+
+if [[ ! "$QC45_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "Invalid QC45_BRANCH: $QC45_BRANCH" >&2
+    exit 2
+fi
+
+if [[ ! "$QC45_REMOTE_JAR" =~ ^/home/mobie/evcsd/ui/lib/[A-Za-z0-9._-]+\.jar$ ]]; then
+    echo "QC45_REMOTE_JAR must be a JAR below /home/mobie/evcsd/ui/lib" >&2
+    exit 2
+fi
+
+if [[ ! -r "$QC45_IDENTITY_FILE" ]]; then
+    echo "SSH identity not found: $QC45_IDENTITY_FILE" >&2
+    exit 2
+fi
+
+mkdir -p "$QC45_STATE_DIR"
+exec 9>"$QC45_STATE_DIR/deploy.lock"
+if ! flock -n 9; then
+    echo "Another QC45 UI deployment is already running."
+    exit 0
+fi
+
+work_dir=""
+cleanup() {
+    local status=$?
+    if [[ -n "$work_dir" && -d "$work_dir" ]]; then
+        rm -rf -- "$work_dir"
+    fi
+    return "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+repo_dir="$QC45_STATE_DIR/repository"
+deployed_tree_file="$QC45_STATE_DIR/deployed-ui-tree"
+
+if [[ ! -d "$repo_dir/.git" ]]; then
+    rm -rf -- "$repo_dir"
+    git init --quiet "$repo_dir"
+    git -C "$repo_dir" remote add origin "$QC45_REPOSITORY_URL"
+else
+    git -C "$repo_dir" remote set-url origin "$QC45_REPOSITORY_URL"
+fi
+
+echo "Fetching ${QC45_REPOSITORY_URL} (${QC45_BRANCH})..."
+git -C "$repo_dir" fetch --quiet --no-tags --depth 1 origin "refs/heads/${QC45_BRANCH}"
+commit_sha=$(git -C "$repo_dir" rev-parse FETCH_HEAD)
+ui_tree_sha=$(git -C "$repo_dir" rev-parse "${commit_sha}:ui-patch/src")
+
+if [[ -r "$deployed_tree_file" ]] && [[ "$(<"$deployed_tree_file")" == "$ui_tree_sha" ]]; then
+    echo "QC45 UI is already current (${commit_sha:0:12})."
+    exit 0
+fi
+
+work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
+git -C "$repo_dir" archive --format=tar "$commit_sha" ui-patch/src | tar -xf - -C "$work_dir"
+
+source_file="$work_dir/ui-patch/src/main/java/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.java"
+base_jar="$work_dir/base-ui.jar"
+output_jar="$work_dir/evcsdUI-qc45-clean-charge-screen.jar"
+classes_dir="$work_dir/classes"
+
+if [[ ! -r "$source_file" ]]; then
+    echo "Expected UI source is missing at commit $commit_sha" >&2
+    exit 1
+fi
+
+ssh_args=(
+    -p "$QC45_SSH_PORT"
+    -i "$QC45_IDENTITY_FILE"
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+    -o HostKeyAlgorithms=+ssh-rsa
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+scp_args=(
+    -O
+    -P "$QC45_SSH_PORT"
+    -i "$QC45_IDENTITY_FILE"
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+    -o HostKeyAlgorithms=+ssh-rsa
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+
+echo "Downloading the active QC45 UI JAR..."
+scp "${scp_args[@]}" "${QC45_SSH_TARGET}:${QC45_REMOTE_JAR}" "$base_jar"
+
+mkdir -p "$classes_dir"
+echo "Compiling the charging screen as Java 7 bytecode..."
+javac -source 7 -target 7 -encoding UTF-8 \
+    -classpath "$base_jar" \
+    -d "$classes_dir" \
+    "$source_file"
+
+cp -p "$base_jar" "$output_jar"
+shopt -s nullglob
+class_files=("$classes_dir"/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer*.class)
+if ((${#class_files[@]} == 0)); then
+    echo "Compilation produced no WaitingForCardChargingTimer classes" >&2
+    exit 1
+fi
+
+for class_file in "${class_files[@]}"; do
+    relative_path=${class_file#"$classes_dir"/}
+    jar uf "$output_jar" -C "$classes_dir" "$relative_path"
+done
+
+if ! jar tf "$output_jar" | grep -qx 'pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.class'; then
+    echo "Patched class is missing from the output JAR" >&2
+    exit 1
+fi
+
+if ! javap -verbose -classpath "$output_jar" pt.efacec.es.evcsd.ui.WaitingForCardChargingTimer \
+    | grep -q 'major version: 51'; then
+    echo "Patched class is not Java 7 bytecode (major version 51)" >&2
+    exit 1
+fi
+
+jar_sha256=$(sha256sum "$output_jar" | awk '{print $1}')
+remote_dir=${QC45_REMOTE_JAR%/*}
+remote_name=${QC45_REMOTE_JAR##*/}
+remote_staged="${remote_dir}/.${remote_name}.new-${commit_sha:0:12}"
+
+echo "Uploading ${jar_sha256}..."
+scp "${scp_args[@]}" "$output_jar" "${QC45_SSH_TARGET}:${remote_staged}"
+
+remote_command=$(printf 'bash -s -- %q %q %q' "$QC45_REMOTE_JAR" "$remote_staged" "$jar_sha256")
+
+echo "Installing the JAR and restarting only the UI..."
+ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$remote_command" <<'REMOTE_SCRIPT'
+set -Eeuo pipefail
+
+active_jar=$1
+staged_jar=$2
+expected_sha256=$3
+backup_jar=""
+replacement_installed=0
+deployment_stable=0
+
+find_ui_pid() {
+    ps axww | awk '/[p]t\.efacec\.es\.evcsd\.ui\.Main 5678/{print $1; exit}'
+}
+
+wait_for_stable_ui() {
+    local excluded_pid=$1
+    local max_seconds=$2
+    local required_seconds=$3
+    local candidate_pid=""
+    local stable_seconds=0
+    local elapsed=0
+    local current_pid=""
+
+    while ((elapsed < max_seconds)); do
+        current_pid=$(find_ui_pid || true)
+        if [[ -n "$current_pid" && "$current_pid" != "$excluded_pid" ]]; then
+            if [[ "$current_pid" == "$candidate_pid" ]]; then
+                ((stable_seconds += 1))
+            else
+                candidate_pid=$current_pid
+                stable_seconds=1
+            fi
+            if ((stable_seconds >= required_seconds)); then
+                echo "$candidate_pid"
+                return 0
+            fi
+        else
+            candidate_pid=""
+            stable_seconds=0
+        fi
+        sleep 1
+        ((elapsed += 1))
+    done
+    return 1
+}
+
+rollback_on_exit() {
+    local status=$?
+    local failed_pid=""
+    local restored_pid=""
+    trap - EXIT HUP INT TERM
+
+    if ((replacement_installed == 1 && deployment_stable == 0)) && [[ -n "$backup_jar" && -r "$backup_jar" ]]; then
+        echo "New UI did not remain stable; restoring $backup_jar" >&2
+        cp -p "$backup_jar" "${active_jar}.rollback"
+        mv -f "${active_jar}.rollback" "$active_jar"
+        failed_pid=$(find_ui_pid || true)
+        if [[ -n "$failed_pid" ]]; then
+            kill "$failed_pid" 2>/dev/null || true
+        fi
+        if restored_pid=$(wait_for_stable_ui "$failed_pid" 45 8); then
+            echo "Rollback UI is stable as PID $restored_pid" >&2
+        else
+            echo "Rollback completed, but the original UI did not become stable" >&2
+        fi
+    fi
+    exit "$status"
+}
+
+trap rollback_on_exit EXIT
+trap 'exit 1' HUP INT TERM
+
+if [[ ! -s "$active_jar" || ! -s "$staged_jar" ]]; then
+    echo "Active or staged UI JAR is missing" >&2
+    exit 1
+fi
+
+actual_sha256=$(sha256sum "$staged_jar" | awk '{print $1}')
+if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+    echo "Staged JAR checksum mismatch" >&2
+    exit 1
+fi
+
+old_ui_pid=$(find_ui_pid || true)
+if [[ -z "$old_ui_pid" ]]; then
+    echo "QC45 UI process is not running; refusing an unattended replacement" >&2
+    exit 1
+fi
+
+timestamp=$(date +%Y%m%d-%H%M%S)
+backup_jar="${active_jar}.backup-${timestamp}"
+cp -p "$active_jar" "$backup_jar"
+mv -f "$staged_jar" "$active_jar"
+replacement_installed=1
+
+kill "$old_ui_pid"
+if new_ui_pid=$(wait_for_stable_ui "$old_ui_pid" 45 10); then
+    deployment_stable=1
+    echo "QC45 UI is stable as PID $new_ui_pid"
+else
+    echo "QC45 UI restart failed" >&2
+    exit 1
+fi
+
+# Retain the five newest successful-deployment backups.
+ls -1t "${active_jar}".backup-* 2>/dev/null \
+    | sed -n '6,$p' \
+    | while IFS= read -r old_backup; do
+        rm -f -- "$old_backup"
+    done
+
+trap - EXIT HUP INT TERM
+REMOTE_SCRIPT
+
+printf '%s\n' "$ui_tree_sha" >"$deployed_tree_file"
+printf '%s\n' "$commit_sha" >"$QC45_STATE_DIR/deployed-commit"
+echo "QC45 UI deployment completed from commit ${commit_sha}."

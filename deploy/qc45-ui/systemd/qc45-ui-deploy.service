@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy QC45 charging-screen UI updates
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/qc45-ui-deploy
+TimeoutStartSec=180
+Nice=10
+IOSchedulingClass=idle

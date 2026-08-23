@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for QC45 charging-screen UI updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

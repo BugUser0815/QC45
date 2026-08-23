@@ -70,6 +70,27 @@ Namen der bisherigen UI-JAR nach `/home/mobie/evcsd/ui/lib/` kopieren und den
 UI-Prozess neu starten. Details und Datenquellen stehen unter
 [Lademonitor UI](Lademonitor-UI).
 
+### Automatisches UI-Deployment über den Raspberry
+
+Unter `deploy/qc45-ui` liegt ein Pull-Deployer für den Raspberry. Er prüft den
+Branch `native-integration` im Minutentakt und reagiert ausschließlich auf
+Änderungen unter `ui-patch/src`.
+
+Der Ablauf ist bewusst auf die vorhandene Säule zugeschnitten:
+
+1. aktive Basis-JAR von
+   `/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar` laden,
+2. neue UI-Klasse als Java-7-Bytecode bauen und prüfen,
+3. Übertragung per SHA-256 verifizieren,
+4. aktive JAR sichern und atomar ersetzen,
+5. ausschließlich `pt.efacec.es.evcsd.ui.Main 5678` beenden,
+6. Neustart durch den vorhandenen UI-Watchdog überwachen,
+7. bei instabilem Neustart automatisch die vorherige JAR wiederherstellen.
+
+EVCSD/Tomcat, Modbus und die Ladesteuerung werden dabei nicht neu gestartet.
+Installation und SSH-Einrichtung sind in
+[`deploy/qc45-ui/README.md`](../deploy/qc45-ui/README.md) beschrieben.
+
 ## PeakShaving `lean`
 
 ```bash
