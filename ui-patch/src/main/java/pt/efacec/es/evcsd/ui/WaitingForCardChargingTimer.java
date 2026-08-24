@@ -1,5 +1,6 @@
 package pt.efacec.es.evcsd.ui;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -34,11 +35,12 @@ import javax.swing.SwingUtilities;
 import pt.efacec.es.evcsd.ui.info.ChargeInfo;
 
 /**
- * Minimal 640x480 charging monitor for the QC45 screen saver.
+ * 640x480 charging monitor for the QC45.
  *
- * The charging values are read exclusively from the native integration's
- * documented Modbus block 120-125. The buffer-battery SoC remains an evcc
- * value because it is not part of the QC45/EVCSD state.
+ * The active-session page uses the same reduced dark design language as the
+ * other patched operator pages. Charging values are read exclusively from the
+ * native integration's documented Modbus block 120-125. The buffer-battery SoC
+ * remains an evcc value because it is not part of the QC45/EVCSD state.
  */
 public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<ChargeInfo> {
     private static final Logger LOGGER = Logger.getLogger(WaitingForCardChargingTimer.class.getName());
@@ -49,9 +51,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final int MODBUS_REGISTER_COUNT = 6;
 
     private static final Color BACKGROUND = new Color(13, 15, 15);
+    private static final Color PANEL = new Color(29, 31, 31);
+    private static final Color PANEL_LIGHT = new Color(43, 46, 46);
     private static final Color PRIMARY = new Color(245, 245, 245);
-    private static final Color SECONDARY = new Color(180, 180, 180);
-    private static final Color DIVIDER = new Color(82, 86, 86);
+    private static final Color SECONDARY = new Color(176, 179, 179);
+    private static final Color DIVIDER = new Color(77, 81, 81);
     private static final Color TRACK = new Color(52, 54, 54);
     private static final Color YELLOW = new Color(255, 214, 0);
     private static final Color READY_GREEN = new Color(72, 184, 106);
@@ -186,7 +190,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             g.setColor(BACKGROUND);
             g.fillRect(0, 0, WIDTH, HEIGHT);
 
-            drawGrid(g);
             drawHeader(g);
             drawMainValues(g);
             drawSessionValues(g);
@@ -255,7 +258,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private void drawCardSymbol(Graphics2D g, int centerX, int centerY) {
         g.setColor(YELLOW);
-        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.setStroke(new BasicStroke(4.0f));
         g.drawRoundRect(centerX - 58, centerY - 38, 78, 76, 8, 8);
         g.drawArc(centerX + 3, centerY - 28, 42, 56, -55, 110);
         g.drawArc(centerX + 13, centerY - 19, 28, 38, -55, 110);
@@ -273,21 +276,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int outerX = left ? 5 : 635;
         int innerX = left ? 14 : 626;
         g.setColor(YELLOW);
-        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.setStroke(new BasicStroke(4.0f));
         g.drawLine(innerX, centerY - 10, outerX, centerY);
         g.drawLine(outerX, centerY, innerX, centerY + 10);
         if (left) g.fillRect(18, centerY - 1, 24, 3);
         else g.fillRect(598, centerY - 1, 24, 3);
-    }
-
-    private void drawGrid(Graphics2D g) {
-        g.setColor(DIVIDER);
-        g.drawLine(0, 42, WIDTH, 42);
-        g.drawLine(320, 42, 320, 308);
-        g.drawLine(0, 308, WIDTH, 308);
-        g.drawLine(210, 308, 210, 416);
-        g.drawLine(430, 308, 430, 416);
-        g.drawLine(0, 416, WIDTH, 416);
     }
 
     private void drawHeader(Graphics2D g) {
@@ -302,11 +295,13 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(hasFreshPower ? YELLOW : READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
-        g.setFont(font(Font.BOLD, 17));
+        g.setFont(font(Font.BOLD, 16));
         g.drawString(hasFreshPower ? "LÄDT" : "LADEBEREIT", 176, 29);
 
         g.setFont(font(Font.BOLD, 18));
         rightAligned(g, new SimpleDateFormat("HH:mm").format(new Date()), 622, 28);
+        g.setColor(DIVIDER);
+        g.drawLine(0, 42, WIDTH, 42);
     }
 
     private void drawMainValues(Graphics2D g) {
@@ -314,27 +309,31 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int targetKw = value(1, -1);
         int vehicleSoc = value(2, -1);
 
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 14));
-        g.drawString("LADELEISTUNG", 30, 87);
-        g.drawString("FAHRZEUG", 355, 87);
+        drawPanel(g, 18, 60, 292, 186, actualKw > 0 ? YELLOW : DIVIDER);
+        drawPanel(g, 330, 60, 292, 186, vehicleSoc >= 0 ? YELLOW : DIVIDER);
 
-        drawLargeValue(g, actualKw < 0 ? "--" : Integer.toString(actualKw), "kW", 160, 207, 78, 43);
-        drawLargeValue(g, vehicleSoc < 0 ? "--" : Integer.toString(vehicleSoc), "%", 480, 207, 82, 47);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, 13));
+        g.drawString("LADELEISTUNG", 38, 90);
+        g.drawString("FAHRZEUG", 350, 90);
+
+        drawLargeValue(g, actualKw < 0 ? "--" : Integer.toString(actualKw), "kW", 164, 170, 66, 34);
+        drawLargeValue(g, vehicleSoc < 0 ? "--" : Integer.toString(vehicleSoc), "%", 476, 170, 70, 38);
 
         drawPowerBar(g, actualKw, targetKw);
         drawSocBar(g, vehicleSoc);
 
         g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 17));
-        g.drawString(targetKw < 0 ? "SOLL -- kW" : "SOLL " + targetKw + " kW", 30, 282);
+        g.setFont(font(Font.BOLD, 13));
+        g.drawString(targetKw < 0 ? "SOLLLEISTUNG  -- kW" : "SOLLLEISTUNG  " + targetKw + " kW", 38, 231);
+        g.drawString("FAHRZEUG-SOC", 350, 231);
     }
 
     private void drawPowerBar(Graphics2D g, int actualKw, int targetKw) {
-        int x = 30;
-        int y = 245;
-        int width = 260;
-        int height = 7;
+        int x = 38;
+        int y = 197;
+        int width = 252;
+        int height = 8;
         g.setColor(TRACK);
         g.fillRect(x, y, width, height);
         if (actualKw < 0 || targetKw <= 0) return;
@@ -344,11 +343,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private void drawSocBar(Graphics2D g, int soc) {
-        int x = 355;
-        int y = 245;
+        int x = 350;
+        int y = 197;
         int width = 252;
-        int height = 7;
-        int segments = 7;
+        int height = 8;
+        int segments = 10;
         int gap = 3;
         int segmentWidth = (width - gap * (segments - 1)) / segments;
         int filled = soc < 0 ? 0 : (int)Math.ceil(clamp(soc, 0, 100) * segments / 100.0d);
@@ -364,40 +363,66 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int seconds = value(3, -1);
         long energyWh = energyWh();
 
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 13));
-        centered(g, "ENERGIE", 105, 341);
-        centered(g, "LADEZEIT", 320, 341);
-        centered(g, "PUFFERBATTERIE", 535, 341);
+        drawMetricPanel(g, 18, 264, 190, "ENERGIE",
+            energyWh < 0L ? "-- kWh" : formatEnergy(energyWh), "SEIT LADEBEGINN");
+        drawMetricPanel(g, 225, 264, 190, "LADEZEIT",
+            seconds < 0 ? "--:--:--" : formatDuration(seconds), "STUNDEN : MIN : SEK");
+        drawMetricPanel(g, 432, 264, 190, "PUFFERBATTERIE",
+            lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", "STATION");
 
-        g.setColor(PRIMARY);
-        g.setFont(font(Font.PLAIN, 31));
-        centered(g, energyWh < 0L ? "-- kWh" : formatEnergy(energyWh), 105, 386);
-        centered(g, seconds < 0 ? "--:--:--" : formatDuration(seconds), 320, 386);
-
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.PLAIN, 38));
-        centered(g, lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", 535, 386);
-
-        g.setColor(TRACK);
-        g.fillRect(460, 398, 150, 6);
         if (lastBatterySoc != null) {
+            int x = 452;
+            int y = 379;
+            int width = 150;
+            g.setColor(TRACK);
+            g.fillRect(x, y, width, 6);
             g.setColor(SECONDARY);
-            g.fillRect(460, 398, (int)Math.round(150 * lastBatterySoc.intValue() / 100.0d), 6);
+            g.fillRect(x, y, (int)Math.round(width * lastBatterySoc.intValue() / 100.0d), 6);
         }
     }
 
-    private void drawFooter(Graphics2D g) {
+    private void drawMetricPanel(Graphics2D g, int x, int y, int width,
+                                 String label, String value, String detail) {
+        drawPanel(g, x, y, width, 128, DIVIDER);
         g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 11));
-        centered(g, "Das Fahrzeug bestimmt die mögliche Ladeleistung.", 185, 454);
+        g.setFont(font(Font.BOLD, 12));
+        centered(g, label, x + width / 2, y + 28);
+
+        g.setColor(PRIMARY);
+        int valueSize = value != null && value.length() > 9 ? 25 : 30;
+        g.setFont(font(Font.PLAIN, valueSize));
+        centered(g, value, x + width / 2, y + 76);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 10));
+        centered(g, detail, x + width / 2, y + 105);
+    }
+
+    private void drawPanel(Graphics2D g, int x, int y, int width, int height, Color accent) {
+        g.setColor(PANEL);
+        g.fillRect(x, y, width, height);
+        g.setColor(DIVIDER);
+        g.setStroke(new BasicStroke(1.0f));
+        g.drawRect(x, y, width, height);
+        g.setColor(accent == null ? DIVIDER : accent);
+        g.fillRect(x, y, 4, height);
+        g.setColor(PANEL_LIGHT);
+        g.fillRect(x + 4, y, width - 4, 2);
+    }
+
+    private void drawFooter(Graphics2D g) {
+        g.setColor(DIVIDER);
+        g.drawLine(0, 416, WIDTH, 416);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 11));
+        centered(g, "Das Fahrzeug bestimmt die mögliche Ladeleistung.", 320, 438);
 
         g.setColor(STOP_RED);
-        g.fillRect(370, 422, 252, 50);
+        g.fillOval(104, 450, 8, 8);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 12));
-        centered(g, "zum beenden Karte vorhalten", 496, 446);
-        centered(g, "oder App benutzen.", 496, 463);
+        g.drawString("Zum Beenden Karte vorhalten oder App benutzen.", 122, 459);
     }
 
     private void drawLargeValue(Graphics2D g, String value, String unit,
@@ -408,7 +433,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int valueWidth = g.getFontMetrics().stringWidth(value);
         g.setFont(unitFont);
         int unitWidth = g.getFontMetrics().stringWidth(unit);
-        int gap = 10;
+        int gap = 9;
         int x = centerX - (valueWidth + gap + unitWidth) / 2;
 
         g.setColor(PRIMARY);
