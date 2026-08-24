@@ -28,6 +28,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
+import javax.imageio.ImageIO;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -60,6 +61,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final Color YELLOW = new Color(255, 214, 0);
     private static final Color READY_GREEN = new Color(72, 184, 106);
     private static final Color STOP_RED = new Color(166, 30, 30);
+    private static final BufferedImage SGS_LOGO = loadLogo();
 
     private static String languagef = "";
     private static int modusf;
@@ -314,7 +316,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(Font.PLAIN, 15));
         centered(g, "Fahrzeug verbinden und authentifizieren", 320, 120);
 
-        drawCardSymbol(g, 320, 217);
+        drawSgsLogo(g);
 
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 24));
@@ -322,14 +324,31 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 15));
         centered(g, "Der verfügbare Anschluss wird automatisch erkannt.", 320, 364);
-        drawWakeKeys(g);
-        g.setColor(DIVIDER);
-        g.drawLine(0, 416, WIDTH, 416);
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.PLAIN, 12));
-        centered(g, "Beliebige Gerätetaste öffnet die Anschlussauswahl.", 320, 452);
+
         g.dispose();
         return new ImageIcon(image);
+    }
+
+    private void drawSgsLogo(Graphics2D g) {
+        if (SGS_LOGO != null) {
+            g.drawImage(SGS_LOGO, 110, 141, null);
+            return;
+        }
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 26));
+        centered(g, "SGS Elektrotechnik GbR", 320, 190);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 17));
+        centered(g, "Alexander & Marion Rothner", 320, 218);
+    }
+
+    private static BufferedImage loadLogo() {
+        try {
+            return ImageIO.read(WaitingForCardChargingTimer.class.getResource("sgs-logo.png"));
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private void drawCardSymbol(Graphics2D g, int centerX, int centerY) {
@@ -339,24 +358,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.drawArc(centerX + 3, centerY - 28, 42, 56, -55, 110);
         g.drawArc(centerX + 13, centerY - 19, 28, 38, -55, 110);
         g.drawArc(centerX + 23, centerY - 10, 14, 20, -55, 110);
-    }
-
-    private void drawWakeKeys(Graphics2D g) {
-        drawWakeKey(g, true, 159);
-        drawWakeKey(g, false, 159);
-        drawWakeKey(g, true, 375);
-        drawWakeKey(g, false, 375);
-    }
-
-    private void drawWakeKey(Graphics2D g, boolean left, int centerY) {
-        int outerX = left ? 5 : 635;
-        int innerX = left ? 14 : 626;
-        g.setColor(YELLOW);
-        g.setStroke(new BasicStroke(4.0f));
-        g.drawLine(innerX, centerY - 10, outerX, centerY);
-        g.drawLine(outerX, centerY, innerX, centerY + 10);
-        if (left) g.fillRect(18, centerY - 1, 24, 3);
-        else g.fillRect(598, centerY - 1, 24, 3);
     }
 
     private void drawHeader(Graphics2D g) {
