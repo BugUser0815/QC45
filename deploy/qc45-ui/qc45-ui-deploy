@@ -17,6 +17,7 @@ source "$config_file"
 : "${QC45_SSH_PORT:=22}"
 : "${QC45_REMOTE_JAR:=/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar}"
 : "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
+: "${QC45_FORCE_DEPLOY:=0}"
 
 readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
 readonly QC45_BRANCH="native-integration"
@@ -69,6 +70,11 @@ if [[ ! -r "$QC45_IDENTITY_FILE" ]]; then
     exit 2
 fi
 
+if [[ "$QC45_FORCE_DEPLOY" != 0 && "$QC45_FORCE_DEPLOY" != 1 ]]; then
+    echo "QC45_FORCE_DEPLOY must be 0 or 1" >&2
+    exit 2
+fi
+
 mkdir -p "$QC45_STATE_DIR"
 exec 9>"$QC45_STATE_DIR/deploy.lock"
 if ! flock -n 9; then
@@ -103,7 +109,9 @@ git -C "$repo_dir" fetch --quiet --no-tags --depth 1 origin "refs/heads/${QC45_B
 commit_sha=$(git -C "$repo_dir" rev-parse FETCH_HEAD)
 ui_tree_sha=$(git -C "$repo_dir" rev-parse "${commit_sha}:ui-patch/src")
 
-if [[ -r "$deployed_tree_file" ]] && [[ "$(<"$deployed_tree_file")" == "$ui_tree_sha" ]]; then
+if [[ "$QC45_FORCE_DEPLOY" == 1 ]]; then
+    echo "Force deployment requested; rebuilding UI even if tree ${ui_tree_sha:0:12} is already deployed."
+elif [[ -r "$deployed_tree_file" ]] && [[ "$(<"$deployed_tree_file")" == "$ui_tree_sha" ]]; then
     echo "QC45 UI is already current (${commit_sha:0:12})."
     exit 0
 fi
