@@ -112,6 +112,7 @@ work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
 git -C "$repo_dir" archive --format=tar "$commit_sha" ui-patch/src | tar -xf - -C "$work_dir"
 
 source_root="$work_dir/ui-patch/src/main/java"
+resource_root="$work_dir/ui-patch/src/main/resources"
 sources_file="$work_dir/ui-sources.txt"
 base_jar="$work_dir/base-ui.jar"
 output_jar="$work_dir/evcsdUI-qc45-alpitronic-ui.jar"
@@ -159,6 +160,10 @@ java -jar "$QC45_ECJ_JAR" -proc:none -1.7 -encoding UTF-8 \
     -d "$classes_dir" \
     @"$sources_file"
 
+if [[ -d "$resource_root" ]]; then
+    cp -R "$resource_root"/. "$classes_dir"/
+fi
+
 cp -p "$base_jar" "$output_jar"
 class_count=$(find "$classes_dir/pt/efacec/es/evcsd/ui" -type f -name '*.class' | wc -l)
 if ((class_count < 25)); then
@@ -192,6 +197,12 @@ for ui_class in "${required_ui_classes[@]}"; do
         exit 1
     fi
 done
+
+logo_path="pt/efacec/es/evcsd/ui/sgs-logo.png"
+if [[ -d "$resource_root" ]] && ! grep -Fqx "$logo_path" "$jar_listing"; then
+    echo "UI resource is missing from the output JAR: $logo_path" >&2
+    exit 1
+fi
 
 jar_sha256=$(sha256sum "$output_jar" | awk '{print $1}')
 remote_dir=${QC45_REMOTE_JAR%/*}
@@ -308,7 +319,6 @@ else
     exit 1
 fi
 
-# Retain the five newest successful-deployment backups.
 ls -1t "${active_jar}".backup-* 2>/dev/null \
     | sed -n '6,$p' \
     | while IFS= read -r old_backup; do
