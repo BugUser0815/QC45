@@ -54,6 +54,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final Color DIVIDER = new Color(82, 86, 86);
     private static final Color TRACK = new Color(52, 54, 54);
     private static final Color YELLOW = new Color(255, 214, 0);
+    private static final Color READY_GREEN = new Color(72, 184, 106);
     private static final Color STOP_RED = new Color(166, 30, 30);
 
     private static String languagef = "";
@@ -217,7 +218,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 18));
         g.drawString("QC45", 18, 28);
-        g.setColor(new Color(72, 184, 106));
+        g.setColor(READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 17));
@@ -294,11 +295,15 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(Font.BOLD, 18));
         g.drawString("QC45", 18, 28);
 
-        g.setColor(YELLOW);
+        int actualKw = value(0, -1);
+        boolean hasFreshPower = actualKw > 0
+            && lastChargingData != null
+            && System.currentTimeMillis() - lastChargingDataFetch <= 2500L;
+        g.setColor(hasFreshPower ? YELLOW : READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 17));
-        g.drawString("LÄDT", 176, 29);
+        g.drawString(hasFreshPower ? "LÄDT" : "LADEBEREIT", 176, 29);
 
         g.setFont(font(Font.BOLD, 18));
         rightAligned(g, new SimpleDateFormat("HH:mm").format(new Date()), 622, 28);
