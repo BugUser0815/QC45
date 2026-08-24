@@ -177,6 +177,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
             if (!isChargingSession()) return renderIdlePage();
+            if (showStopConfirmation()) return renderStopConfirmationPage();
             refreshBufferSoc(now);
 
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -199,12 +200,90 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         }
     }
 
+    /**
+     * The original EVCSD state machine instantiates this class directly while
+     * waiting for the card interaction during an active session. The normal
+     * charging panels subclass this class, so they keep the full monitor.
+     */
+    private boolean showStopConfirmation() {
+        return getClass() == WaitingForCardChargingTimer.class;
+    }
+
     private boolean isChargingSession() {
         int state = AlpitronicSessionState.get();
         if (state != AlpitronicSessionState.UNKNOWN) return state == AlpitronicSessionState.CHARGING;
         ChargeInfo latest = ChargeInfo.getLatest();
         if (latest != null) return latest.isCharging();
         return value(0, 0) > 0 || (value(1, 0) > 0 && value(3, 0) > 0);
+    }
+
+    private ImageIcon renderStopConfirmationPage() {
+        BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = image.createGraphics();
+        textAA(g);
+        g.setColor(BACKGROUND);
+        g.fillRect(0, 0, WIDTH, HEIGHT);
+
+        drawHeader(g);
+        g.setColor(DIVIDER);
+        g.drawLine(0, 42, WIDTH, 42);
+
+        drawStopSoftKey(g);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 30));
+        centered(g, "KARTE ERKANNT", 360, 100);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 18));
+        centered(g, "Ladevorgang beenden?", 360, 130);
+
+        drawCardSymbol(g, 360, 232);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 19));
+        centered(g, "Zum Abbrechen oben links drücken.", 360, 329);
+
+        int actualKw = value(0, -1);
+        int vehicleSoc = value(2, -1);
+        int seconds = value(3, -1);
+        String power = actualKw < 0 ? "-- kW" : actualKw + " kW";
+        String soc = vehicleSoc < 0 ? "-- %" : vehicleSoc + " %";
+        String duration = seconds < 0 ? "--:--:--" : formatDuration(seconds);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 17));
+        centered(g, power + "   ·   " + soc + "   ·   " + duration, 360, 378);
+
+        g.setColor(DIVIDER);
+        g.drawLine(0, 416, WIDTH, 416);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 12));
+        centered(g, "Die normale Ladeanzeige bleibt im Hintergrund aktiv.", 320, 452);
+
+        g.dispose();
+        return new ImageIcon(image);
+    }
+
+    private void drawStopSoftKey(Graphics2D g) {
+        int x = 18;
+        int y = 128;
+        int width = 190;
+        int height = 62;
+        int centerY = y + height / 2;
+
+        g.setColor(STOP_RED);
+        g.fillRect(x, y, width, height);
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 13));
+        centered(g, "LADEVORGANG", x + width / 2, y + 26);
+        g.setFont(font(Font.BOLD, 15));
+        centered(g, "ABBRECHEN", x + width / 2, y + 48);
+
+        int outerX = 5;
+        int innerX = 14;
+        g.setColor(STOP_RED);
+        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.drawLine(innerX, centerY - 10, outerX, centerY);
+        g.drawLine(outerX, centerY, innerX, centerY + 10);
     }
 
     private ImageIcon renderIdlePage() {
