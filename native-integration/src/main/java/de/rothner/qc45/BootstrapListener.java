@@ -33,6 +33,12 @@ public final class BootstrapListener implements ServletContextListener {
                 System.err.println("[QC45] CCS-RAW2 tracer failed to install: " + traceError);
                 traceError.printStackTrace();
             }
+            try {
+                CcsFullRxTracer.installFromDefaultConfig();
+            } catch (Throwable traceError) {
+                System.err.println("[QC45] CCS-FULL-RX tracer failed to install: " + traceError);
+                traceError.printStackTrace();
+            }
         } catch (Throwable e) {
             System.err.println("[QC45] native integration failed to start: " + e);
             e.printStackTrace();
@@ -40,6 +46,8 @@ public final class BootstrapListener implements ServletContextListener {
     }
 
     public void contextDestroyed(ServletContextEvent event) {
+        CcsFullRxTracer.shutdown();
+
         RemoteStartAuthorizationFix authFix = remoteStartAuthorizationFix;
         remoteStartAuthorizationFix = null;
         if (authFix != null) authFix.shutdown();
