@@ -61,6 +61,14 @@ auf `127.0.0.1:1502`:
 | 123 | Ladezeit in Sekunden |
 | 124–125 | Sessionenergie als U32 in Wh |
 
+Der Status in der Kopfzeile folgt dabei bewusst der tatsächlich gemessenen
+Ladeleistung und nicht nur dem EVCSD-Sitzungszustand: `LÄDT` wird ausschließlich
+bei einem frischen Messwert größer als `0 kW` angezeigt. Bei aktiver bzw.
+vorbereiteter Ladesitzung ohne gemessenen Leistungsfluss steht dort
+`LADEBEREIT`. Dadurch wird insbesondere während Kommunikation, Autorisierung,
+Hochlauf oder einer Ladepause nicht fälschlich ein aktiver Energiefluss
+angezeigt.
+
 Nur der Pufferbatterie-SoC kommt weiterhin aus evcc. Standardmäßig wird
 `http://10.0.0.179:7070/api/state?jq=.battery.soc` verwendet.
 
