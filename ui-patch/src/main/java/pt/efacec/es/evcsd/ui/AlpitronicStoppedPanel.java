@@ -27,7 +27,19 @@ class AlpitronicStoppedPanel extends AlpitronicPanel implements ActionPanel<Char
         metric(g, 25, 185, "ENERGIE", current == null ? "-- kWh" : safe(current.getEnergy(), "-- kWh"));
         metric(g, 227, 185, "LADEZEIT", current == null ? "--:--" : safe(current.getTime(), "--:--"));
         metric(g, 429, 185, "FAHRZEUG", current == null ? "-- %" : safe(current.getBattery(), "-- %"));
-        String reason = current == null ? "" : safe(current.getFinishReason(), "");
+        String reason = current == null ? "" : plainText(current.getFinishReason());
         footer(g, reason.length() == 0 ? "Ladekabel abziehen." : reason);
+    }
+
+    private static String plainText(String value) {
+        if (value == null) return "";
+        return value
+            .replaceAll("<[^>]+>", " ")
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replaceAll("\\s+", " ")
+            .trim();
     }
 }
