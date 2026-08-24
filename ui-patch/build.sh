@@ -12,6 +12,7 @@ fi
 
 classes_dir="$script_dir/target/classes"
 source_root="$script_dir/src/main/java"
+resource_root="$script_dir/src/main/resources"
 sources_file="$script_dir/target/sources.txt"
 pinned_ecj=${QC45_ECJ_JAR:-"${HOME}/.local/share/qc45-ui-deployer/ecj-3.32.0.jar"}
 
@@ -39,6 +40,10 @@ else
     exit 2
 fi
 
+if [ -d "$resource_root" ]; then
+    cp -R "$resource_root"/. "$classes_dir"/
+fi
+
 cp "$base_jar" "$output_jar"
 
 jar uf "$output_jar" -C "$classes_dir" pt/efacec/es/evcsd/ui
@@ -50,5 +55,11 @@ for ui_class in WaitingForCardChargingTimer MainMenuPanel InCCSChargingPanel Dtc
         exit 1
     fi
 done
+
+logo_path="pt/efacec/es/evcsd/ui/sgs-logo.png"
+if ! jar tf "$output_jar" | grep -qx "$logo_path"; then
+    echo "Missing SGS logo resource: $logo_path" >&2
+    exit 1
+fi
 
 echo "$output_jar"
