@@ -13,8 +13,9 @@ QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - Bereitschaftsseite mit dem originalen SGS-Elektrotechnik-Logo samt Schriftzug `Alexander & Marion Rothner`
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
-- Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
-- Beenden-Hinweis: `zum beenden Karte vorhalten oder App benutzen.`
+- normaler Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
+- nach RFID-Erkennung während einer laufenden Ladung reduzierte Abbruchansicht mit `LADEVORGANG ABBRECHEN` oben links
+- Beenden-Hinweis im normalen Ladebildschirm: `zum beenden Karte vorhalten oder App benutzen.`
 
 ## Ersetzte Betriebsansichten
 
@@ -41,15 +42,26 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 | Diagnose | – | – | Zurück | – |
 | Bereitschaft | keine Funktion | keine Funktion | keine Funktion | keine Funktion |
 | Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
+| RFID während aktivem Ladevorgang | Ladevorgang abbrechen | – | – | – |
 
 Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
 Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
-Während des Ladens bleiben alle vier Gerätetasten ohne Stop-/Fortsetzen-
-Beschriftung; die Session wird entsprechend dem angezeigten Hinweis per Karte
-oder App beendet.
+Während des normalen Ladebildschirms bleiben alle vier Gerätetasten ohne Stop-/
+Fortsetzen-Beschriftung; die Session wird entsprechend dem angezeigten Hinweis
+zunächst per Karte oder App angesprochen.
+
+Wird während einer laufenden Session die Kartenansicht `WaitingForCardChargingTimer`
+direkt geöffnet, zeigt sie statt des vollständigen Lademonitors eine reduzierte
+Bestätigungsansicht. Oben links erscheint ein rotes Softkey-Feld
+`LADEVORGANG ABBRECHEN`, ausgerichtet auf die obere linke physische Gerätetaste.
+In der Mitte bleiben nur `KARTE ERKANNT`, die Beenden-Frage und eine kompakte
+Statuszeile aus Ladeleistung, Fahrzeug-SoC und Ladezeit sichtbar. Die normalen
+AC-/CCS-/CHAdeMO-Ladepanels sind Unterklassen von `WaitingForCardChargingTimer`
+und behalten deshalb unverändert die vollständige Ladeansicht.
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
-verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung.
+verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung der
+bestehenden Zustände.
 
 ## Datenquellen des Ladebildschirms
 
