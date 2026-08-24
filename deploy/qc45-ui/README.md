@@ -9,6 +9,11 @@ Der Deployer führt dabei keine aus GitHub geladenen Shellskripte aus. Er
 extrahiert ausschließlich `ui-patch/src` und verwendet das lokal installierte
 Deployskript.
 
+Ressourcen unter `ui-patch/src/main/resources` werden zusammen mit den Klassen
+in die Ziel-JAR übernommen. Der Build prüft dabei insbesondere, dass das
+SGS-Logo `pt/efacec/es/evcsd/ui/sgs-logo.png` tatsächlich in der fertigen JAR
+enthalten ist.
+
 ## Sicherheits- und Ausfallverhalten
 
 - SSH ausschließlich zur internen QC45 unter `10.0.0.156`
@@ -81,21 +86,49 @@ ssh \
   'test -r /home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar && command -v sha256sum'
 ```
 
-## 3. Deployer installieren
+## 3. Deployer installieren oder aktualisieren
 
 ```bash
-cd ~/Development
-git clone --branch native-integration https://github.com/BugUser0815/QC45.git
-cd QC45/deploy/qc45-ui
+cd ~/Development/QC45
+git fetch origin
+git checkout native-integration
+git pull --ff-only origin native-integration
+cd deploy/qc45-ui
 ./install.sh
 ```
 
-Bei einem bereits vorhandenen Checkout stattdessen den Branch aktualisieren.
+Der Installer legt zwei manuelle Befehle an:
 
-Der erste Lauf erfolgt bewusst manuell:
+```text
+~/.local/bin/qc45-ui-deploy
+~/.local/bin/qc45-ui-force-deploy
+```
+
+Der normale Befehl überspringt das Deployment, wenn der gespeicherte
+`ui-patch/src`-Tree bereits dem aktuellen Branch entspricht.
+
+Der Force-Befehl ignoriert diese Gleichheit bewusst und führt immer den vollen
+Ablauf aus: aktuelle `native-integration`-Quellen holen, aktive QC45-UI-JAR als
+Basis laden, alle UI-Klassen neu als Java 7 kompilieren, Ressourcen einbetten,
+JAR prüfen, übertragen, sichern, austauschen und ausschließlich den UI-Prozess
+neu starten.
+
+Damit kann ein Deployment jederzeit von Hand erneut auf die Säule gedrückt
+werden, auch wenn `deployed-ui-tree` bereits die aktuelle SHA enthält:
 
 ```bash
-~/.local/bin/qc45-ui-deploy
+~/.local/bin/qc45-ui-force-deploy
+```
+
+Bei einem Fehler nach dem Austausch wird weiterhin automatisch auf die zuvor
+gesicherte JAR zurückgerollt.
+
+## 4. Automatik aktivieren
+
+Der erste Lauf sollte bewusst manuell erfolgen:
+
+```bash
+~/.local/bin/qc45-ui-force-deploy
 ```
 
 Erst wenn dieser Lauf erfolgreich war, den Timer einschalten:
@@ -123,5 +156,9 @@ systemctl --user disable --now qc45-ui-deploy.timer
 Nach einem Push in den Branch `native-integration` erkennt der Raspberry die
 geänderte UI innerhalb von ungefähr einer Minute. Dabei werden alle
 versionierten UI-Klassen gemeinsam kompiliert und vor dem Upload auf
-Vollständigkeit und Class-Major-Version 51 geprüft. Änderungen außerhalb von
-`ui-patch/src` lösen keinen Austausch auf der QC45 aus.
+Vollständigkeit und Class-Major-Version 51 geprüft. Ressourcen aus
+`ui-patch/src/main/resources` werden ebenfalls übernommen. Änderungen außerhalb
+von `ui-patch/src` lösen keinen automatischen Austausch auf der QC45 aus.
+
+Wenn ein identischer UI-Tree trotzdem erneut installiert werden soll, ist dafür
+`qc45-ui-force-deploy` vorgesehen.
