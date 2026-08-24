@@ -123,6 +123,9 @@ werden, auch wenn `deployed-ui-tree` bereits die aktuelle SHA enthält:
 Bei einem Fehler nach dem Austausch wird weiterhin automatisch auf die zuvor
 gesicherte JAR zurückgerollt.
 
+Eine zusätzliche Kurzprüfung mit erwarteten JAR-Einträgen steht in
+[`VERIFY_FORCE_DEPLOY.md`](./VERIFY_FORCE_DEPLOY.md).
+
 ## 4. Automatik aktivieren
 
 Der erste Lauf sollte bewusst manuell erfolgen:
