@@ -12,7 +12,7 @@ ecj_jar="$share_dir/ecj-3.32.0.jar"
 ecj_url="https://repo1.maven.org/maven2/org/eclipse/jdt/ecj/3.32.0/ecj-3.32.0.jar"
 ecj_sha256="07e034c44a019c0c6394a06ee7b5c344e5518f6083c0fd046f2d8fd16a6760e2"
 
-required_commands=(curl java javap sha256sum install systemctl)
+required_commands=(curl java javap sha256sum install systemctl grep awk mktemp)
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
