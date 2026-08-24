@@ -10,6 +10,7 @@ QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - Weiß und Grau für Inhalte; Gelb nur für Auswahl, Status und Fortschritt
 - einheitliche Kopfzeile mit Gerätestatus und lokaler Uhrzeit
 - vier feste Softkey-Felder passend zu den physischen QC45-Gerätetasten
+- Bereitschaftsseite mit dem originalen SGS-Elektrotechnik-Logo samt Schriftzug `Alexander & Marion Rothner`
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
 - Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
@@ -38,12 +39,14 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 | CCS-Vorbereitung/Autorisierung | Abbrechen | – | – | – |
 | Einstellungen/Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
 | Diagnose | – | – | Zurück | – |
-| Bereitschaft | beliebige Taste öffnet die Anschlussauswahl | wie links | wie links | wie links |
+| Bereitschaft | keine Funktion | keine Funktion | keine Funktion | keine Funktion |
 | Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
 
-Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. Während des
-Ladens bleiben alle vier Gerätetasten ohne Stop-/Fortsetzen-Beschriftung; die
-Session wird entsprechend dem angezeigten Hinweis per Karte oder App beendet.
+Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
+Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
+Während des Ladens bleiben alle vier Gerätetasten ohne Stop-/Fortsetzen-
+Beschriftung; die Session wird entsprechend dem angezeigten Hinweis per Karte
+oder App beendet.
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
 verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung.
@@ -90,5 +93,7 @@ target/evcsdUI-qc45-alpitronic-ui.jar
 ```
 
 Alle Patchklassen werden als Java-7-Bytecode (Class-Major-Version 51) gebaut und
-in eine Kopie der Basis-JAR eingesetzt. Für das automatische, abgesicherte
-Deployment siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
+in eine Kopie der Basis-JAR eingesetzt. Ressourcen unter `src/main/resources`,
+insbesondere das SGS-Logo der Bereitschaftsseite, werden ebenfalls in die JAR
+übernommen und beim Build geprüft. Für das automatische, abgesicherte Deployment
+siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
