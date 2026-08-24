@@ -17,7 +17,7 @@ qc45-integration.jar
    |                      RemoteStartTransaction, RemoteStopTransaction
    `-- ModbusServer    -> evcc power control
 
-Modbus TCP registers used by evcc:
+Modbus TCP registers used by evcc and the local charging screen:
   0   station power [kW]
   1   CHAdeMO power [kW]
   2   CCS power [kW]
@@ -36,9 +36,19 @@ Modbus TCP registers used by evcc:
 101   Type2 power [kW]
 110   DC budget [kW] R/W
 111   AC budget [kW] R/W
+120   active DC charging power [kW]
+121   active DC target/limit [kW]
+122   vehicle SoC [%]
+123   charging time [s]
+124   session energy high word [Wh]
+125   session energy low word [Wh]
 ```
 
 Only registers 110 and 111 are writable. Fixed AC/DC configuration limits are not modified.
+
+The local charging screen reads registers 120-125 as one block. Session energy is reconstructed as `((reg124 << 16) | reg125)` Wh. The implementation is tied to fields and methods verified against the original QC45 EVCSD firmware: `SatelliteInfo.power`, `voltage`, `electricCurrent`, `battEnergyPct`, `chargingTime`, `energy`, `initialEnergy`, plus `SatelliteModule.getActiveTransaction()`, `getCurrentEnergy()` and `getStartTime()`. If the reported DC power is zero while voltage and current are available, register 120 falls back to `voltage * electricCurrent / 1000`.
+
+For installations with the Iskra DC meter, `initialEnergy` is captured at session start and registers 124/125 expose `energy - initialEnergy`. Without that absolute meter baseline, `initialEnergy` remains zero and the charger-reported session energy is exposed directly.
 
 ## Build
 
@@ -92,6 +102,12 @@ Expected log lines:
 [QC45] BootNotification: Accepted, heartbeat=...s
 ```
 
+During a DC session, charging-screen diagnostics are emitted at most every ten seconds, for example:
+
+```text
+[QC45] Modbus screen telemetry: dc=2 power=...kW rawPower=...kW voltage=...V current=...A limit=...kW soc=...% time=...s energy=...Wh initialEnergy=...Wh sessionEnergy=...Wh score=...
+```
+
 ## OCPP behavior
 
 Implemented:
@@ -122,7 +138,6 @@ For a locally started transaction the integration tries `SatelliteModule.getUser
 
 - the concrete `NmsListenerImpl` instance is reachable from `CentralModule`, or via a static zero-argument getter;
 - `SatelliteModule.stopCharging()` is the correct remote-stop path for all three connector types;
-- `getEnergy()` is expressed in Wh (the original firmware API name is known, but its unit should be confirmed against live values);
 - the station JVM trusts the ChargePoint TLS certificate chain.
 
 These are isolated in the reflection adapter so firmware-specific adjustments do not affect the OCPP or Modbus layers.
