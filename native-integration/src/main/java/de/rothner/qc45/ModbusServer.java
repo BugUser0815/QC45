@@ -12,8 +12,8 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
+import java.util.Calendar;
 
-/** Minimal multi-client Modbus/TCP server exposing the QC45 to evcc and the local UI. */
 public final class ModbusServer extends Thread {
     private final ReflectionQC45 station;
     private final int port;
@@ -181,7 +181,7 @@ public final class ModbusServer extends Thread {
             case 60: return overallStatus();
             case 100: {
                 int dc = activeDcConnector();
-                return dc == 0 ? 0 : station.powerKw(dc);
+                return dc == 0 ? 0 : livePowerKw(dc);
             }
             case 101: return station.powerKw(3);
             case 110: {
@@ -189,11 +189,6 @@ public final class ModbusServer extends Thread {
                 return dc == 0 ? station.globalMaxPower() : station.limitKw(dc);
             }
             case 111: return station.maxPowerAC();
-
-            // Local charging-screen block. Do not depend on one EVCSD field name:
-            // different QC45 software revisions expose the same values through
-            // slightly different fields/getters. Connector detection is likewise
-            // based on the live Satellite state instead of only station.powerKw().
             case 120: {
                 int dc = activeDcConnector();
                 int value = dc == 0 ? 0 : livePowerKw(dc);
@@ -235,10 +230,9 @@ public final class ModbusServer extends Thread {
     private boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
         if (activeTransaction(sat) != null) return true;
-        if (booleanMethod(sat, new String[] { "isCharging", "isChargeActive", "isTransactionActive" }, false)) return true;
-        int infoPower = infoNumber(connector, new String[] { "power", "currentPower" }, 0);
-        if (infoPower > 0) return true;
-        return station.powerKw(connector) > 0 || station.idTag(connector).length() > 0;
+        if (station.powerKw(connector) > 0) return true;
+        if (infoInt(connector, "chargingTime", 0) > 0) return true;
+        return station.idTag(connector).length() > 0;
     }
 
     private int activeDcConnector() throws Exception {
@@ -249,6 +243,9 @@ public final class ModbusServer extends Thread {
             int p1 = livePowerKw(1);
             int p2 = livePowerKw(2);
             if (p1 != p2) return p1 > p2 ? 1 : 2;
+            int t1 = infoInt(1, "chargingTime", 0);
+            int t2 = infoInt(2, "chargingTime", 0);
+            if (t1 != t2) return t1 > t2 ? 1 : 2;
         }
         return score1 >= score2 ? 1 : 2;
     }
@@ -257,16 +254,21 @@ public final class ModbusServer extends Thread {
         Object sat = satellite(connector);
         int score = 0;
         if (activeTransaction(sat) != null) score += 1000;
-        if (booleanMethod(sat, new String[] { "isCharging", "isChargeActive", "isTransactionActive" }, false)) score += 800;
 
-        int stationPower = station.powerKw(connector);
-        int infoPower = infoNumber(connector, new String[] { "power", "currentPower" }, 0);
-        if (stationPower > 0) score += 600 + Math.min(100, stationPower);
-        if (infoPower > 0) score += 600 + Math.min(100, infoPower);
+        int power = station.powerKw(connector);
+        if (power > 0) score += 600 + Math.min(100, power);
 
-        if (station.idTag(connector).length() > 0) score += 300;
-        if (infoNumber(connector, new String[] { "chargingTime", "chargeTime", "transactionTime", "elapsedTime" }, 0) > 0)
-            score += 150;
+        int current = infoInt(connector, "electricCurrent", 0);
+        int voltage = infoInt(connector, "voltage", 0);
+        if (current > 0 && voltage > 0) score += 500;
+
+        if (infoInt(connector, "chargingTime", 0) > 0) score += 300;
+        if (station.idTag(connector).length() > 0) score += 200;
+
+        boolean connected = connector == 1
+            ? infoBoolean(connector, "chaConnected", false)
+            : infoBoolean(connector, "ccsConnected", false);
+        if (connected) score += 100;
         return score;
     }
 
@@ -277,64 +279,44 @@ public final class ModbusServer extends Thread {
     }
 
     private int livePowerKw(int connector) throws Exception {
-        int value = methodNumber(satellite(connector),
-            new String[] { "getCurrentPower", "getPower" }, -1);
-        if (value >= 0) return Math.max(0, value);
-        value = infoNumber(connector, new String[] { "power", "currentPower" }, -1);
-        if (value >= 0) return Math.max(0, value);
-        return Math.max(0, station.powerKw(connector));
+        int power = station.powerKw(connector);
+        if (power > 0) return power;
+        int voltage = infoInt(connector, "voltage", 0);
+        int current = infoInt(connector, "electricCurrent", 0);
+        if (voltage > 0 && current > 0) {
+            long watts = (long)voltage * (long)current;
+            long kw = (watts + 500L) / 1000L;
+            return (int)Math.min(65535L, Math.max(0L, kw));
+        }
+        return 0;
     }
 
     private int liveSocPct(int connector) throws Exception {
-        String[] names = new String[] {
-            "battEnergyPct", "batteryEnergyPct", "batteryPct", "soc", "stateOfCharge"
-        };
-        int value = infoNumber(connector, names, -1);
-        if (value < 0) value = objectNumber(satellite(connector), names, -1);
-        if (value < 0) {
-            value = methodNumber(satellite(connector), new String[] {
-                "getBattEnergyPct", "getBatteryEnergyPct", "getBatteryPct", "getSoc", "getStateOfCharge"
-            }, -1);
-        }
-        return value < 0 ? 0 : clamp(value, 0, 100);
+        return clamp(infoInt(connector, "battEnergyPct", 0), 0, 100);
     }
 
     private long liveChargingTimeSeconds(int connector) throws Exception {
-        String[] names = new String[] { "chargingTime", "chargeTime", "transactionTime", "elapsedTime" };
-        int value = infoNumber(connector, names, -1);
-        if (value < 0) value = objectNumber(satellite(connector), names, -1);
-        if (value < 0) {
-            value = methodNumber(satellite(connector), new String[] {
-                "getChargingTime", "getChargeTime", "getTransactionTime", "getElapsedTime"
-            }, -1);
-        }
-        return Math.max(0L, (long)Math.max(0, value));
+        int seconds = infoInt(connector, "chargingTime", 0);
+        if (seconds > 0) return seconds;
+        Object sat = satellite(connector);
+        try {
+            Method getStartTime = findMethod(sat.getClass(), "getStartTime");
+            if (getStartTime != null) {
+                Object value = getStartTime.invoke(sat);
+                if (value instanceof Calendar) {
+                    long elapsed = (System.currentTimeMillis() - ((Calendar)value).getTimeInMillis()) / 1000L;
+                    if (elapsed > 0L) return elapsed;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return 0L;
     }
 
     private long sessionEnergyWh(int connector) throws Exception {
-        String[] currentNames = new String[] { "energy", "currentEnergy", "meterEnergy" };
-        String[] initialNames = new String[] { "initialEnergy", "startEnergy", "energyAtStart", "initialMeterEnergy" };
-
-        long current = infoNumberLong(connector, currentNames, -1L);
-        long initial = infoNumberLong(connector, initialNames, -1L);
-
-        Object sat = satellite(connector);
-        if (current < 0L) {
-            current = methodNumberLong(sat, new String[] { "getCurrentEnergy", "getEnergy" }, -1L);
-        }
-        if (initial < 0L) {
-            initial = methodNumberLong(sat,
-                new String[] { "getInitialEnergy", "getStartEnergy", "getEnergyAtStart" }, -1L);
-        }
-
-        if (current >= 0L && initial >= 0L && current >= initial) return current - initial;
-
-        // Some EVCSD revisions expose the already session-relative counter through
-        // getCurrentEnergy(), while others only expose getEnergy(). Prefer either
-        // over returning zero; cap to unsigned 32 bit for the two Modbus words.
-        if (current >= 0L) return current & 0xffffffffL;
-        try { return station.energyRaw(connector) & 0xffffffffL; }
-        catch (Throwable ignored) { return 0L; }
+        long current = infoUnsignedInt(connector, "energy", 0L);
+        long initial = infoUnsignedInt(connector, "initialEnergy", 0L);
+        if (current >= initial) return current - initial;
+        return (0x100000000L - initial) + current;
     }
 
     private Object activeTransaction(Object sat) {
@@ -346,18 +328,6 @@ public final class ModbusServer extends Thread {
         }
     }
 
-    private int infoNumber(int connector, String[] names, int fallback) throws Exception {
-        long value = infoNumberLong(connector, names, (long)fallback);
-        if (value > Integer.MAX_VALUE) return Integer.MAX_VALUE;
-        if (value < Integer.MIN_VALUE) return Integer.MIN_VALUE;
-        return (int)value;
-    }
-
-    private long infoNumberLong(int connector, String[] names, long fallback) throws Exception {
-        Object info = infoState(connector);
-        return info == null ? fallback : objectNumberLong(info, names, fallback);
-    }
-
     private Object infoState(int connector) throws Exception {
         Object sat = satellite(connector);
         Field infoField = findField(sat.getClass(), "infoState");
@@ -366,58 +336,34 @@ public final class ModbusServer extends Thread {
         return infoField.get(sat);
     }
 
-    private int objectNumber(Object owner, String[] names, int fallback) {
-        long value = objectNumberLong(owner, names, fallback);
-        if (value > Integer.MAX_VALUE) return Integer.MAX_VALUE;
-        if (value < Integer.MIN_VALUE) return Integer.MIN_VALUE;
-        return (int)value;
+    private int infoInt(int connector, String fieldName, int fallback) throws Exception {
+        Object info = infoState(connector);
+        if (info == null) return fallback;
+        Field field = findField(info.getClass(), fieldName);
+        if (field == null) return fallback;
+        field.setAccessible(true);
+        Object value = field.get(info);
+        return value instanceof Number ? ((Number)value).intValue() : fallback;
     }
 
-    private long objectNumberLong(Object owner, String[] names, long fallback) {
-        if (owner == null) return fallback;
-        for (int i = 0; i < names.length; i++) {
-            try {
-                Field f = findField(owner.getClass(), names[i]);
-                if (f == null) continue;
-                f.setAccessible(true);
-                Object value = f.get(owner);
-                if (value instanceof Number) return ((Number)value).longValue();
-            } catch (Throwable ignored) {}
-        }
-        return fallback;
+    private long infoUnsignedInt(int connector, String fieldName, long fallback) throws Exception {
+        Object info = infoState(connector);
+        if (info == null) return fallback;
+        Field field = findField(info.getClass(), fieldName);
+        if (field == null) return fallback;
+        field.setAccessible(true);
+        Object value = field.get(info);
+        return value instanceof Number ? ((Number)value).intValue() & 0xffffffffL : fallback;
     }
 
-    private int methodNumber(Object owner, String[] names, int fallback) {
-        long value = methodNumberLong(owner, names, fallback);
-        if (value > Integer.MAX_VALUE) return Integer.MAX_VALUE;
-        if (value < Integer.MIN_VALUE) return Integer.MIN_VALUE;
-        return (int)value;
-    }
-
-    private long methodNumberLong(Object owner, String[] names, long fallback) {
-        if (owner == null) return fallback;
-        for (int i = 0; i < names.length; i++) {
-            try {
-                Method m = findMethod(owner.getClass(), names[i]);
-                if (m == null) continue;
-                Object value = m.invoke(owner);
-                if (value instanceof Number) return ((Number)value).longValue();
-            } catch (Throwable ignored) {}
-        }
-        return fallback;
-    }
-
-    private boolean booleanMethod(Object owner, String[] names, boolean fallback) {
-        if (owner == null) return fallback;
-        for (int i = 0; i < names.length; i++) {
-            try {
-                Method m = findMethod(owner.getClass(), names[i]);
-                if (m == null) continue;
-                Object value = m.invoke(owner);
-                if (value instanceof Boolean) return ((Boolean)value).booleanValue();
-            } catch (Throwable ignored) {}
-        }
-        return fallback;
+    private boolean infoBoolean(int connector, String fieldName, boolean fallback) throws Exception {
+        Object info = infoState(connector);
+        if (info == null) return fallback;
+        Field field = findField(info.getClass(), fieldName);
+        if (field == null) return fallback;
+        field.setAccessible(true);
+        Object value = field.get(info);
+        return value instanceof Boolean ? ((Boolean)value).booleanValue() : fallback;
     }
 
     private void chargingScreenDiagnostic(int dc) {
@@ -432,9 +378,14 @@ public final class ModbusServer extends Thread {
             }
             System.out.println("[QC45] Modbus screen telemetry: dc=" + dc
                 + " power=" + livePowerKw(dc) + "kW"
+                + " rawPower=" + station.powerKw(dc) + "kW"
+                + " voltage=" + infoInt(dc, "voltage", 0) + "V"
+                + " current=" + infoInt(dc, "electricCurrent", 0) + "A"
                 + " limit=" + station.limitKw(dc) + "kW"
                 + " soc=" + liveSocPct(dc) + "%"
                 + " time=" + liveChargingTimeSeconds(dc) + "s"
+                + " energy=" + infoUnsignedInt(dc, "energy", 0L) + "Wh"
+                + " initialEnergy=" + infoUnsignedInt(dc, "initialEnergy", 0L) + "Wh"
                 + " sessionEnergy=" + sessionEnergyWh(dc) + "Wh"
                 + " score=" + dcActivityScore(dc));
         } catch (Throwable e) {
@@ -444,10 +395,10 @@ public final class ModbusServer extends Thread {
 
     private long energyWh(int connector) throws Exception {
         Object sat = satellite(connector);
-        long value = methodNumberLong(sat, new String[] { "getCurrentEnergy", "getEnergy" }, -1L);
-        if (value >= 0L) return value & 0xffffffffL;
-        try { return station.energyRaw(connector) & 0xffffffffL; }
-        catch (Throwable ignored) { return 0L; }
+        Method method = findMethod(sat.getClass(), "getCurrentEnergy");
+        if (method == null) return infoUnsignedInt(connector, "energy", 0L);
+        Object value = method.invoke(sat);
+        return value instanceof Number ? ((Number)value).intValue() & 0xffffffffL : 0L;
     }
 
     private int energyWord(int connector, boolean high) throws Exception {
