@@ -61,6 +61,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final Color YELLOW = new Color(255, 214, 0);
     private static final Color READY_GREEN = new Color(72, 184, 106);
     private static final Color STOP_RED = new Color(166, 30, 30);
+    private static final String SGS_LOGO_PATH = "/pt/efacec/es/evcsd/ui/sgs-logo.png";
     private static final BufferedImage SGS_LOGO = loadLogo();
 
     private static String languagef = "";
@@ -344,10 +345,22 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private static BufferedImage loadLogo() {
+        InputStream in = null;
         try {
-            return ImageIO.read(WaitingForCardChargingTimer.class.getResource("sgs-logo.png"));
+            in = WaitingForCardChargingTimer.class.getResourceAsStream(SGS_LOGO_PATH);
+            if (in == null) {
+                ClassLoader loader = WaitingForCardChargingTimer.class.getClassLoader();
+                if (loader != null) {
+                    in = loader.getResourceAsStream("pt/efacec/es/evcsd/ui/sgs-logo.png");
+                }
+            }
+            return in == null ? null : ImageIO.read(in);
         } catch (Exception ignored) {
             return null;
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
