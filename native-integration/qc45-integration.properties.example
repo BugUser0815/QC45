@@ -61,9 +61,12 @@ ksem.legacyLowWord=true
 ksem.currentScale=0.001
 
 # Native load manager
-# Normal balancing controls DC connectors only. Type2 is not manipulated.
+# One shared KSEM budget controls the active DC connector and Type2/AC.
+# When both charge, the released kW are split equally. The grid limit is a hard
+# command ceiling; targetA stays below it to retain control reserve.
 loadmanager.enabled=true
 loadmanager.targetA=32.0
+loadmanager.gridLimitA=35.0
 loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50

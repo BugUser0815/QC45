@@ -26,9 +26,9 @@ Logs aus der Zwischenversion mit `ccsV3Byte2=<Ampere>` zeigen, dass der Kona hoc
 
 Behoben durch Pre-Arm und autoritatives `commandedDcKw`. Ein höherer gemeldeter EVCSD-Wert wird sofort zurückgesetzt.
 
-### ⛔ Type2 im aktuellen nativen LoadManager aktiv mitregeln
+### ⛔ Alte Type2-Mitregelung ohne heutige Schutzmechanismen
 
-Der aktuelle Stand ist bewusst DC-only. Type2 fließt über den KSEM indirekt in den Headroom ein, wird aber nicht manipuliert.
+Die frühe Hybridfassung wurde zu Recht verworfen: Sie verwendete gemeldete statt autoritative Limits und enthielt die spätere Start-, Freigabe- und GridFailback-Absicherung nicht. Seit der AC/DC-Neufassung wird Type2 wieder aktiv geregelt, aber über ein gemeinsames 50/50-Budget, autoritative AC/DC-Sollwerte, Reduktion-vor-Erhöhung und einen gemeinsamen Schutzpfad. Die alte Implementierung darf nicht wiederhergestellt werden.
 
 ## KSEM
 

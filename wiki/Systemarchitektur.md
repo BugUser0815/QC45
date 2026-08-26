@@ -40,8 +40,8 @@ flowchart TB
 | EVCSD | Originale Stationslogik, Transaktionen, Hardwarezustände | externes Peak Shaving |
 | `qc45-integration.jar` | OCPP-Bridge, Modbus, LoadManager, GridFailback, Diagnose | Sunny-Island-Speedwire |
 | evcc | gewünschtes Ladebudget per Modbus | OCPP-Authentifizierung/Transaktionsstart |
-| LoadManager | DC-Budget abhängig von KSEM-Phasenstrom | Type2 aktiv regeln |
-| GridFailback | unabhängiger DC-Überstromschutz | normale Leistungsoptimierung |
+| LoadManager | gemeinsames, gleich priorisiertes DC/AC-Budget nach KSEM-Phasenstrom | externes Peak Shaving |
+| GridFailback | unabhängiger AC/DC-Überstrom- und Messausfallschutz | normale Leistungsoptimierung |
 | PeakShaving `lean` | virtuelles SMA eMeter für Sunny Island | QC45 direkt ansteuern |
 | SoC-Limiter | positive Entladeanforderung des Sunny Island begrenzen | Fake-Export/Ladeanforderung begrenzen |
 

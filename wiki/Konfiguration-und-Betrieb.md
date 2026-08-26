@@ -70,14 +70,17 @@ ksem.currentScale=0.001
 ```properties
 loadmanager.enabled=true
 loadmanager.targetA=32.0
+loadmanager.gridLimitA=35.0
 loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50
+loadmanager.minAcKw=5
+loadmanager.maxAcKw=22
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
 ```
 
-`minAcKw` und `maxAcKw` existieren in der bisherigen Properties-Struktur noch, der aktuelle LoadManager ist jedoch DC-only.
+DC und AC nutzen ein gemeinsames Budget. Bei parallelem Laden werden sie bis zum AC-Maximum gleich begrenzt. `gridLimitA` ist die harte konfigurierte Obergrenze; bei aktivem Failback wird für neue Freigaben zusätzlich das niedrigere `failback.reduceA` verwendet.
 
 ## GridFailback
 
@@ -86,6 +89,7 @@ failback.enabled=true
 failback.reduceA=34.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
+failback.reduceAcKw=5
 failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=38.0
@@ -94,6 +98,8 @@ failback.resetDelayMs=60000
 failback.tripOnMeterFailure=true
 failback.meterFailureMs=3000
 ```
+
+Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Erst wenn die Überschreitung `tripDelayMs` lang bestehen bleibt, werden alle Connectoren gestoppt und der Hard-Trip-Latch gesetzt.
 
 ## Logs
 

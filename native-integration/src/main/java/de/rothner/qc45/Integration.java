@@ -74,18 +74,6 @@ public final class Integration {
         }
 
         double failbackReduceA = decimal(p, "failback.reduceA", 34.0d);
-        LoadManager loadManager = loadManagerEnabled ? new LoadManager(
-            station, meter,
-            decimal(p, "loadmanager.targetA", 32.0d),
-            failbackEnabled ? failbackReduceA : Double.POSITIVE_INFINITY,
-            decimal(p, "loadmanager.hysteresisA", 0.8d),
-            integer(p, "loadmanager.minDcKw", 5),
-            integer(p, "loadmanager.maxDcKw", 50),
-            integer(p, "loadmanager.minAcKw", 5),
-            integer(p, "loadmanager.maxAcKw", 22),
-            integer(p, "loadmanager.rampUpKwPerLoop", 2),
-            integer(p, "loadmanager.intervalMs", 1000)) : null;
-
         GridFailback failback = failbackEnabled ? new GridFailback(
             station, meter,
             failbackReduceA,
@@ -100,6 +88,22 @@ public final class Integration {
             integer(p, "failback.meterFailureMs", 3000),
             integer(p, "failback.resetDelayMs", 60000)) : null;
 
+        double configuredGridLimitA = decimal(p, "loadmanager.gridLimitA", 35.0d);
+        double commandCeilingA = failbackEnabled
+            ? Math.min(configuredGridLimitA, failbackReduceA)
+            : configuredGridLimitA;
+        LoadManager loadManager = loadManagerEnabled ? new LoadManager(
+            station, meter, failback,
+            decimal(p, "loadmanager.targetA", 32.0d),
+            commandCeilingA,
+            decimal(p, "loadmanager.hysteresisA", 0.8d),
+            integer(p, "loadmanager.minDcKw", 5),
+            integer(p, "loadmanager.maxDcKw", 50),
+            integer(p, "loadmanager.minAcKw", 5),
+            integer(p, "loadmanager.maxAcKw", 22),
+            integer(p, "loadmanager.rampUpKwPerLoop", 2),
+            integer(p, "loadmanager.intervalMs", 1000)) : null;
+
         EvcsdLagMonitor lagMonitor = lagMonitorEnabled ? new EvcsdLagMonitor(
             integer(p, "evcsd.lagmonitor.intervalMs", 60000),
             integer(p, "evcsd.lagmonitor.warnMs", 250)) : null;
@@ -110,8 +114,8 @@ public final class Integration {
         ocppBridge.start();
         if (ocpp15Bridge != null) ocpp15Bridge.start();
         modbus.start();
-        if (loadManager != null) loadManager.start();
         if (failback != null) failback.start();
+        if (loadManager != null) loadManager.start();
         if (lagMonitor != null) lagMonitor.start();
         System.out.println("[QC45] native integration started");
         return integration;
@@ -119,8 +123,8 @@ public final class Integration {
 
     public void stop() {
         try { if (lagMonitor != null) lagMonitor.shutdown(); } catch (Throwable ignored) {}
-        try { if (failback != null) failback.shutdown(); } catch (Throwable ignored) {}
         try { if (loadManager != null) loadManager.shutdown(); } catch (Throwable ignored) {}
+        try { if (failback != null) failback.shutdown(); } catch (Throwable ignored) {}
         try { if (ocpp15Bridge != null) ocpp15Bridge.shutdown(); } catch (Throwable ignored) {}
         try { ocppBridge.shutdown(); } catch (Throwable ignored) {}
         try { modbus.shutdown(); } catch (Throwable ignored) {}

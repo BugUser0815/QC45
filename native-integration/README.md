@@ -15,7 +15,9 @@ qc45-integration.jar
    |-- ReflectionQC45 -> live CentralModule / SatelliteModule / Configuration
    |-- OcppClient      -> Boot, Heartbeat, Status, transactions, MeterValues,
    |                      RemoteStartTransaction, RemoteStopTransaction
-   `-- ModbusServer    -> evcc power control
+   |-- ModbusServer    -> evcc power control
+   |-- LoadManager     -> equal-priority shared DC/AC KSEM budget
+   `-- GridFailback    -> independent DC/AC grid-limit protection
 
 Modbus TCP registers used by evcc and the local charging screen:
   0   station power [kW]
@@ -63,7 +65,7 @@ Output:
 target/qc45-integration-0.1.0.jar
 ```
 
-The project targets Java 7 and has no runtime dependencies outside the servlet API already provided by Tomcat.
+The project targets Java 7 and has no runtime dependencies outside the servlet API already provided by Tomcat. The pure budget allocator is covered by unit tests during the Maven build.
 
 ## Install on QC45
 

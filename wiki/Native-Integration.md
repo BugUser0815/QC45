@@ -40,8 +40,8 @@ sequenceDiagram
 | `ModbusServer` | Multi-Client Modbus/TCP, Standardport 1502 |
 | `OcppBridgeClient` | OCPP 1.6 JSON/WSS zum Backend |
 | `Ocpp15BridgeServer` | lokaler OCPP-1.5-SOAP-zu-1.6-Bridge-Endpunkt |
-| `LoadManager` | DC-Leistungsregelung nach KSEM-Phasenstrom |
-| `GridFailback` | unabhängige Schutzebene |
+| `LoadManager` | gemeinsames, gleich priorisiertes DC/AC-Budget nach KSEM-Phasenstrom |
+| `GridFailback` | unabhängige AC/DC-Schutzebene am Netzlimit |
 | `EvcsdLagMonitor` | EVCSD-Executor-Watchdog |
 
 ## Reflection statt Firmware-Patch
