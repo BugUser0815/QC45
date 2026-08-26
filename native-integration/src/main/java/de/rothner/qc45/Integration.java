@@ -102,7 +102,9 @@ public final class Integration {
             integer(p, "loadmanager.minAcKw", 5),
             integer(p, "loadmanager.maxAcKw", 22),
             integer(p, "loadmanager.rampUpKwPerLoop", 2),
-            integer(p, "loadmanager.intervalMs", 1000)) : null;
+            integer(p, "loadmanager.intervalMs", 1000),
+            integer(p, "loadmanager.demandStableMs", 5000),
+            integer(p, "loadmanager.demandReserveKw", 2)) : null;
 
         EvcsdLagMonitor lagMonitor = lagMonitorEnabled ? new EvcsdLagMonitor(
             integer(p, "evcsd.lagmonitor.intervalMs", 60000),

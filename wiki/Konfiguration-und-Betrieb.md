@@ -78,9 +78,11 @@ loadmanager.minAcKw=5
 loadmanager.maxAcKw=22
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
+loadmanager.demandStableMs=5000
+loadmanager.demandReserveKw=2
 ```
 
-DC und AC nutzen ein gemeinsames Budget. Bei parallelem Laden werden sie bis zum AC-Maximum gleich begrenzt. `gridLimitA` ist die harte konfigurierte Obergrenze; bei aktivem Failback wird für neue Freigaben zusätzlich das niedrigere `failback.reduceA` verwendet.
+DC und AC nutzen ein gemeinsames Budget. Bei parallelem Laden erhalten sie zunächst denselben Anteil. Wird ein Anteil fünf Sekunden stabil nicht genutzt, kann der andere Ausgang ihn übernehmen; 2 kW Aufwachreserve bleiben am bedarfsgedeckelten Ausgang. `gridLimitA` ist die harte konfigurierte Obergrenze; bei aktivem Failback wird für neue Freigaben zusätzlich das niedrigere `failback.reduceA` verwendet.
 
 ## GridFailback
 

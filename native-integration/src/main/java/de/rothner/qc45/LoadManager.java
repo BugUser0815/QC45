@@ -20,6 +20,10 @@ public final class LoadManager extends Thread {
     private final int maxAcKw;
     private final int rampUpKwPerLoop;
     private final int intervalMs;
+    private final long demandStableMs;
+    private final int demandReserveKw;
+    private final DemandTracker dcDemand;
+    private final DemandTracker acDemand;
 
     private volatile boolean running = true;
     private boolean prevDcActive;
@@ -34,7 +38,8 @@ public final class LoadManager extends Thread {
                        double targetA, double commandCeilingA, double hysteresisA,
                        int minDcKw, int maxDcKw,
                        int minAcKw, int maxAcKw,
-                       int rampUpKwPerLoop, int intervalMs) {
+                       int rampUpKwPerLoop, int intervalMs,
+                       long demandStableMs, int demandReserveKw) {
         super("QC45-LoadManager");
         setDaemon(true);
         if (targetA >= commandCeilingA) {
@@ -52,6 +57,10 @@ public final class LoadManager extends Thread {
         this.maxAcKw = maxAcKw;
         this.rampUpKwPerLoop = rampUpKwPerLoop;
         this.intervalMs = intervalMs;
+        this.demandStableMs = Math.max(0L, demandStableMs);
+        this.demandReserveKw = Math.max(1, demandReserveKw);
+        this.dcDemand = new DemandTracker(this.demandStableMs, this.demandReserveKw);
+        this.acDemand = new DemandTracker(this.demandStableMs, this.demandReserveKw);
         this.commandedDcKw = minDcKw;
         this.commandedAcKw = minAcKw;
     }
@@ -64,7 +73,8 @@ public final class LoadManager extends Thread {
     public void run() {
         System.out.println("[QC45] LoadManager started AC+DC target=" + one(targetA)
             + "A ceiling=" + one(commandCeilingA) + "A priority=equal ramp="
-            + rampUpKwPerLoop + "kW/loop");
+            + rampUpKwPerLoop + "kW/loop demandStable=" + this.demandStableMs
+            + "ms demandReserve=" + this.demandReserveKw + "kW");
 
         try {
             KsemClient.Currents startupCurrents = meter.readCurrents();
@@ -90,6 +100,7 @@ public final class LoadManager extends Thread {
                 Active active = detectActive();
 
                 if (failback != null && failback.isChargingBlocked()) {
+                    resetDemandTracking();
                     commandAllZero("grid safety block");
                     rememberActive(active);
                     sleepLoop();
@@ -98,6 +109,7 @@ public final class LoadManager extends Thread {
 
                 // Check the ceiling before applying even a session-start minimum.
                 if (criticalA >= commandCeilingA) {
+                    resetDemandTracking();
                     commandActive(active, 0, 0);
                     rememberActive(active);
                     System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
@@ -110,10 +122,12 @@ public final class LoadManager extends Thread {
                     && (!prevDcActive || active.dcConnector != prevDcConnector);
                 boolean newAc = active.ac && !prevAcActive;
                 if (newDc) {
+                    dcDemand.reset();
                     commandedDcKw = minDcKw;
                     setLimitNative(active.dcConnector, commandedDcKw);
                 }
                 if (newAc) {
+                    acDemand.reset();
                     commandedAcKw = minAcKw;
                     setLimitNative(3, commandedAcKw);
                 }
@@ -125,10 +139,12 @@ public final class LoadManager extends Thread {
                 }
 
                 if (!active.dc && prevDcActive) {
+                    dcDemand.reset();
                     commandedDcKw = minDcKw;
                     if (prevDcConnector > 0) setLimitNative(prevDcConnector, commandedDcKw);
                 }
                 if (!active.ac && prevAcActive) {
+                    acDemand.reset();
                     commandedAcKw = minAcKw;
                     setLimitNative(3, commandedAcKw);
                 }
@@ -136,6 +152,7 @@ public final class LoadManager extends Thread {
                 rememberActive(active);
 
                 if (!active.dc && !active.ac) {
+                    resetDemandTracking();
                     commandedDcKw = minDcKw;
                     commandedAcKw = minAcKw;
                     if (needsIdlePreArm()) {
@@ -155,13 +172,25 @@ public final class LoadManager extends Thread {
                 int actualDcKw = active.dc ? station.powerKw(active.dcConnector) : 0;
                 int actualAcKw = active.ac ? station.powerKw(3) : 0;
 
-                LoadAllocator.Targets targets = LoadAllocator.plan(
+                LoadAllocator.Targets fairTargets = LoadAllocator.plan(
                     active.dc, active.ac,
                     actualDcKw, actualAcKw,
                     commandedDcKw, commandedAcKw,
                     criticalA, targetA, commandCeilingA, hysteresisA,
                     minDcKw, maxDcKw, minAcKw, maxAcKw,
                     rampUpKwPerLoop);
+
+                dcDemand.update(now, active.dc, actualDcKw, commandedDcKw,
+                    fairTargets.dcKw, minDcKw);
+                acDemand.update(now, active.ac, actualAcKw, commandedAcKw,
+                    fairTargets.acKw, minAcKw);
+
+                LoadAllocator.Targets targets = LoadAllocator.redistributeForDemand(
+                    fairTargets, actualDcKw, actualAcKw,
+                    commandedDcKw, commandedAcKw,
+                    dcDemand.isDemandLimited(), acDemand.isDemandLimited(),
+                    minDcKw, maxDcKw, minAcKw, maxAcKw,
+                    demandReserveKw, rampUpKwPerLoop);
 
                 int oldDcKw = commandedDcKw;
                 int oldAcKw = commandedAcKw;
@@ -173,7 +202,9 @@ public final class LoadManager extends Thread {
                         + "A DC=" + (active.dc ? commandedDcKw + "kW" : "-")
                         + " AC=" + (active.ac ? commandedAcKw + "kW" : "-")
                         + " actualDC=" + actualDcKw + "kW actualAC=" + actualAcKw
-                        + "kW priority=equal");
+                        + "kW priority=equal demandTransfer="
+                        + (targets.dcKw != fairTargets.dcKw
+                            || targets.acKw != fairTargets.acKw));
                 }
             } catch (Throwable e) {
                 if (now - lastErrorLog >= 5000L) {
@@ -216,6 +247,17 @@ public final class LoadManager extends Thread {
     private void commandActive(Active active, int targetDcKw, int targetAcKw) throws Exception {
         targetDcKw = active.dc ? normalize(targetDcKw, minDcKw, maxDcKw) : commandedDcKw;
         targetAcKw = active.ac ? normalize(targetAcKw, minAcKw, maxAcKw) : commandedAcKw;
+
+        // Demand transfer and a return to equal sharing use the same proven
+        // per-loop upward ramp as normal budget growth. Reductions stay immediate.
+        if (active.dc && commandedDcKw > 0 && targetDcKw > commandedDcKw) {
+            targetDcKw = Math.min(targetDcKw,
+                commandedDcKw + Math.max(1, rampUpKwPerLoop));
+        }
+        if (active.ac && commandedAcKw > 0 && targetAcKw > commandedAcKw) {
+            targetAcKw = Math.min(targetAcKw,
+                commandedAcKw + Math.max(1, rampUpKwPerLoop));
+        }
 
         if (active.dc && targetDcKw < commandedDcKw) {
             setLimitNative(active.dcConnector, targetDcKw);
@@ -297,6 +339,11 @@ public final class LoadManager extends Thread {
         prevDcActive = active.dc;
         prevAcActive = active.ac;
         prevDcConnector = active.dc ? active.dcConnector : 0;
+    }
+
+    private void resetDemandTracking() {
+        dcDemand.reset();
+        acDemand.reset();
     }
 
     private void sleepLoop() {

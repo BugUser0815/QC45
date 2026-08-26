@@ -16,7 +16,7 @@ qc45-integration.jar
    |-- OcppClient      -> Boot, Heartbeat, Status, transactions, MeterValues,
    |                      RemoteStartTransaction, RemoteStopTransaction
    |-- ModbusServer    -> evcc power control
-   |-- LoadManager     -> equal-priority shared DC/AC KSEM budget
+   |-- LoadManager     -> demand-aware, equal-priority shared DC/AC KSEM budget
    `-- GridFailback    -> independent DC/AC grid-limit protection
 
 Modbus TCP registers used by evcc and the local charging screen:

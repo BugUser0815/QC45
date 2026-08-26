@@ -84,4 +84,64 @@ public final class LoadAllocatorTest {
         assertEquals(0, t.dcKw);
         assertEquals(18, t.acKw);
     }
+
+    @Test
+    public void unusedAcEntitlementMovesToHungryDc() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 15, 11, 15, 15, false, true,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(17, t.dcKw);
+        assertEquals(13, t.acKw);
+    }
+
+    @Test
+    public void unusedDcEntitlementMovesToHungryAc() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 8, 15, 15, 15, true, false,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(13, t.dcKw);
+        assertEquals(17, t.acKw);
+    }
+
+    @Test
+    public void transferWaitsUntilOtherConnectorUsesFairShare() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 10, 11, 15, 15, false, true,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(15, t.dcKw);
+        assertEquals(15, t.acKw);
+    }
+
+    @Test
+    public void twoDemandLimitedVehiclesKeepFairLimits() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 10, 10, 15, 15, true, true,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(15, t.dcKw);
+        assertEquals(15, t.acKw);
+    }
+
+    @Test
+    public void transferCannotCrossDestinationMaximum() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(25, 22);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 10, 22, 25, 22, true, false,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(25, t.dcKw);
+        assertEquals(22, t.acKw);
+    }
+
+    @Test
+    public void demandTransferContinuesAtConfiguredRamp() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets t = LoadAllocator.redistributeForDemand(
+            fair, 17, 5, 17, 13, false, true,
+            5, 50, 5, 22, 2, 2);
+        assertEquals(19, t.dcKw);
+        assertEquals(11, t.acKw);
+    }
 }

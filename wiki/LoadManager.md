@@ -14,6 +14,8 @@ Der native LoadManager regelt **den aktiven DC-Ausgang und Type2/AC gemeinsam** 
 | AC Minimum / Maximum | `5 / 22 kW` |
 | Ramp-up | `2 kW / Regelzyklus` |
 | Regelintervall | `1000 ms` |
+| stabile Bedarfserkennung | `5000 ms` |
+| Aufwachreserve | `2 kW` |
 
 Die wirksame Freigabegrenze ist das Minimum aus `loadmanager.gridLimitA` und `failback.reduceA`. Dadurch bleibt vor dem 35-A-Netzlimit eine zusätzliche Reserve.
 
@@ -31,14 +33,31 @@ Aus Istleistung und Strom-Headroom wird zuerst **ein Gesamtbudget** ermittelt. S
 
 Ein ungerades Kilowatt bleibt als neutrale Reserve, solange beide Ausgänge noch gleich hoch begrenzt werden können. Erst wenn AC sein Hardwaremaximum von 22 kW erreicht, erhält DC den verbleibenden Anteil. Reicht das Budget nicht für beide technischen Mindestwerte, werden **beide** Ausgänge auf 0 kW pausiert; keiner erhält stillschweigend Vorrang.
 
+## Bedarfsgerechte Umverteilung
+
+50/50 bleibt der faire Anspruch beider Fahrzeuge. Ein Anteil wird erst umverteilt, wenn er mindestens `demandStableMs` lang deutlich nicht abgerufen wird und das andere Fahrzeug seinen fairen Anteil tatsächlich nutzt.
+
+Beispiel bei 30 kW Gesamtbudget:
+
+| Zustand | DC | AC |
+|---|---:|---:|
+| fairer Anspruch | 15 kW | 15 kW |
+| gemessen | 15 kW | 11 kW |
+| nach 5 s stabil | 17 kW | 13 kW |
+
+Die 13-kW-AC-Freigabe besteht dabei aus 11 kW gemessenem Bedarf plus 2 kW Aufwachreserve.
+
+Das Gesamtbudget bleibt unverändert bei 30 kW. Nimmt das AC-Fahrzeug anschließend mindestens einen Teil seiner Aufwachreserve auf, wird zuerst DC wieder auf 15 kW reduziert und danach AC auf 15 kW freigegeben. Dasselbe Verfahren funktioniert spiegelbildlich für ungenutzten DC-Anteil zugunsten von AC. Sind beide Fahrzeuge bedarfsgedeckelt oder nutzt der Empfänger seinen fairen Anteil noch nicht, findet keine Umverteilung statt.
+
 ## Regel- und Schutzprinzip
 
 1. KSEM liefert L1/L2/L3; maßgeblich ist die höchste Phase.
 2. `targetA - maxPhaseA` bestimmt den Headroom.
 3. Erhöhungen sind auf `rampUpKwPerLoop` begrenzt, Reduktionen erfolgen ohne Rampe.
 4. Bereits freigegebene, vom Fahrzeug aber noch nicht abgerufene Leistung wird als mögliche Zusatzlast mitgerechnet.
-5. Beim Umschichten wird immer zuerst der bisher höher begrenzte Ausgang reduziert und erst danach der andere erhöht.
-6. Ab der wirksamen Freigabegrenze werden alle aktiven Budgets sofort 0 kW.
+5. Bedarfstransfer verändert nur die Verteilung, niemals das sichere Gesamtbudget.
+6. Beim Umschichten wird immer zuerst der bisher höher begrenzte Ausgang reduziert und erst danach der andere erhöht.
+7. Ab der wirksamen Freigabegrenze werden alle aktiven Budgets sofort 0 kW.
 
 Für die dreiphasige AC22/DC-Leistungsumrechnung gilt:
 

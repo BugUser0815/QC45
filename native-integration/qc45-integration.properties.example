@@ -74,6 +74,10 @@ loadmanager.minAcKw=5
 loadmanager.maxAcKw=22
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
+# Reassign a stably unused fair share to the other connector. The source keeps
+# this reserve so rising vehicle demand is detected and equal sharing restored.
+loadmanager.demandStableMs=5000
+loadmanager.demandReserveKw=2
 
 # Independent grid failback
 failback.enabled=true

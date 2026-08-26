@@ -110,6 +110,43 @@ final class LoadAllocator {
         return new Targets(dcKw, acKw);
     }
 
+    static Targets redistributeForDemand(Targets fair,
+                                         int actualDcKw, int actualAcKw,
+                                         int commandedDcKw, int commandedAcKw,
+                                         boolean dcDemandLimited, boolean acDemandLimited,
+                                         int minDcKw, int maxDcKw,
+                                         int minAcKw, int maxAcKw,
+                                         int demandReserveKw, int transferStepKw) {
+        if (fair.dcKw == 0 || fair.acKw == 0 || dcDemandLimited == acDemandLimited) {
+            return fair;
+        }
+
+        demandReserveKw = Math.max(1, demandReserveKw);
+        transferStepKw = Math.max(1, transferStepKw);
+
+        if (acDemandLimited && actualDcKw >= Math.max(minDcKw, fair.dcKw - 1)) {
+            int retainedAcKw = clamp(actualAcKw + demandReserveKw, minAcKw, fair.acKw);
+            int transferableKw = fair.acKw - retainedAcKw;
+            int proposedDcKw = Math.min(maxDcKw, fair.dcKw + transferableKw);
+            int targetDcKw = Math.min(proposedDcKw,
+                Math.max(fair.dcKw, commandedDcKw) + transferStepKw);
+            int acceptedKw = targetDcKw - fair.dcKw;
+            return new Targets(targetDcKw, fair.acKw - acceptedKw);
+        }
+
+        if (dcDemandLimited && actualAcKw >= Math.max(minAcKw, fair.acKw - 1)) {
+            int retainedDcKw = clamp(actualDcKw + demandReserveKw, minDcKw, fair.dcKw);
+            int transferableKw = fair.dcKw - retainedDcKw;
+            int proposedAcKw = Math.min(maxAcKw, fair.acKw + transferableKw);
+            int targetAcKw = Math.min(proposedAcKw,
+                Math.max(fair.acKw, commandedAcKw) + transferStepKw);
+            int acceptedKw = targetAcKw - fair.acKw;
+            return new Targets(fair.dcKw - acceptedKw, targetAcKw);
+        }
+
+        return fair;
+    }
+
     private static double projectedCurrentA(double measuredCriticalA, Targets targets,
                                             int actualDcKw, int actualAcKw) {
         int unreachedDcKw = Math.max(0, targets.dcKw - actualDcKw);
