@@ -429,6 +429,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private String headerStatus(LoadBalancingTelemetry data) {
         if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM WARTET";
         if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
@@ -515,6 +516,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
                              int gridKw, int stageCapKw, int effectiveKw,
                              LoadBalancingTelemetry data) {
         if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION PRÜFEN";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ AKTIV";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM-MESSUNG FEHLT";
         if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
@@ -588,6 +590,8 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private String loadBalancingExplanation(LoadBalancingTelemetry data) {
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION))
+            return "Sicherheitskonfiguration ungültig: AC und DC bleiben auf 0 kW.";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK))
             return "Netzschutz aktiv: AC und DC sind auf 0 kW begrenzt.";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER))

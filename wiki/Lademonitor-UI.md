@@ -57,6 +57,9 @@ Sessionenergie, ladeartspezifische Zeit und Pufferbatterie-SoC sichtbar. Die
 Fußzeile unterscheidet faire gemeinsame Zuteilung, bedarfsgerechte Umverteilung
 und Sicherheitszustände. Der rote Bereich ist kein lokaler Stop-Taster, sondern
 trägt ausschließlich den Hinweis `Zum Beenden Karte vorhalten oder App benutzen.`
+Bei einer ungültigen Sicherheitskonfiguration zeigt die Kopfzeile
+`KONFIGURATION`; AC und DC bleiben dabei sichtbar auf 0 kW begrenzt, während
+die OCPP-Kommunikation weiterlaufen kann.
 
 Die QC45-Werte stammen aus einer FC03-Abfrage des lokalen Modbus-Servers auf
 `127.0.0.1:1502`:
@@ -93,5 +96,6 @@ Die proprietäre Basis-JAR wird nicht im Repository gespeichert. Siehe auch
 [Modbus TCP](Modbus-TCP) und [Build & Installation](Build-und-Installation).
 
 `ui-patch/test.sh` baut zusätzlich ein Java-7-Testoverlay und rendert Auswahl,
-Parallelauswahl, `AC + DC bedarfsgerecht` sowie `GridFailback` als echte
-640×480-PNG-Dateien. Dieser Test läuft auch in GitHub Actions.
+Parallelauswahl, `AC + DC bedarfsgerecht`, `GridFailback` sowie die
+Konfigurationssperre als echte 640×480-PNG-Dateien. Dieser Test läuft auch in
+GitHub Actions.

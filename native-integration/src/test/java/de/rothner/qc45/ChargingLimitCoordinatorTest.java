@@ -125,6 +125,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator.Snapshot blocked = limits.snapshot();
         assertTrue(blocked.blocked);
         assertTrue(blocked.startupBlocked);
+        assertTrue(!blocked.configurationBlocked);
         assertEquals(50, blocked.requestedDcKw);
         assertEquals(17, blocked.gridDcKw);
         assertEquals(0, blocked.effectiveDcKw);
@@ -138,6 +139,12 @@ public final class ChargingLimitCoordinatorTest {
         assertTrue(active.stageLimited);
         assertEquals(15, active.effectiveDcKw);
         assertEquals(12, active.effectiveAcKw);
+
+        limits.setBlocked(ChargingLimitCoordinator.CONFIGURATION, true);
+        ChargingLimitCoordinator.Snapshot configurationBlocked = limits.snapshot();
+        assertTrue(configurationBlocked.configurationBlocked);
+        assertEquals(0, configurationBlocked.effectiveDcKw);
+        assertEquals(0, configurationBlocked.effectiveAcKw);
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {

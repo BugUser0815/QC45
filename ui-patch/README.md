@@ -73,7 +73,7 @@ und den aktiven DC-Ausgang gleichzeitig:
 - dauerhafte evcc-Anforderung
 - netzsichere LoadManager-Zuteilung (`NETZ`)
 - Schutzkappe und tatsächlich wirksame `FREIGABE`
-- aktive Sessions, Bedarfstransfer sowie Start-, KSEM- und Failback-Sperren
+- aktive Sessions, Bedarfstransfer sowie Start-, KSEM-, Failback- und Konfigurationssperren
 - DC-Fahrzeug-SoC, AC/DC-Sessionenergie und Ladezeiten
 
 `FREIGABE` ist damit sichtbar das Minimum aus evcc-Wunsch, LoadManager-Zuteilung
@@ -89,7 +89,7 @@ aktualisiert werden.
 Der Status in der Kopfzeile folgt dabei bewusst der tatsächlich gemessenen
 Ladeleistung und nicht nur dem EVCSD-Sitzungszustand. Sie unterscheidet
 `AC LÄDT`, `DC LÄDT`, `AC + DC LÄDT`, `LADEBEREIT`, `KSEM WARTET`,
-`NETZSCHUTZ` und `SICHERER START`.
+`NETZSCHUTZ`, `KONFIGURATION` und `SICHERER START`.
 
 Nur der Pufferbatterie-SoC kommt weiterhin aus evcc. Standardmäßig wird
 `http://10.0.0.179:7070/api/state?jq=.battery.soc` verwendet.
@@ -126,7 +126,7 @@ insbesondere das SGS-Logo der Bereitschaftsseite, werden ebenfalls in die JAR
 siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
 
 Ein eigenständiger Headless-Test kompiliert das komplette Overlay gegen
-minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert vier
+minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert fünf
 640×480-Vorschaubilder für Auswahl, Parallelauswahl, AC/DC-Laden und Failback:
 
 ```bash

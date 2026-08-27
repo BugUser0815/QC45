@@ -54,6 +54,7 @@ java -Djava.awt.headless=true -cp "$patched_jar:$runner_classes" \
     pt.efacec.es.evcsd.ui.UiPatchTest \
     "$preview_dir/ac-dc-load-balancing.png" \
     "$preview_dir/ac-dc-failback.png" \
+    "$preview_dir/ac-dc-configuration-block.png" \
     "$preview_dir/connector-selection.png" \
     "$preview_dir/parallel-connector-selection.png"
 
@@ -69,5 +70,6 @@ fi
 echo "Java class major: $major"
 echo "$preview_dir/ac-dc-load-balancing.png"
 echo "$preview_dir/ac-dc-failback.png"
+echo "$preview_dir/ac-dc-configuration-block.png"
 echo "$preview_dir/connector-selection.png"
 echo "$preview_dir/parallel-connector-selection.png"

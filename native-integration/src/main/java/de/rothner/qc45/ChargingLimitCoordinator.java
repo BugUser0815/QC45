@@ -15,6 +15,7 @@ public final class ChargingLimitCoordinator {
     public static final String STARTUP = "startup";
     public static final String FAILBACK = "failback";
     public static final String LOAD_METER = "loadmanager-meter";
+    public static final String CONFIGURATION = "configuration";
     public static final String SHUTDOWN = "shutdown";
 
     private final ChargingLimitIo io;
@@ -167,6 +168,7 @@ public final class ChargingLimitCoordinator {
             blockers.contains(STARTUP),
             blockers.contains(FAILBACK),
             blockers.contains(LOAD_METER),
+            blockers.contains(CONFIGURATION),
             blockers.contains(SHUTDOWN),
             demandTransfer && blockers.isEmpty(),
             stageDcCapKw < maxDcKw || stageAcCapKw < maxAcKw);
@@ -268,6 +270,7 @@ public final class ChargingLimitCoordinator {
         public final boolean startupBlocked;
         public final boolean failbackBlocked;
         public final boolean loadMeterBlocked;
+        public final boolean configurationBlocked;
         public final boolean shutdownBlocked;
         public final boolean demandTransfer;
         public final boolean stageLimited;
@@ -279,8 +282,8 @@ public final class ChargingLimitCoordinator {
                          int activeDcConnector, boolean acActive,
                          boolean blocked, boolean startupBlocked,
                          boolean failbackBlocked, boolean loadMeterBlocked,
-                         boolean shutdownBlocked, boolean demandTransfer,
-                         boolean stageLimited) {
+                         boolean configurationBlocked, boolean shutdownBlocked,
+                         boolean demandTransfer, boolean stageLimited) {
             this.requestedDcKw = requestedDcKw;
             this.requestedAcKw = requestedAcKw;
             this.gridDcKw = gridDcKw;
@@ -295,6 +298,7 @@ public final class ChargingLimitCoordinator {
             this.startupBlocked = startupBlocked;
             this.failbackBlocked = failbackBlocked;
             this.loadMeterBlocked = loadMeterBlocked;
+            this.configurationBlocked = configurationBlocked;
             this.shutdownBlocked = shutdownBlocked;
             this.demandTransfer = demandTransfer;
             this.stageLimited = stageLimited;

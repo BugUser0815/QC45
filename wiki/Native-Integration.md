@@ -26,14 +26,21 @@ sequenceDiagram
   B->>I: Integration.start()
   I->>S: alle Connectoren 0 kW + Guard starten
   I->>I: Konfiguration validieren
-  I->>S: KSEM-Failback und LoadManager starten
+  alt Sicherheitskonfiguration gültig
+    I->>S: KSEM-Failback und LoadManager starten
+  else Sicherheitskonfiguration ungültig
+    I->>S: Konfigurationssperre bei 0 kW halten
+  end
   I->>X: CCS V3, OCPP, Modbus, Diagnose starten
 ```
 
-Fehlt die Konfiguration oder ist sie ungültig, bleibt der bereits gestartete
+Ist nur die Sicherheitskonfiguration ungültig, bleibt der bereits gestartete
 `ChargingLimitGuard` im **Degraded Safe Mode** aktiv und setzt alle drei
-Connectoren weiterhin auf 0 kW. OCPP- oder CCS-Fehler können den Netzschutz
-nicht mehr am Start hindern.
+Connectoren weiterhin auf 0 kW. OCPP, Modbus und Diagnose starten trotzdem;
+dadurch bleibt der Ladepunkt im Backend erreichbar und der lokale Bildschirm
+zeigt die Konfigurationssperre. Fehlt dagegen die gesamte Properties-Datei,
+bleiben auch die daraus konfigurierten Zusatzdienste aus. OCPP- oder CCS-Fehler
+können den Netzschutz nicht am Start hindern.
 
 ## Von `Integration` gestartete Komponenten
 

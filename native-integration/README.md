@@ -69,7 +69,8 @@ are applied atomically and all reductions are written before any increase.
 The local charging screen prefers the coherent, versioned AC/DC block 126-145
 and falls back to the legacy DC block 120-125. It can therefore display actual,
 evcc-requested, grid-allocated and effective power for AC and DC at the same
-time, including failback and demand-transfer state. The implementation is tied
+time, including failback, invalid-safety-configuration and demand-transfer
+state. The implementation is tied
 to fields and methods verified against the original QC45 EVCSD firmware:
 `SatelliteInfo.power`, `voltage`, `electricCurrent`, `battEnergyPct`,
 `chargingTime`, `energy`, `initialEnergy`, plus

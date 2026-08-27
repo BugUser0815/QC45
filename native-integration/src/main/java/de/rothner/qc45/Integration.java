@@ -15,6 +15,7 @@ public final class Integration {
     private static final double MAX_CONTROL_TARGET_A = 32.0d;
     private static final double MAX_REDUCE_THRESHOLD_A = 34.0d;
     private static final double MAX_INSTANT_TRIP_A = 38.0d;
+    private static final double MIN_FAILBACK_GAP_A = 0.1d;
     private static final double KSEM_CURRENT_SCALE = 0.001d;
     private static final int MAX_KSEM_TIMEOUT_MS = 1000;
     private static final int MAX_FAILBACK_INTERVAL_MS = 100;
@@ -113,12 +114,28 @@ public final class Integration {
 
         LoadManager loadManager = null;
         GridFailback failback = null;
+        boolean safetyReady = true;
         try {
             boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
             boolean failbackEnabled = bool(p, "failback.enabled", true);
-            double failbackReduceA = positiveDecimal(p, "failback.reduceA", 34.0d);
-            double failbackTripA = positiveDecimal(p, "failback.tripA", 35.0d);
-            double failbackInstantTripA = positiveDecimal(p, "failback.instantTripA", 38.0d);
+            double configuredFailbackReduceA = positiveDecimal(p, "failback.reduceA", 34.0d);
+            double configuredFailbackTripA = positiveDecimal(p, "failback.tripA", 35.0d);
+            double configuredFailbackInstantTripA = positiveDecimal(p, "failback.instantTripA", 38.0d);
+            double[] failbackThresholds = conservativeFailbackThresholds(
+                configuredFailbackReduceA, configuredFailbackTripA,
+                configuredFailbackInstantTripA);
+            double failbackReduceA = failbackThresholds[0];
+            double failbackTripA = failbackThresholds[1];
+            double failbackInstantTripA = failbackThresholds[2];
+            if (failbackReduceA != configuredFailbackReduceA
+                    || failbackTripA != configuredFailbackTripA
+                    || failbackInstantTripA != configuredFailbackInstantTripA) {
+                System.err.println("[QC45] failback threshold compatibility migration: configured "
+                    + thresholdValues(configuredFailbackReduceA, configuredFailbackTripA,
+                        configuredFailbackInstantTripA)
+                    + " -> effective " + thresholdValues(failbackReduceA, failbackTripA,
+                        failbackInstantTripA));
+            }
             long failbackReduceDelayMs = nonNegativeInt(p, "failback.reduceDelayMs", 500);
             long failbackTripDelayMs = nonNegativeInt(p, "failback.tripDelayMs", 250);
             int failbackIntervalMs = positiveInt(p, "failback.intervalMs", 100);
@@ -127,14 +144,6 @@ public final class Integration {
             boolean autoResetHardTrip = bool(p, "failback.autoResetHardTrip", false);
             long resetDelayMs = nonNegativeInt(p, "failback.resetDelayMs", 60000);
 
-            if (!(failbackReduceA < failbackTripA && failbackTripA < failbackInstantTripA)) {
-                throw new IllegalArgumentException("failback thresholds must satisfy reduceA < tripA < instantTripA");
-            }
-            if (failbackReduceA > MAX_REDUCE_THRESHOLD_A
-                    || failbackTripA > MAX_GRID_LIMIT_A
-                    || failbackInstantTripA > MAX_INSTANT_TRIP_A) {
-                throw new IllegalArgumentException("failback thresholds may only be made more conservative than 34/35/38A");
-            }
             if (failbackReduceDelayMs > 500L || failbackTripDelayMs > 250L
                     || failbackIntervalMs > MAX_FAILBACK_INTERVAL_MS) {
                 throw new IllegalArgumentException("failback timing may only be made faster than 500/250/100ms");
@@ -181,9 +190,6 @@ public final class Integration {
                 if (configuredGridLimitA > MAX_GRID_LIMIT_A) {
                     throw new IllegalArgumentException("loadmanager.gridLimitA must not exceed 35A");
                 }
-                if (failbackEnabled && configuredGridLimitA > failbackTripA) {
-                    throw new IllegalArgumentException("loadmanager.gridLimitA must not exceed failback.tripA");
-                }
                 double commandCeilingA = failbackEnabled
                     ? Math.min(configuredGridLimitA, failbackReduceA)
                     : configuredGridLimitA;
@@ -215,11 +221,20 @@ public final class Integration {
                 System.err.println("[QC45] LoadManager disabled: startup safety block remains active; charging stays at 0kW");
             }
         } catch (Throwable e) {
-            return degraded(limits, limitGuard, "safety configuration failed", e);
+            // OCPP and the local diagnostic interfaces must remain available
+            // when only the load-safety configuration is invalid. The
+            // coordinator's startup blocker stays latched, so neither OCPP,
+            // Modbus nor a legacy EVCSD path can release charging power.
+            safetyReady = false;
+            loadManager = null;
+            failback = null;
+            enterDegradedSafety(limits, "safety configuration failed", e);
         }
 
-        if (failback != null) failback.start();
-        if (loadManager != null) loadManager.start();
+        if (safetyReady) {
+            if (failback != null) failback.start();
+            if (loadManager != null) loadManager.start();
+        }
 
         RemoteStartAuthorizationFix authFix = null;
         try { authFix = RemoteStartAuthorizationFix.start(station); }
@@ -297,19 +312,75 @@ public final class Integration {
         Integration integration = new Integration(
             limits, limitGuard, modbus, ocppBridge, ocpp15Bridge,
             loadManager, failback, lagMonitor, authFix);
-        System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
+        if (safetyReady) {
+            System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
+        } else {
+            System.err.println("[QC45] native integration communications started in DEGRADED SAFE MODE; "
+                + "OCPP/Modbus remain available, charging remains blocked at 0kW");
+        }
         return integration;
     }
 
     private static Integration degraded(ChargingLimitCoordinator limits,
                                         ChargingLimitGuard guard,
                                         String message, Throwable error) {
+        enterDegradedSafety(limits, message, error);
+        return new Integration(limits, guard, null, null, null,
+            null, null, null, null);
+    }
+
+    private static void enterDegradedSafety(ChargingLimitCoordinator limits,
+                                            String message, Throwable error) {
+        try { limits.setBlocked(ChargingLimitCoordinator.CONFIGURATION, true); }
+        catch (Throwable ignored) {}
         try { limits.setBlocked(ChargingLimitCoordinator.STARTUP, true); }
         catch (Throwable ignored) {}
         System.err.println("[QC45] DEGRADED SAFE MODE: " + message + " -> all connectors remain at 0kW: " + error);
         error.printStackTrace();
-        return new Integration(limits, guard, null, null, null,
-            null, null, null, null);
+    }
+
+    static void validateFailbackThresholds(double reduceA, double tripA,
+                                           double instantTripA) {
+        String values = thresholdValues(reduceA, tripA, instantTripA);
+        if (reduceA <= 0.0d || tripA <= 0.0d || instantTripA <= 0.0d
+                || Double.isNaN(reduceA) || Double.isNaN(tripA)
+                || Double.isNaN(instantTripA) || Double.isInfinite(reduceA)
+                || Double.isInfinite(tripA) || Double.isInfinite(instantTripA)) {
+            throw new IllegalArgumentException("failback thresholds must be finite and > 0 "
+                + "(configured " + values + ")");
+        }
+        if (!(reduceA < tripA && tripA < instantTripA)) {
+            throw new IllegalArgumentException("failback thresholds must satisfy "
+                + "reduceA < tripA < instantTripA (configured " + values + ")");
+        }
+        if (reduceA > MAX_REDUCE_THRESHOLD_A
+                || tripA > MAX_GRID_LIMIT_A
+                || instantTripA > MAX_INSTANT_TRIP_A) {
+            throw new IllegalArgumentException("failback thresholds may only be made "
+                + "more conservative than 34/35/38A (configured " + values + ")");
+        }
+    }
+
+    static double[] conservativeFailbackThresholds(double reduceA, double tripA,
+                                                    double instantTripA) {
+        try {
+            validateFailbackThresholds(reduceA, tripA, instantTripA);
+            return new double[] { reduceA, tripA, instantTripA };
+        } catch (IllegalArgumentException invalid) {
+            double safeInstant = Math.min(instantTripA, MAX_INSTANT_TRIP_A);
+            double safeTrip = Math.min(Math.min(tripA, MAX_GRID_LIMIT_A),
+                safeInstant - MIN_FAILBACK_GAP_A);
+            double safeReduce = Math.min(Math.min(reduceA, MAX_REDUCE_THRESHOLD_A),
+                safeTrip - MIN_FAILBACK_GAP_A);
+            validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
+            return new double[] { safeReduce, safeTrip, safeInstant };
+        }
+    }
+
+    private static String thresholdValues(double reduceA, double tripA,
+                                          double instantTripA) {
+        return "reduceA=" + reduceA + "A, tripA=" + tripA
+            + "A, instantTripA=" + instantTripA + "A";
     }
 
     public void stop() {

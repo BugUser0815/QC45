@@ -17,6 +17,7 @@ final class LoadBalancingTelemetry {
     static final int FLAG_SHUTDOWN = 1 << 8;
     static final int FLAG_DEMAND_TRANSFER = 1 << 9;
     static final int FLAG_STAGE_LIMIT = 1 << 10;
+    static final int FLAG_CONFIGURATION = 1 << 11;
 
     final int flags;
     final int activeDcConnector;

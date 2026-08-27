@@ -14,19 +14,20 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 4) throw new IllegalArgumentException("four preview paths are required");
+        if (args.length != 5) throw new IllegalArgumentException("five preview paths are required");
         verifyDecoder();
-        render(args[0], false);
-        render(args[1], true);
+        render(args[0], 0);
+        render(args[1], 1);
+        render(args[2], 2);
         renderPanel(new MainMenuPanel("", false, false, false,
-            false, false, false, true, true, true, false), args[2]);
+            false, false, false, true, true, true, false), args[3]);
         renderPanel(new MultipleChargingPanel(true, true, true,
-            false, false, true, false, false, false, 22), args[3]);
-        System.out.println("UI tests passed; four 640x480 previews rendered");
+            false, false, true, false, false, false, 22), args[4]);
+        System.out.println("UI tests passed; five 640x480 previews rendered");
     }
 
     private static void verifyDecoder() {
-        int[] raw = telemetry(false);
+        int[] raw = telemetry(0);
         LoadBalancingTelemetry data = LoadBalancingTelemetry.decode(raw);
         require(data.activeDcConnector == 2, "active DC connector");
         require(data.dcActualKw == 17 && data.acActualKw == 11, "actual power");
@@ -34,6 +35,15 @@ public final class UiPatchTest {
         require(data.totalActualKw() == 28, "total power");
         require(data.totalEnergyWh() == 17600L, "total energy");
         require(data.demandTransfer(), "demand transfer flag");
+
+        raw = telemetry(0);
+        raw[1] = LoadBalancingTelemetry.FLAG_BLOCKED
+            | LoadBalancingTelemetry.FLAG_STARTUP
+            | LoadBalancingTelemetry.FLAG_CONFIGURATION;
+        data = LoadBalancingTelemetry.decode(raw);
+        require(data.blocked(), "configuration block");
+        require(data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION),
+            "configuration flag");
 
         raw[0] = 99;
         try {
@@ -44,10 +54,10 @@ public final class UiPatchTest {
         }
     }
 
-    private static void render(String path, boolean failback) throws Exception {
+    private static void render(String path, int safetyState) throws Exception {
         InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
         try {
-            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(failback)));
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(safetyState)));
             setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
             set(panel, "lastBatterySoc", Integer.valueOf(64));
 
@@ -83,23 +93,30 @@ public final class UiPatchTest {
         ImageIO.write(image, "png", output);
     }
 
-    private static int[] telemetry(boolean failback) {
+    private static int[] telemetry(int safetyState) {
         int flags = LoadBalancingTelemetry.FLAG_DC_SESSION
             | LoadBalancingTelemetry.FLAG_AC_SESSION
             | LoadBalancingTelemetry.FLAG_DC_FLOW
             | LoadBalancingTelemetry.FLAG_AC_FLOW
             | LoadBalancingTelemetry.FLAG_DEMAND_TRANSFER;
-        if (failback) {
+        if (safetyState == 1) {
             flags = LoadBalancingTelemetry.FLAG_DC_SESSION
                 | LoadBalancingTelemetry.FLAG_AC_SESSION
                 | LoadBalancingTelemetry.FLAG_BLOCKED
                 | LoadBalancingTelemetry.FLAG_FAILBACK;
+        } else if (safetyState == 2) {
+            flags = LoadBalancingTelemetry.FLAG_DC_SESSION
+                | LoadBalancingTelemetry.FLAG_AC_SESSION
+                | LoadBalancingTelemetry.FLAG_BLOCKED
+                | LoadBalancingTelemetry.FLAG_STARTUP
+                | LoadBalancingTelemetry.FLAG_CONFIGURATION;
         }
+        boolean blocked = safetyState != 0;
         return new int[] {
             LoadBalancingTelemetry.VERSION, flags, 2,
-            failback ? 0 : 17, 50, 17, failback ? 0 : 50, failback ? 0 : 17,
+            blocked ? 0 : 17, 50, 17, blocked ? 0 : 50, blocked ? 0 : 17,
             78, 754, 0, 12400,
-            failback ? 0 : 11, 22, 13, failback ? 0 : 22, failback ? 0 : 13,
+            blocked ? 0 : 11, 22, 13, blocked ? 0 : 22, blocked ? 0 : 13,
             302, 0, 5200
         };
     }

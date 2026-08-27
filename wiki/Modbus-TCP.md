@@ -77,6 +77,7 @@ Register 127 verwendet folgende Bits:
 | 8 | Shutdown-Sperre |
 | 9 | bedarfsgerechte Umverteilung aktiv |
 | 10 | reduzierte GridFailback-Schutzkappe aktiv |
+| 11 | ungültige Sicherheitskonfiguration; Laden bleibt gesperrt |
 
 ## Aktiver DC-Connector
 
