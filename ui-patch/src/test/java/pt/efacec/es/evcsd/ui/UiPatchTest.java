@@ -15,7 +15,7 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 8) throw new IllegalArgumentException("eight preview paths are required");
+        if (args.length != 9) throw new IllegalArgumentException("nine preview paths are required");
         require(ConnectorImages.resourcesAvailable(), "connector image resources");
         verifyLogoResource();
         verifyDecoder();
@@ -29,7 +29,8 @@ public final class UiPatchTest {
             false, false, true, false, false, false, 43), args[5]);
         renderLogoPanel(new WaitingForCard(null), args[6]);
         renderIdleFallback(args[7]);
-        System.out.println("UI tests passed; eight 640x480 previews rendered");
+        renderSparsePanel(new CCSNotChargingPanel(null), args[8]);
+        System.out.println("UI tests passed; nine 640x480 previews rendered");
     }
 
     private static void verifyLogoResource() throws Exception {
@@ -107,6 +108,22 @@ public final class UiPatchTest {
         panel.paint(graphics);
         graphics.dispose();
         writeAndVerify(image, path);
+    }
+
+    private static void renderSparsePanel(JPanel panel, String path) throws Exception {
+        panel.setSize(640, 480);
+        BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D graphics = image.createGraphics();
+        panel.paint(graphics);
+        graphics.dispose();
+        require(image.getWidth() == 640 && image.getHeight() == 480,
+            "preview dimensions");
+        require(nonBackgroundPixels(image) > 10000,
+            "sparse preview is unexpectedly blank");
+        File output = new File(path);
+        File parent = output.getParentFile();
+        if (parent != null) parent.mkdirs();
+        ImageIO.write(image, "png", output);
     }
 
     private static void renderLogoPanel(JPanel panel, String path) throws Exception {
