@@ -55,24 +55,50 @@ Das Gesamtbudget bleibt unverändert bei 30 kW. Nimmt das AC-Fahrzeug anschließ
 2. `targetA - maxPhaseA` bestimmt den Headroom.
 3. Erhöhungen sind auf `rampUpKwPerLoop` begrenzt, Reduktionen erfolgen ohne Rampe.
 4. Bereits freigegebene, vom Fahrzeug aber noch nicht abgerufene Leistung wird als mögliche Zusatzlast mitgerechnet.
-5. Bedarfstransfer verändert nur die Verteilung, niemals das sichere Gesamtbudget.
-6. Beim Umschichten wird immer zuerst der bisher höher begrenzte Ausgang reduziert und erst danach der andere erhöht.
-7. Ab der wirksamen Freigabegrenze werden alle aktiven Budgets sofort 0 kW.
+5. Neu gemessene Fahrzeugleistung wird erst nach einem weiteren Zyklus als bereits im KSEM-Messwert enthalten gutgeschrieben. Das schließt den Zeitversatz zwischen Stations- und Netz-Messwert.
+6. Bedarfstransfer verändert zwar nicht die kW-Summe, wird aber erneut auf den Phasenstrom geprüft, weil eine Verschiebung von DC zu einphasigem AC mehr kritischen Phasenstrom erzeugen kann.
+7. Beim Umschichten wird immer zuerst der bisher höher begrenzte Ausgang reduziert und erst danach der andere erhöht.
+8. Ab der wirksamen Freigabegrenze werden alle aktiven Budgets sofort 0 kW.
 
-Für die dreiphasige AC22/DC-Leistungsumrechnung gilt:
+Für das zunächst ermittelte Gesamtbudget gilt die dreiphasige Näherung:
 
 ```text
 1 A ≈ √3 × 400 V / 1000 = 0,69282 kW
 ```
 
+Die abschließende Sicherheitsprojektion rechnet DC konservativ mit
+`0,60 kW/A`. Type2 wird als möglicherweise **einphasige** Last mit nur
+`0,20 kW/A` behandelt. Damit werden auch 207 V und ein nicht idealer
+Leistungsfaktor berücksichtigt.
+
 ## Startabsicherung für AC und DC
 
-Die Schutzlogik gegen einen EVCSD-internen Sprung auf ein höheres Limit gilt nun für beide Ladearten:
+Die Schutzlogik gegen einen EVCSD-internen Sprung auf ein höheres Limit gilt
+für beide Ladearten:
 
-- alle drei Ausgänge werden im Idle vor einer Session auf ihr 5-kW-Minimum vorgerüstet;
-- `commandedDcKw` und `commandedAcKw` sind die autoritativ freigegebenen Limits;
-- meldet EVCSD bei AC oder DC mehr als freigegeben, wird der niedrigere Sollwert sofort wiederhergestellt;
-- ein neu hinzukommender AC- oder DC-Ladevorgang wird noch im selben Regelzyklus in die faire Gesamtverteilung aufgenommen.
+- beim JVM-/Webapp-Start werden alle drei Ausgänge zuerst aktiv auf 0 kW gesetzt;
+- erst fünf gültige KSEM-Reads dürfen die Start-Sperre lösen;
+- das 5-kW-Minimum wird nur dann freigegeben, wenn die konservative Projektion das komplette Startbudget unter 34 A hält;
+- meldet EVCSD bei AC oder DC mehr als zentral freigegeben, stellt der 250-ms-Guard den niedrigeren Wert wieder her;
+- ein neu hinzukommender AC- oder DC-Ladevorgang wird in die faire Gesamtverteilung aufgenommen, ohne eine unberechnete Vorbelegung.
+
+## evcc-Wunschwerte
+
+Register 110 und 111 sind dauerhafte Obergrenzen. Der LoadManager regelt daher
+nicht mehr auf denselben veränderlichen EVCSD-Wert, sondern auf:
+
+```text
+P_freigegeben = min(P_evcc-Wunsch, P_sicheres Netzbudget)
+```
+
+`0 kW` bleibt 0 kW. Werte unter dem technischen Minimum werden ebenfalls als
+Pause normalisiert. Nach einer Absenkung wird eine alte höhere Grid-Freigabe
+verworfen; eine spätere evcc-Erhöhung muss erneut mit maximal 2 kW pro Zyklus
+vom LoadManager freigegeben werden.
+
+Nach einem JVM-/Webapp-Start beginnen beide evcc-Obergrenzen fail-closed bei
+0 kW. Erst ein expliziter Schreibzugriff auf Register 110 beziehungsweise 111
+erlaubt dem LoadManager, den jeweiligen Ausgang hochzurampen.
 
 ## Zusammenspiel mit GridFailback
 

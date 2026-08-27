@@ -31,20 +31,26 @@ public final class KsemClient {
     private final int unitId;
     private final int timeoutMs;
     private final double scale;
-    private final boolean legacyLowWord;
+    private final WordOrder wordOrder;
     private int transactionId;
 
     public KsemClient(String host, int port, int unitId, int timeoutMs,
-                      double scale, boolean legacyLowWord) {
-        this.host = host;
+                      double scale, String wordOrder) {
+        if (host == null || host.trim().length() == 0) throw new IllegalArgumentException("KSEM host is required");
+        if (port < 1 || port > 65535 || unitId < 0 || unitId > 255
+                || timeoutMs <= 0 || scale <= 0.0d || Double.isNaN(scale)
+                || Double.isInfinite(scale)) {
+            throw new IllegalArgumentException("invalid KSEM connection or scale");
+        }
+        this.host = host.trim();
         this.port = port;
         this.unitId = unitId;
         this.timeoutMs = timeoutMs;
         this.scale = scale;
-        this.legacyLowWord = legacyLowWord;
+        this.wordOrder = WordOrder.parse(wordOrder);
     }
 
-    public Currents readCurrents() throws Exception {
+    public synchronized Currents readCurrents() throws Exception {
         Socket socket = new Socket();
         try {
             socket.connect(new InetSocketAddress(host, port), timeoutMs);
@@ -76,7 +82,8 @@ public final class KsemClient {
 
         byte[] header = new byte[7];
         readFully(in, header, 0, header.length);
-        if (u16(header, 0) != tx || u16(header, 2) != 0) {
+        if (u16(header, 0) != tx || u16(header, 2) != 0
+                || (header[6] & 0xff) != unitId) {
             throw new IllegalStateException("Invalid KSEM Modbus response header");
         }
 
@@ -90,21 +97,37 @@ public final class KsemClient {
             int code = pdu.length > 1 ? pdu[1] & 0xff : -1;
             throw new IllegalStateException("KSEM Modbus exception " + code + " at register " + register);
         }
-        if (function != 3 || pdu.length < 6 || (pdu[1] & 0xff) != 4) {
+        if (function != 3 || pdu.length != 6 || (pdu[1] & 0xff) != 4) {
             throw new IllegalStateException("Invalid KSEM current response at register " + register);
         }
 
         int word0 = u16(pdu, 2);
         int word1 = u16(pdu, 4);
-        long raw;
-        if (legacyLowWord) {
-            // Matches the previously proven Python reader: r1.registers[1].
-            raw = word1;
-        } else {
-            // KSEM data is commonly word-swapped for 32-bit values.
-            raw = ((long) word1 << 16) | (long) word0;
+        double current = decodeCurrent(word0, word1, scale, wordOrder);
+        if (current < 0.0d || current > 10000.0d || Double.isNaN(current)
+                || Double.isInfinite(current)) {
+            throw new IllegalStateException("Implausible KSEM current " + current
+                + "A at register " + register);
         }
-        return raw * scale;
+        return current;
+    }
+
+    static double decodeCurrent(int word0, int word1, double scale, WordOrder order) {
+        long high = order == WordOrder.HIGH_LOW ? word0 & 0xffffL : word1 & 0xffffL;
+        long low = order == WordOrder.HIGH_LOW ? word1 & 0xffffL : word0 & 0xffffL;
+        return ((high << 16) | low) * scale;
+    }
+
+    enum WordOrder {
+        HIGH_LOW,
+        LOW_HIGH;
+
+        static WordOrder parse(String value) {
+            String normalized = value == null ? "HIGH_LOW" : value.trim().toUpperCase(java.util.Locale.US);
+            if ("HIGH_LOW".equals(normalized)) return HIGH_LOW;
+            if ("LOW_HIGH".equals(normalized)) return LOW_HIGH;
+            throw new IllegalArgumentException("ksem.wordOrder must be HIGH_LOW or LOW_HIGH");
+        }
     }
 
     private static int u16(byte[] b, int o) {

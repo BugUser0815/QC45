@@ -1,18 +1,12 @@
 package de.rothner.qc45;
 
-/**
- * Independent grid-current failback for DC and Type2/AC.
- *
- * Stage 1 reduces both budgets. Reaching tripA immediately blocks and zeros all
- * charging; a persistent excess or instantTripA stops all connectors and latches.
- * KSEM communication loss also sets DC and AC to 0 kW while transactions remain.
- *
- * A hard-trip latch clears automatically after resetDelayMs of continuous valid KSEM readings
- * with every phase below reduceA. Any overcurrent or KSEM read failure restarts the timer.
- */
+/** Independent, KSEM-backed last-resort protection for AC and DC. */
 public final class GridFailback extends Thread {
+    private static final int HEALTHY_READS_TO_RESUME = 5;
+
     private final ReflectionQC45 station;
     private final KsemClient meter;
+    private final ChargingLimitCoordinator limits;
     private final double reduceA;
     private final long reduceDelayMs;
     private final double tripA;
@@ -21,30 +15,46 @@ public final class GridFailback extends Thread {
     private final int reduceDcKw;
     private final int reduceAcKw;
     private final int intervalMs;
-    private final boolean tripOnMeterFailure;
-    private final long meterFailureMs;
+    private final boolean autoResetHardTrip;
     private final long resetDelayMs;
 
     private volatile boolean running = true;
     private volatile boolean tripped;
-    private volatile boolean meterPaused;
+    private volatile boolean meterPaused = true;
     private volatile boolean overLimitPaused;
     private long reduceSince;
     private long tripSince;
     private long resetSince;
-    private long lastGoodRead;
-    private long lastLog;
-    private int goodReadsAfterMeterPause;
-    private int goodReadsAfterOverLimit;
-    private long lastBlockedEnforce;
+    private long lastGridLog;
+    private long lastControlErrorLog;
+    private long lastMeterErrorLog;
+    private long lastResetDeferredLog;
+    private long lastStopErrorLog;
+    private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
+    private int goodMeterReads;
+    private int goodOverLimitReads;
+    private int goodEStopReleaseReads;
+    private boolean sawEStopPressed;
+    private boolean stageReduced;
 
-    public GridFailback(ReflectionQC45 station, KsemClient meter, double reduceA, long reduceDelayMs,
-                        double tripA, long tripDelayMs, double instantTripA, int reduceDcKw, int reduceAcKw,
-                        int intervalMs, boolean tripOnMeterFailure, long meterFailureMs, long resetDelayMs) {
+    public GridFailback(ReflectionQC45 station, KsemClient meter,
+                        ChargingLimitCoordinator limits,
+                        double reduceA, long reduceDelayMs,
+                        double tripA, long tripDelayMs, double instantTripA,
+                        int reduceDcKw, int reduceAcKw, int intervalMs,
+                        boolean autoResetHardTrip, long resetDelayMs) {
         super("QC45-Grid-Failback");
         setDaemon(true);
+        if (station == null || meter == null || limits == null) throw new IllegalArgumentException("station, meter and limits are required");
+        if (reduceA <= 0.0d || reduceA >= tripA || tripA >= instantTripA
+                || reduceDelayMs < 0L || tripDelayMs < 0L || intervalMs <= 0
+                || reduceDcKw < 0 || reduceAcKw < 0 || resetDelayMs < 0L
+                || (autoResetHardTrip && resetDelayMs == 0L)) {
+            throw new IllegalArgumentException("invalid failback thresholds or timing");
+        }
         this.station = station;
         this.meter = meter;
+        this.limits = limits;
         this.reduceA = reduceA;
         this.reduceDelayMs = reduceDelayMs;
         this.tripA = tripA;
@@ -53,187 +63,169 @@ public final class GridFailback extends Thread {
         this.reduceDcKw = reduceDcKw;
         this.reduceAcKw = reduceAcKw;
         this.intervalMs = intervalMs;
-        this.tripOnMeterFailure = tripOnMeterFailure;
-        this.meterFailureMs = meterFailureMs;
+        this.autoResetHardTrip = autoResetHardTrip;
         this.resetDelayMs = resetDelayMs;
     }
 
     public boolean isTripped() { return tripped; }
     public boolean isMeterPaused() { return meterPaused; }
     public boolean isChargingBlocked() { return tripped || meterPaused || overLimitPaused; }
-    public void shutdown() { running = false; interrupt(); }
+
+    public void shutdown() {
+        safeSetBlocked(true);
+        running = false;
+        interrupt();
+    }
 
     public void run() {
-        lastGoodRead = System.currentTimeMillis();
-        System.out.println("[QC45] GridFailback started AC+DC auto-reset=" + resetDelayMs
-            + "ms stable-below=" + one(reduceA) + "A");
+        safeSetBlocked(true);
+        System.out.println("[QC45] GridFailback started AC+DC hard-trip-reset="
+            + (autoResetHardTrip ? "timed(" + resetDelayMs + "ms)" : "E-STOP press+release")
+            + " stable-below=" + one(reduceA) + "A");
 
         while (running) {
             long now = System.currentTimeMillis();
+            KsemClient.Currents currents;
             try {
-                KsemClient.Currents c = meter.readCurrents();
-                lastGoodRead = now;
-                double max = c.max();
-
-                if (now - lastLog >= 5000L || max >= reduceA || tripped || meterPaused) {
-                    System.out.println("[QC45] Grid L1=" + one(c.l1) + "A L2=" + one(c.l2) + "A L3=" + one(c.l3)
-                        + "A max=" + one(max) + "A"
-                        + (tripped ? " TRIPPED" : meterPaused ? " METER-PAUSED"
-                            : overLimitPaused ? " OVER-LIMIT-PAUSED" : ""));
-                    lastLog = now;
-                }
-
-                if (tripped) {
-                    evaluateTimedReset(now, max);
-                } else if (meterPaused) {
-                    if (max < reduceA) {
-                        goodReadsAfterMeterPause++;
-                        if (goodReadsAfterMeterPause >= 5) clearMeterPause();
-                    } else {
-                        goodReadsAfterMeterPause = 0;
-                    }
-                } else if (overLimitPaused) {
-                    evaluateOverLimitPause(now, max);
-                } else {
-                    evaluate(now, max);
-                }
-                enforceBlockedLimits(now);
+                currents = meter.readCurrents();
             } catch (Throwable e) {
-                goodReadsAfterMeterPause = 0;
-                resetSince = 0L;
-                if (now - lastLog >= 5000L) {
-                    System.err.println("[QC45] GridFailback KSEM read failed: " + e);
-                    lastLog = now;
-                }
-                if (!tripped && !meterPaused && tripOnMeterFailure && now - lastGoodRead >= meterFailureMs) {
-                    pauseForMeterFailure(now - lastGoodRead);
-                }
-                enforceBlockedLimits(now);
+                onMeterFailure(now, e);
+                if (tripped) retryRemoteStops(now);
+                sleepLoop();
+                continue;
+            }
+
+            double max = currents.max();
+            if (now - lastGridLog >= 5000L) {
+                System.out.println("[QC45] Grid L1=" + one(currents.l1) + "A L2="
+                    + one(currents.l2) + "A L3=" + one(currents.l3) + "A max="
+                    + one(max) + "A" + stateSuffix());
+                lastGridLog = now;
             }
 
             try {
-                Thread.sleep(intervalMs);
-            } catch (InterruptedException e) {
-                if (!running) break;
+                evaluate(now, max);
+            } catch (Throwable e) {
+                safeSetBlocked(true);
+                if (now - lastControlErrorLog >= 5000L) {
+                    System.err.println("[QC45] GridFailback control failure -> AC/DC=0kW: " + e);
+                    lastControlErrorLog = now;
+                }
             }
+            try {
+                limits.reconcile();
+            } catch (Throwable e) {
+                safeSetBlocked(true);
+                if (now - lastControlErrorLog >= 5000L) {
+                    System.err.println("[QC45] GridFailback limit reconciliation failed -> AC/DC=0kW: " + e);
+                    lastControlErrorLog = now;
+                }
+            }
+            if (tripped) retryRemoteStops(now);
+            sleepLoop();
         }
-
         System.out.println("[QC45] GridFailback stopped");
     }
 
     private void evaluate(long now, double max) throws Exception {
+        if (tripped) {
+            evaluateHardTripReset(now, max);
+            return;
+        }
+
         if (max >= instantTripA) {
             hardTrip("instant phase current " + one(max) + "A >= " + one(instantTripA) + "A");
             return;
         }
 
         if (max >= tripA) {
-            pauseForOverLimit(now, max);
+            goodOverLimitReads = 0;
+            goodMeterReads = 0;
+            if (!overLimitPaused) {
+                overLimitPaused = true;
+                meterPaused = false;
+                tripSince = now;
+                safeSetBlocked(true);
+                System.err.println("[QC45] GRID FAILBACK OVER-LIMIT PAUSE: " + one(max)
+                    + "A >= " + one(tripA) + "A -> AC/DC=0kW");
+            } else if (tripSince == 0L) {
+                tripSince = now;
+            }
+            if (now - tripSince >= tripDelayMs) {
+                hardTrip("phase current " + one(max) + "A >= " + one(tripA)
+                    + "A continuously for " + (now - tripSince) + "ms");
+            }
             return;
-        } else {
-            tripSince = 0L;
+        }
+
+        // A trip timer represents continuous exposure and must also reset in
+        // the 34..35 A band.
+        tripSince = 0L;
+
+        if (meterPaused) {
+            if (max < reduceA) {
+                goodMeterReads++;
+                if (goodMeterReads >= HEALTHY_READS_TO_RESUME) {
+                    prepareSafeResume();
+                    limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
+                    meterPaused = false;
+                    goodMeterReads = 0;
+                    System.out.println("[QC45] GRID FAILBACK KSEM RECOVERED: five valid reads; charging may ramp");
+                }
+            } else {
+                goodMeterReads = 0;
+            }
+            return;
+        }
+
+        if (overLimitPaused) {
+            if (max < reduceA) {
+                goodOverLimitReads++;
+                if (goodOverLimitReads >= HEALTHY_READS_TO_RESUME) {
+                    prepareSafeResume();
+                    limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
+                    overLimitPaused = false;
+                    goodOverLimitReads = 0;
+                    System.out.println("[QC45] GRID FAILBACK OVER-LIMIT RECOVERED: five reads below "
+                        + one(reduceA) + "A");
+                }
+            } else {
+                goodOverLimitReads = 0;
+            }
+            return;
         }
 
         if (max >= reduceA) {
             if (reduceSince == 0L) reduceSince = now;
-            if (now - reduceSince >= reduceDelayMs) forceMinimum();
+            if (!stageReduced && now - reduceSince >= reduceDelayMs) {
+                limits.setStageCaps(reduceDcKw, reduceAcKw);
+                stageReduced = true;
+                System.err.println("[QC45] GRID FAILBACK REDUCE: DC<=" + reduceDcKw
+                    + "kW AC<=" + reduceAcKw + "kW");
+            }
         } else {
             reduceSince = 0L;
-        }
-    }
-
-    private void evaluateOverLimitPause(long now, double max) {
-        if (max >= instantTripA) {
-            hardTrip("instant phase current " + one(max) + "A >= " + one(instantTripA) + "A");
-            return;
-        }
-
-        if (max >= tripA) {
-            goodReadsAfterOverLimit = 0;
-            if (tripSince == 0L) tripSince = now;
-            if (now - tripSince >= tripDelayMs) {
-                hardTrip("phase current " + one(max) + "A >= " + one(tripA)
-                    + "A for " + (now - tripSince) + "ms");
+            if (stageReduced) {
+                prepareSafeResume();
+                limits.clearStageCaps();
+                stageReduced = false;
+                System.out.println("[QC45] GRID FAILBACK REDUCTION CLEARED");
             }
-            return;
-        }
-
-        if (max < reduceA) {
-            goodReadsAfterOverLimit++;
-            if (goodReadsAfterOverLimit >= 5) clearOverLimitPause();
-        } else {
-            goodReadsAfterOverLimit = 0;
         }
     }
 
-    private void evaluateTimedReset(long now, double max) {
-        if (max >= reduceA) {
-            if (resetSince != 0L) {
-                System.out.println("[QC45] GRID FAILBACK RESET WAIT restarted: grid=" + one(max) + "A >= " + one(reduceA) + "A");
-            }
-            resetSince = 0L;
-            return;
+    private void onMeterFailure(long now, Throwable error) {
+        goodMeterReads = 0;
+        resetSince = 0L;
+        if (!tripped) {
+            meterPaused = true;
+            overLimitPaused = false;
         }
-
-        if (resetSince == 0L) {
-            resetSince = now;
-            System.out.println("[QC45] GRID FAILBACK RESET WAIT started: grid below " + one(reduceA)
-                + "A; latch clears after " + resetDelayMs + "ms stable");
-            return;
+        safeSetBlocked(true);
+        if (now - lastMeterErrorLog >= 5000L) {
+            System.err.println("[QC45] GridFailback KSEM failure -> AC/DC=0kW: " + error);
+            lastMeterErrorLog = now;
         }
-
-        if (now - resetSince >= resetDelayMs) {
-            clearHardTripAfterDelay(now - resetSince);
-        }
-    }
-
-    private void forceMinimum() throws Exception {
-        // Stage 1 is reduction-only. It must never raise a connector which the
-        // LoadManager or another safety path has already lowered to 0 kW.
-        if (station.limitKw(1) > reduceDcKw) station.setConnectorLimitKw(1, reduceDcKw);
-        if (station.limitKw(2) > reduceDcKw) station.setConnectorLimitKw(2, reduceDcKw);
-        if (station.limitKw(3) > reduceAcKw) {
-            station.setConnectorLimitKw(3, reduceAcKw);
-        }
-    }
-
-    private synchronized void pauseForOverLimit(long now, double max) {
-        if (tripped || meterPaused || overLimitPaused) return;
-        overLimitPaused = true;
-        tripSince = now;
-        goodReadsAfterOverLimit = 0;
-        System.err.println("[QC45] GRID FAILBACK OVER-LIMIT PAUSE: grid=" + one(max)
-            + "A >= " + one(tripA) + "A -> DC=0kW AC=0kW immediately");
-        forceZeroBudgets();
-    }
-
-    private synchronized void clearOverLimitPause() {
-        if (!overLimitPaused || tripped || meterPaused) return;
-        overLimitPaused = false;
-        goodReadsAfterOverLimit = 0;
-        reduceSince = 0L;
-        tripSince = 0L;
-        System.out.println("[QC45] GRID FAILBACK OVER-LIMIT RECOVERED: five reads below "
-            + one(reduceA) + "A; LoadManager may ramp AC/DC again");
-    }
-
-    private synchronized void pauseForMeterFailure(long outageMs) {
-        if (tripped || meterPaused) return;
-        meterPaused = true;
-        overLimitPaused = false;
-        goodReadsAfterMeterPause = 0;
-        System.err.println("[QC45] GRID FAILBACK METER PAUSE: KSEM communication lost for " + outageMs
-            + "ms -> DC=0kW AC=0kW, transactions remain active");
-        forceZeroBudgets();
-    }
-
-    private synchronized void clearMeterPause() {
-        if (!meterPaused || tripped) return;
-        meterPaused = false;
-        goodReadsAfterMeterPause = 0;
-        reduceSince = 0L;
-        tripSince = 0L;
-        System.out.println("[QC45] GRID FAILBACK METER RECOVERED: KSEM stable, LoadManager may ramp charging again");
     }
 
     private synchronized void hardTrip(String reason) {
@@ -242,42 +234,123 @@ public final class GridFailback extends Thread {
         meterPaused = false;
         overLimitPaused = false;
         resetSince = 0L;
-        System.err.println("[QC45] GRID FAILBACK TRIP: " + reason
-            + " [AC+DC; latched; auto-reset after " + resetDelayMs
-            + "ms stable below " + one(reduceA) + "A]");
-        enforceHardTripOnce();
+        goodEStopReleaseReads = 0;
+        sawEStopPressed = false;
+        safeSetBlocked(true);
+        System.err.println("[QC45] GRID FAILBACK HARD TRIP: " + reason
+            + " [latched; reset=" + (autoResetHardTrip ? "timed" : "E-STOP press+release") + "]");
     }
 
-    private synchronized void clearHardTripAfterDelay(long stableMs) {
-        if (!tripped) return;
-        tripped = false;
-        resetSince = 0L;
-        reduceSince = 0L;
-        tripSince = 0L;
-        goodReadsAfterMeterPause = 0;
-        goodReadsAfterOverLimit = 0;
-        System.out.println("[QC45] GRID FAILBACK RESET: grid stable below " + one(reduceA)
-            + "A for " + stableMs + "ms; latch cleared");
-    }
+    private void evaluateHardTripReset(long now, double max) throws Exception {
+        if (max >= tripA) {
+            resetSince = 0L;
+            goodEStopReleaseReads = 0;
+            return;
+        }
 
-    private void enforceHardTripOnce() {
-        forceZeroBudgets();
-        for (int connector = 1; connector <= 3; connector++) {
-            try { station.remoteStop(connector); } catch (Throwable ignored) {}
+        if (autoResetHardTrip) {
+            if (max >= reduceA) {
+                resetSince = 0L;
+            } else if (resetSince == 0L) {
+                resetSince = now;
+            } else if (now - resetSince >= resetDelayMs) {
+                clearHardTrip("grid stable for " + (now - resetSince) + "ms");
+            }
+            return;
+        }
+
+        boolean pressed = station.emergencyStopPressed();
+        if (pressed) {
+            sawEStopPressed = true;
+            goodEStopReleaseReads = 0;
+        } else if (sawEStopPressed && max < reduceA) {
+            goodEStopReleaseReads++;
+            if (goodEStopReleaseReads >= HEALTHY_READS_TO_RESUME) {
+                clearHardTrip("E-STOP press+release and five safe KSEM reads");
+            }
+        } else {
+            goodEStopReleaseReads = 0;
         }
     }
 
-    private void enforceBlockedLimits(long now) {
-        if (!isChargingBlocked() || now - lastBlockedEnforce < 1000L) return;
-        lastBlockedEnforce = now;
-        forceZeroBudgets();
+    private synchronized void clearHardTrip(String reason) throws Exception {
+        if (!tripped) return;
+        if (anySessionActive()) {
+            long now = System.currentTimeMillis();
+            if (now - lastResetDeferredLog >= 5000L) {
+                System.err.println("[QC45] GRID FAILBACK reset deferred: charging session still active");
+                lastResetDeferredLog = now;
+            }
+            return;
+        }
+        prepareSafeResume();
+        limits.clearStageCaps();
+        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
+        tripped = false;
+        reduceSince = 0L;
+        tripSince = 0L;
+        resetSince = 0L;
+        sawEStopPressed = false;
+        goodEStopReleaseReads = 0;
+        stageReduced = false;
+        System.out.println("[QC45] GRID FAILBACK RESET: " + reason);
     }
 
-    private void forceZeroBudgets() {
-        try { station.setDcBudgetKw(0); }
-        catch (Throwable e) { System.err.println("[QC45] failback DC=0 failed: " + e); }
-        try { station.setAcBudgetKw(0); }
-        catch (Throwable e) { System.err.println("[QC45] failback AC=0 failed: " + e); }
+    private void retryRemoteStops(long now) {
+        for (int connector = 1; connector <= 3; connector++) {
+            if (now - lastStopAttempt[connector] < 2000L) continue;
+            lastStopAttempt[connector] = now;
+            try {
+                if (station.sessionActive(connector)) station.remoteStop(connector);
+            } catch (Throwable e) {
+                if (now - lastStopErrorLog >= 5000L) {
+                    System.err.println("[QC45] hard-trip RemoteStop retry connector="
+                        + connector + " failed: " + e);
+                    lastStopErrorLog = now;
+                }
+            }
+        }
+    }
+
+    private boolean anySessionActive() throws Exception {
+        for (int connector = 1; connector <= 3; connector++) {
+            if (station.sessionActive(connector)) return true;
+        }
+        return false;
+    }
+
+    private void prepareSafeResume() throws Exception {
+        // Never expose an allocation calculated before the safety block. The
+        // LoadManager must publish a fresh target from a post-recovery reading.
+        limits.setGridTargets(0, false, 0, 0);
+    }
+
+    private void safeSetBlocked(boolean blocked) {
+        try { limits.setBlocked(ChargingLimitCoordinator.FAILBACK, blocked); }
+        catch (Throwable e) { System.err.println("[QC45] failback limit enforcement failed: " + e); }
+    }
+
+    private String stateSuffix() {
+        if (tripped) return " HARD-TRIPPED";
+        if (meterPaused) return " METER-PAUSED";
+        if (overLimitPaused) return " OVER-LIMIT-PAUSED";
+        if (stageReduced) return " REDUCED";
+        return "";
+    }
+
+    private void sleepLoop() {
+        long sleepMs = intervalMs;
+        long now = System.currentTimeMillis();
+        if (!tripped && overLimitPaused && tripSince > 0L) {
+            long remaining = tripDelayMs - (now - tripSince);
+            if (remaining > 0L) sleepMs = Math.min(sleepMs, remaining);
+        }
+        if (!tripped && !stageReduced && reduceSince > 0L) {
+            long remaining = reduceDelayMs - (now - reduceSince);
+            if (remaining > 0L) sleepMs = Math.min(sleepMs, remaining);
+        }
+        try { Thread.sleep(Math.max(1L, sleepMs)); }
+        catch (InterruptedException e) { if (!running) return; }
     }
 
     private static String one(double value) {

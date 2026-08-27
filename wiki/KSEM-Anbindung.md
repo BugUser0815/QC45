@@ -11,7 +11,8 @@ Der KOSTAL Smart Energy Meter (KSEM) ist die gemeinsame Netz-Messquelle für **L
 | Unit ID | `71` |
 | Timeout | `1000 ms` im QC45-JAR |
 | Strom-Skalierung | `0.001` |
-| Legacy-Auswertung | zweites 16-Bit-Wort des U32-Paares |
+| Wortreihenfolge | `HIGH_LOW` |
+| Auswertung | vollständiger unsigned 32-Bit-Wert × `0.001` |
 
 ## Phasenstromregister im QC45-JAR
 
@@ -29,9 +30,17 @@ criticalA = max(L1, L2, L3)
 
 Damit schützt die Regelung die **am stärksten belastete Phase** und nicht nur die Summenleistung.
 
+Die frühere Low-Word-Auswertung ist entfernt. Sie hätte beispielsweise
+`70.000 mA` nach dem 16-Bit-Überlauf fälschlich als `4.464 A` angezeigt. Der
+aktuelle Decoder liest beide Wörter und liefert korrekt `70.0 A`; alternativ
+kann für abweichende Geräte `LOW_HIGH` konfiguriert werden.
+
 ## Bewusst keine Dauerverbindung
 
-Die QC45-Integration öffnet für einen Messzyklus eine TCP-Verbindung, liest die drei Werte und schließt sie wieder.
+Die QC45-Integration öffnet für einen Messzyklus eine TCP-Verbindung, liest die
+drei Werte und schließt sie wieder. LoadManager und GridFailback besitzen dabei
+bewusst **getrennte `KsemClient`-Instanzen**, damit ein langsamer normaler
+Regelzyklus den unabhängigen 100-ms-Failback nicht blockiert.
 
 Das ist absichtlich konservativ, weil mehrere Komponenten auf den KSEM zugreifen können, unter anderem:
 
@@ -48,7 +57,10 @@ Der C++-`lean`-Prozess ist effizienter als der historische Python-Aufbau: Er lie
 
 ## Fehlerbehandlung
 
-Im QC45-Failback ist ein KSEM-Ausfall selbst ein Schutzereignis: Nach standardmäßig 3 s ohne gültige Messung wird das DC-Budget auf 0 kW gesetzt, **ohne die Transaktion zu beenden**. Nach fünf gültigen Messungen unterhalb der Reduktionsschwelle wird die Pause wieder freigegeben.
+Im QC45-Failback ist ein KSEM-Ausfall selbst ein Schutzereignis: Schon der erste
+ungültige Read setzt AC und DC auf 0 kW, **ohne die Transaktionen zu beenden**.
+Nach fünf gültigen Messungen unterhalb der Reduktionsschwelle wird die Pause
+wieder freigegeben; die Leistungsziele müssen anschließend neu berechnet werden.
 
 Quellcode QC45: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/KsemClient.java`
 

@@ -1,11 +1,14 @@
 # Copy to /home/mobie/evcsd/qc45-integration.properties
 
 # ChargePoint / OCPP 1.6 JSON over WSS
+ocpp.enabled=true
 ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
 ocpp.username=QC45
 ocpp.password=CHANGE_ME
 ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
 ocpp.tls.insecure=false
+# Persists active backend transaction-to-connector mappings across a webapp/JVM restart.
+ocpp.transactionMapFile=/home/mobie/evcsd/qc45-active-transactions.properties
 
 # Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 bridge
 ocpp15.loopback.enabled=true
@@ -16,7 +19,15 @@ ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
 # evcc / local load management
+# Both request registers start at 0 kW after a restart and must be written by
+# evcc before the corresponding connector can receive a positive limit.
+modbus.enabled=true
+modbus.bindAddress=0.0.0.0
 modbus.port=1502
+# Comma-separated exact addresses or CIDR networks. Loopback is always allowed.
+# This is the known evcc Raspberry Pi address; update it if that host changes.
+modbus.allowedClients=10.0.0.179
+modbus.maxClients=8
 
 # CCS protocol handling
 # The integration forces the live EFACEC QuickCharge/MasterProto serializers to
@@ -51,19 +62,27 @@ evcsd.ccsRawTrace.fullRx.maxBytes=256
 evcsd.lagmonitor.enabled=true
 evcsd.lagmonitor.intervalMs=60000
 evcsd.lagmonitor.warnMs=250
+evcsd.lagmonitor.autoRestart=true
+evcsd.lagmonitor.restartLagMs=1000
+evcsd.lagmonitor.restartConsecutive=3
+evcsd.lagmonitor.idleStableMs=30000
+evcsd.lagmonitor.restartCommand=sudo -n /sbin/reboot
 
 # KOSTAL KSEM shared by LoadManager and GridFailback
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
 ksem.timeoutMs=1000
-ksem.legacyLowWord=true
 ksem.currentScale=0.001
+# 32-bit unsigned current registers. HIGH_LOW prevents rollover above 65.535 A.
+ksem.wordOrder=HIGH_LOW
 
 # Native load manager
 # One shared KSEM budget controls the active DC connector and Type2/AC.
 # When both charge, the released kW are split equally. The grid limit is a hard
 # command ceiling; targetA stays below it to retain control reserve.
+# Safety validation rejects values that weaken the 32/34/35/38 A envelope,
+# KSEM timeouts above 1 s or increases faster than 2 kW/s.
 loadmanager.enabled=true
 loadmanager.targetA=32.0
 loadmanager.gridLimitA=35.0
@@ -88,9 +107,10 @@ failback.reduceAcKw=5
 failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=38.0
-failback.intervalMs=200
-# Hard-trip latch clears automatically after this many ms continuously below reduceA.
+failback.intervalMs=100
+# false (default): hard trip resets only after E-STOP press+release and five safe KSEM reads.
+# true: allow a timed reset after resetDelayMs continuously below reduceA.
+failback.autoResetHardTrip=false
 failback.resetDelayMs=60000
-# KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
-failback.tripOnMeterFailure=true
-failback.meterFailureMs=3000
+# Any KSEM communication/read failure pauses AC and DC immediately at 0 kW
+# while the OCPP transactions remain active.

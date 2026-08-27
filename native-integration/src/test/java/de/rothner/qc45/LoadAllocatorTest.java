@@ -144,4 +144,14 @@ public final class LoadAllocatorTest {
         assertEquals(19, t.dcKw);
         assertEquals(11, t.acKw);
     }
+
+    @Test
+    public void singlePhaseProjectionCanLimitTransferTowardAc() {
+        LoadAllocator.Targets fair = new LoadAllocator.Targets(15, 15);
+        LoadAllocator.Targets transferred = new LoadAllocator.Targets(13, 17);
+        LoadAllocator.Targets safe = LoadAllocator.constrainDemandTransfer(
+            fair, transferred, 22.0d, 8, 15, 34.0d);
+        assertEquals(15, safe.dcKw);
+        assertEquals(15, safe.acKw);
+    }
 }

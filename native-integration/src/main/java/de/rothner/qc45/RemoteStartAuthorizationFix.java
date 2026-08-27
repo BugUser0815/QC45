@@ -7,19 +7,25 @@ import java.lang.reflect.Method;
  * Keeps the original EVCSD CCS V3 state machine authorized during OCPP
  * RemoteStart sessions.
  *
- * This is intentionally narrow: the loggedIn mirror is active only while
- * RemoteStart is active and connector 2 is the selected CCS connector. The
- * value is restored as soon as either condition stops being true.
+ * This is intentionally narrow: the loggedIn mirror is active only for a
+ * connector-specific remote CCS session on connector 2. A value written by
+ * this fix is restored only after every AC/DC session has ended, so parallel
+ * charging cannot lose its global EVCSD authorization.
  */
 public final class RemoteStartAuthorizationFix {
     private static final long INTERVAL_MS = 100L;
 
+    private final ReflectionQC45 station;
     private final Class<?> centralClass;
     private final Thread worker;
     private volatile boolean running = true;
-    private volatile boolean forcedLoggedIn;
+    private volatile boolean trackingRemoteCcs;
+    private volatile boolean wroteLoggedIn;
+    private volatile boolean restorePending;
 
-    private RemoteStartAuthorizationFix() throws Exception {
+    private RemoteStartAuthorizationFix(ReflectionQC45 station) throws Exception {
+        if (station == null) throw new IllegalArgumentException("station is required");
+        this.station = station;
         centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
         worker = new Thread(new Runnable() {
             public void run() {
@@ -29,8 +35,8 @@ public final class RemoteStartAuthorizationFix {
         worker.setDaemon(true);
     }
 
-    public static RemoteStartAuthorizationFix start() throws Exception {
-        RemoteStartAuthorizationFix fix = new RemoteStartAuthorizationFix();
+    public static RemoteStartAuthorizationFix start(ReflectionQC45 station) throws Exception {
+        RemoteStartAuthorizationFix fix = new RemoteStartAuthorizationFix(station);
         fix.worker.start();
         System.out.println("[QC45] RemoteStart CCS authorization fix started interval="
             + INTERVAL_MS + "ms connector=2 control-authorized=0x02");
@@ -41,7 +47,7 @@ public final class RemoteStartAuthorizationFix {
         running = false;
         worker.interrupt();
         try { worker.join(1000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        try { restoreIfForced(); } catch (Throwable e) {
+        try { restoreIfSafe(); } catch (Throwable e) {
             System.err.println("[QC45] RemoteStart CCS authorization restore failed: " + e);
         }
         System.out.println("[QC45] RemoteStart CCS authorization fix stopped");
@@ -65,35 +71,48 @@ public final class RemoteStartAuthorizationFix {
 
     private void applyOnce() throws Exception {
         Object central = central();
-        boolean remoteStarted = booleanMethod(central, "isRemoteStarted");
-        boolean ccs2Selected = isConnector2CcsSelected(central);
         boolean loggedIn = booleanMethod(central, "isLoggedIn");
-        boolean shouldAuthorize = remoteStarted && ccs2Selected;
+        boolean shouldAuthorize = station.isRemoteSession(2)
+            && station.sessionActive(2) && station.isCcsCharge(2);
 
         if (shouldAuthorize) {
+            if (!trackingRemoteCcs) {
+                trackingRemoteCcs = true;
+                if (restorePending) {
+                    wroteLoggedIn = true;
+                    restorePending = false;
+                } else wroteLoggedIn = false;
+            }
             if (!loggedIn) {
                 setLoggedIn(central, true);
-                forcedLoggedIn = true;
+                wroteLoggedIn = true;
                 System.out.println("[QC45] RemoteStart CCS AUTH forced loggedIn=false->true"
-                    + " remoteStarted=true connector=2 ccsV3Control=0x02");
+                    + " remoteConnector=2 ccsV3Control=0x02");
             }
             return;
         }
 
-        if (forcedLoggedIn) {
-            setLoggedIn(central, false);
-            forcedLoggedIn = false;
-            System.out.println("[QC45] RemoteStart CCS AUTH restored loggedIn=true->false"
-                + " remoteStarted=" + remoteStarted
-                + " ccs2Selected=" + ccs2Selected);
+        if (trackingRemoteCcs) {
+            trackingRemoteCcs = false;
+            restorePending = wroteLoggedIn;
+            wroteLoggedIn = false;
+        }
+
+        if (restorePending && !anySessionActive()) {
+            if (loggedIn) setLoggedIn(central, false);
+            restorePending = false;
+            System.out.println("[QC45] RemoteStart CCS AUTH restored loggedIn=true->false after all sessions ended");
         }
     }
 
-    private void restoreIfForced() throws Exception {
-        if (!forcedLoggedIn) return;
+    private void restoreIfSafe() throws Exception {
+        if ((!restorePending && !(trackingRemoteCcs && wroteLoggedIn))
+                || anySessionActive()) return;
         Object central = central();
         setLoggedIn(central, false);
-        forcedLoggedIn = false;
+        restorePending = false;
+        wroteLoggedIn = false;
+        trackingRemoteCcs = false;
     }
 
     private Object central() throws Exception {
@@ -102,16 +121,15 @@ public final class RemoteStartAuthorizationFix {
         return central;
     }
 
-    private boolean isConnector2CcsSelected(Object central) throws Exception {
-        Object[] satellites = (Object[]) centralClass.getMethod("getSatellites").invoke(central);
-        if (satellites == null) return false;
-        for (int i = 0; i < satellites.length; i++) {
-            Object sat = satellites[i];
-            if (sat == null) continue;
-            int id = ((Number)sat.getClass().getMethod("getSatelliteId").invoke(sat)).intValue();
-            if (id != 2) continue;
-            Object value = sat.getClass().getMethod("isCCSCharge").invoke(sat);
-            return value instanceof Boolean && ((Boolean)value).booleanValue();
+    private boolean anySessionActive() {
+        for (int connector = 1; connector <= 3; connector++) {
+            try {
+                if (station.sessionActive(connector)) return true;
+            } catch (Throwable e) {
+                // An observation failure must never make us revoke a global
+                // authorization that another connector may still need.
+                return true;
+            }
         }
         return false;
     }

@@ -38,7 +38,16 @@ Der aktuelle Bridge-Server behandelt unter anderem:
 - DiagnosticsStatusNotification
 - DataTransfer
 
-Transaktions-IDs werden dem jeweiligen Connector zugeordnet, damit ein Backend-`RemoteStopTransaction` auf den richtigen QC45-Ausgang geführt werden kann.
+Transaktions-IDs werden dem jeweiligen Connector zugeordnet und atomar in
+`ocpp.transactionMapFile` persistiert. Damit bleibt ein
+Backend-`RemoteStopTransaction` auch nach einem Webapp-/JVM-Neustart auflösbar.
+Fehlt ein gespeicherter Eintrag, versucht die Bridge die ID aus der laufenden
+EVCSD-Transaktion zu lesen; nur bei genau einer aktiven Session ist zusätzlich
+ein eindeutiger Fallback zulässig.
+
+Bei `MeterValues` werden sämtliche Zeitgruppen und sämtliche enthaltenen
+Messwerte übernommen – einschließlich Measurand, Phase, Kontext, Format,
+Position und Einheit. Die frühere Beschränkung auf den ersten Wert ist entfernt.
 
 ## Statuskorrektur
 
@@ -71,6 +80,13 @@ Ein eingehendes OCPP-1.5-`Occupied` wird in Richtung 1.6 zunächst als `Preparin
 - CA-Datei konfigurierbar
 - optional `tls.insecure=true` für Diagnose, nicht für Normalbetrieb empfohlen
 - Reconnect mit exponentiellem Backoff bis 30 s
+- Prüfung der TLS-Hostname-Identität und des vom Backend bestätigten
+  `ocpp1.6`-Subprotokolls
+- Reassembly fragmentierter Textnachrichten bis maximal 1 MiB
+
+Der lokale SOAP-Endpunkt darf ausschließlich an eine Loopback-Adresse binden,
+begrenzt Requests auf 1 MiB und nutzt einen begrenzten Vier-Thread-Executor.
+Beim Shutdown werden HTTP-Executor und WebSocket-Thread beendet.
 
 Quellcode:
 

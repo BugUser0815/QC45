@@ -10,9 +10,9 @@
 | Over-limit pause | Phase ≥ `35 A` | sofort nach Messwert | DC `0 kW`, AC `0 kW`, Erhöhungen blockiert |
 | Persistenter Trip | Phase ≥ `35 A` | `250 ms` | alle drei Connectoren stoppen und Latch setzen |
 | Instant Trip | Phase ≥ `38 A` | sofort | alle drei Connectoren stoppen und Latch setzen |
-| Meter Failure | KSEM ungültig | `3000 ms` | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
+| Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
 
-Abfrageintervall: **200 ms**.
+Abfrageintervall: **100 ms**.
 
 Die Reduce-Stufe ist strikt reduktionsorientiert. Hat der LoadManager einen Ausgang bereits auf 0 kW gesetzt, darf der Failback ihn nicht wieder auf 5 kW anheben.
 
@@ -29,15 +29,29 @@ Beim Hard Trip:
 1. wird der Latch gesetzt,
 2. DC und AC werden auf 0 kW gesetzt,
 3. CHAdeMO, CCS und Type2 erhalten `remoteStop()`, sofern aktiv,
-4. die 0-kW-Limits werden bis zur Freigabe regelmäßig erneut durchgesetzt.
+4. fehlgeschlagene `remoteStop()`-Aufrufe werden alle zwei Sekunden erneut versucht,
+5. die 0-kW-Limits werden bis zur Freigabe regelmäßig erneut durchgesetzt.
 
-## Auto-Reset
+## Gelatchter Reset
 
-Der Hard-Trip-Latch wird automatisch gelöscht, wenn alle KSEM-Lesungen gültig sind und jede Phase standardmäßig **60 s** ununterbrochen unter `reduceA` bleibt. Jeder erneute Überstrom oder KSEM-Fehler startet den Timer neu.
+Standardmäßig gibt es **keinen automatischen Reset nach Zeit**. Der Latch wird
+erst nach einer erkannten E-STOP-Betätigung, anschließendem Loslassen und fünf
+gültigen KSEM-Reads unter `reduceA` gelöscht. So kann eine fortbestehende
+Fehlerursache nicht nach 60 Sekunden selbsttätig wieder freigeben.
+
+Ein zeitgesteuerter Reset ist nur als ausdrückliches Opt-in mit
+`failback.autoResetHardTrip=true` und `failback.resetDelayMs` verfügbar.
 
 ## KSEM-Ausfall
 
-Nach drei Sekunden ohne gültigen KSEM-Wert werden AC und DC auf 0 kW pausiert, ohne die Backend-Transaktionen sofort abzubrechen. Nach fünf stabilen gültigen Reads unter 34 A darf der LoadManager beide Ausgänge wieder gemeinsam hochfahren.
+Schon der erste fehlgeschlagene oder unplausible KSEM-Read pausiert AC und DC
+auf 0 kW, ohne die Backend-Transaktionen sofort abzubrechen. Nach fünf stabilen
+gültigen Reads unter 34 A wird zunächst jede alte Grid-Freigabe verworfen; erst
+danach darf der LoadManager beide Ausgänge neu hochfahren.
+
+Dasselbe Nullsetzen vor Freigabe gilt beim Ende der Reduce-Stufe. Eine alte
+50-kW-Freigabe kann dadurch beim Entfernen einer 5-kW-Schutzkappe nicht
+sprunghaft wieder wirksam werden.
 
 Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/GridFailback.java`
 

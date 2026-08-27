@@ -8,18 +8,31 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.StringReader;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.Locale;
+import java.util.List;
 import java.util.Map;
 import java.util.TimeZone;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.DocumentBuilder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.SAXParseException;
 
 /** OCPP 1.5 SOAP -> OCPP 1.6 JSON bridge. */
 public final class Ocpp15BridgeServer {
@@ -36,11 +49,17 @@ public final class Ocpp15BridgeServer {
     private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private final Map<Integer,String> lastForwardedStatus = new HashMap<Integer,String>();
     private HttpServer server;
+    private ExecutorService executor;
 
     public Ocpp15BridgeServer(String bindAddress, int port, String path, int heartbeatInterval,
                               int timeoutMs, OcppBridgeClient upstream,
                               ReflectionQC45 station) {
-        this.bindAddress = bindAddress;
+        if (bindAddress == null || bindAddress.trim().length() == 0
+                || port < 1 || port > 65535 || heartbeatInterval <= 0
+                || timeoutMs <= 0 || upstream == null || station == null) {
+            throw new IllegalArgumentException("invalid OCPP15 bridge configuration");
+        }
+        this.bindAddress = bindAddress.trim();
         this.port = port;
         this.path = normalizePath(path);
         this.heartbeatInterval = heartbeatInterval;
@@ -51,11 +70,25 @@ public final class Ocpp15BridgeServer {
 
     public synchronized void start() throws Exception {
         if (server != null) return;
-        HttpServer s = HttpServer.create(new InetSocketAddress(InetAddress.getByName(bindAddress), port), 16);
-        s.createContext(path, new Handler());
-        s.setExecutor(Executors.newCachedThreadPool());
-        s.start();
-        server = s;
+        InetAddress address = InetAddress.getByName(bindAddress);
+        if (!address.isLoopbackAddress()) {
+            throw new IllegalArgumentException("OCPP15 bridge must bind to a loopback address: " + bindAddress);
+        }
+        HttpServer s = null;
+        ExecutorService workers = null;
+        try {
+            s = HttpServer.create(new InetSocketAddress(address, port), 16);
+            s.createContext(path, new Handler());
+            workers = Executors.newFixedThreadPool(4);
+            s.setExecutor(workers);
+            s.start();
+            executor = workers;
+            server = s;
+        } catch (Exception e) {
+            if (s != null) try { s.stop(0); } catch (Throwable ignored) {}
+            if (workers != null) workers.shutdownNow();
+            throw e;
+        }
         System.out.println("[QC45] OCPP15 bridge listening on http://" + bindAddress + ":" + port + path);
     }
 
@@ -63,6 +96,9 @@ public final class Ocpp15BridgeServer {
         HttpServer s = server;
         server = null;
         if (s != null) s.stop(0);
+        ExecutorService workers = executor;
+        executor = null;
+        if (workers != null) workers.shutdownNow();
         System.out.println("[QC45] OCPP15 bridge stopped");
     }
 
@@ -77,9 +113,7 @@ public final class Ocpp15BridgeServer {
                 String operation = operation(request);
                 if (operation.length() == 0) throw new IllegalArgumentException("Unsupported OCPP15 request");
                 System.out.println("[QC45] OCPP15 SOAP RX op=" + operation + " Content-Type=" + header(exchange, "Content-Type"));
-                if ("authorize".equals(operation)) System.out.println("[QC45] OCPP15 Authorize SOAP RX=" + request);
                 String response = dispatch(operation, request);
-                if ("authorize".equals(operation)) System.out.println("[QC45] OCPP15 Authorize SOAP TX=" + response);
                 byte[] bytes = response.getBytes("UTF-8");
                 Headers headers = exchange.getResponseHeaders();
                 headers.set("Content-Type", "application/soap+xml; charset=utf-8");
@@ -148,10 +182,15 @@ public final class Ocpp15BridgeServer {
                 + q("timestamp", ts) + "," + n("meterStart", longText(xml, "meterStart", 0))
                 + optionalNumber(xml, "reservationId") + "}";
             String result = upstream.call("StartTransaction", json, timeoutMs);
-            int tx = fieldInt(result, "transactionId", 0);
-            upstream.rememberTransaction(tx, connector);
-            synchronized (activeTransactions) { activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector)); }
-            sendDerivedStatusBestEffort(connector);
+            int tx = fieldInt(result, "transactionId", -1);
+            String authorization = nestedIdTagField(result, "status", "Invalid");
+            if ("Accepted".equalsIgnoreCase(authorization) && tx >= 0) {
+                upstream.rememberTransaction(tx, connector);
+                synchronized (activeTransactions) {
+                    activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector));
+                }
+                sendDerivedStatusBestEffort(connector);
+            }
             return soapEnvelope("<startTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
                 + value("transactionId", String.valueOf(tx)) + idTagInfoXml(result, "Accepted")
                 + "</startTransactionResponse>");
@@ -172,6 +211,7 @@ public final class Ocpp15BridgeServer {
             String result = upstream.call("StopTransaction", json, timeoutMs);
             Integer connector;
             synchronized (activeTransactions) { connector = activeTransactions.remove(Integer.valueOf(tx)); }
+            upstream.forgetTransaction(tx);
             if (connector != null && connector.intValue() > 0) sendFinishingBestEffort(connector.intValue());
             if (result.indexOf("idTagInfo") >= 0) {
                 return soapEnvelope("<stopTransactionResponse xmlns=\"" + OCPP15_NS + "\">" + idTagInfoXml(result, "Accepted") + "</stopTransactionResponse>");
@@ -306,18 +346,179 @@ public final class Ocpp15BridgeServer {
         return fieldString(source, field, fallback);
     }
 
-    private static String meterValuesJson(String xml) {
-        int connector = intText(xml, "connectorId", 0);
-        int tx = intText(xml, "transactionId", -1);
-        String timestamp = elementText(xml, "timestamp"); if (timestamp.length() == 0) timestamp = utcNow();
-        String value = first(xml, "value", "meterValue"); if (value.length() == 0) value = "0";
-        String sampled = "{\"value\":\"" + json(value) + "\"";
-        String measurand = elementText(xml, "measurand"); if (measurand.length() > 0) sampled += ",\"measurand\":\"" + json(measurand) + "\"";
-        String unit = elementText(xml, "unit"); if (unit.length() > 0) sampled += ",\"unit\":\"" + json(unit) + "\"";
-        sampled += "}";
-        String out = "{\"connectorId\":" + connector;
-        if (tx >= 0) out += ",\"transactionId\":" + tx;
-        return out + ",\"meterValue\":[{\"timestamp\":\"" + json(timestamp) + "\",\"sampledValue\":[" + sampled + "]}]}";
+    static String meterValuesJson(String xml) throws Exception {
+        Document document = parseXml(xml);
+        Element request = findElement(document.getDocumentElement(), "meterValues");
+        if (request == null) throw new IllegalArgumentException("MeterValues request element missing");
+
+        int connector = parseInt(childText(request, "connectorId"), 0);
+        int tx = parseInt(childText(request, "transactionId"), -1);
+        List<Element> groups = directChildren(request, "values", "meterValue");
+        groups = expandMeterGroups(groups);
+        if (groups.isEmpty()) throw new IllegalArgumentException("MeterValues request has no meter groups");
+
+        StringBuilder out = new StringBuilder("{\"connectorId\":").append(connector);
+        if (tx >= 0) out.append(",\"transactionId\":").append(tx);
+        out.append(",\"meterValue\":[");
+
+        int writtenGroups = 0;
+        for (int i = 0; i < groups.size(); i++) {
+            Element group = groups.get(i);
+            List<Element> samples = directChildren(group, "values", "sampledValue", "value");
+            samples = retainSampleElements(samples);
+            if (samples.isEmpty()) continue;
+            if (writtenGroups++ > 0) out.append(',');
+            String timestamp = childText(group, "timestamp");
+            if (timestamp.length() == 0) timestamp = utcNow();
+            out.append("{\"timestamp\":\"").append(json(timestamp))
+                .append("\",\"sampledValue\":[");
+
+            for (int j = 0; j < samples.size(); j++) {
+                if (j > 0) out.append(',');
+                Element sample = samples.get(j);
+                String value = sampleValue(sample);
+                out.append("{\"value\":\"").append(json(value)).append('"');
+                appendOptionalJson(out, sample, "context");
+                appendOptionalJson(out, sample, "format");
+                appendOptionalJson(out, sample, "measurand");
+                appendOptionalJson(out, sample, "phase");
+                appendOptionalJson(out, sample, "location");
+                appendOptionalJson(out, sample, "unit");
+                out.append('}');
+            }
+            out.append("]}");
+        }
+        if (writtenGroups == 0) throw new IllegalArgumentException("MeterValues request has no sampled values");
+        return out.append("]}").toString();
+    }
+
+    private static List<Element> expandMeterGroups(List<Element> candidates) {
+        List<Element> groups = new ArrayList<Element>();
+        for (int i = 0; i < candidates.size(); i++) {
+            Element candidate = candidates.get(i);
+            if (childText(candidate, "timestamp").length() > 0) {
+                groups.add(candidate);
+                continue;
+            }
+            List<Element> nested = directChildren(candidate, "values", "meterValue");
+            for (int j = 0; j < nested.size(); j++) {
+                if (childText(nested.get(j), "timestamp").length() > 0) groups.add(nested.get(j));
+            }
+        }
+        return groups;
+    }
+
+    private static List<Element> retainSampleElements(List<Element> candidates) {
+        List<Element> samples = new ArrayList<Element>();
+        for (int i = 0; i < candidates.size(); i++) {
+            Element candidate = candidates.get(i);
+            String local = localName(candidate);
+            if ("value".equals(local) && directElementChildren(candidate).isEmpty()) {
+                samples.add(candidate);
+            } else if (childText(candidate, "value").length() > 0) {
+                samples.add(candidate);
+            }
+        }
+        return samples;
+    }
+
+    private static String sampleValue(Element sample) {
+        if ("value".equals(localName(sample)) && directElementChildren(sample).isEmpty()) {
+            String value = sample.getTextContent();
+            return value == null ? "0" : value.trim();
+        }
+        String value = childText(sample, "value");
+        return value.length() == 0 ? "0" : value;
+    }
+
+    private static void appendOptionalJson(StringBuilder out, Element sample, String name) {
+        String value = childText(sample, name);
+        if (value.length() > 0) out.append(",\"").append(json(name)).append("\":\"")
+            .append(json(value)).append('"');
+    }
+
+    private static Document parseXml(String xml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(true);
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        setFeature(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+        setFeature(factory, "http://xml.org/sax/features/external-general-entities", false);
+        setFeature(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+        setFeature(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.setErrorHandler(new ErrorHandler() {
+            public void warning(SAXParseException e) throws SAXParseException { throw e; }
+            public void error(SAXParseException e) throws SAXParseException { throw e; }
+            public void fatalError(SAXParseException e) throws SAXParseException { throw e; }
+        });
+        return builder.parse(new InputSource(new StringReader(xml)));
+    }
+
+    private static void setFeature(DocumentBuilderFactory factory, String name,
+                                   boolean value) throws Exception {
+        factory.setFeature(name, value);
+    }
+
+    private static Element findElement(Element root, String name) {
+        if (name.equals(localName(root))) return root;
+        NodeList children = root.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element)) continue;
+            Element found = findElement((Element)node, name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private static List<Element> directChildren(Element parent, String... names) {
+        List<Element> result = new ArrayList<Element>();
+        List<Element> children = directElementChildren(parent);
+        for (int i = 0; i < children.size(); i++) {
+            String local = localName(children.get(i));
+            for (int j = 0; j < names.length; j++) {
+                if (names[j].equals(local)) {
+                    result.add(children.get(i));
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static List<Element> directElementChildren(Element parent) {
+        List<Element> result = new ArrayList<Element>();
+        NodeList children = parent.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (node instanceof Element) result.add((Element)node);
+        }
+        return result;
+    }
+
+    private static String childText(Element parent, String name) {
+        List<Element> children = directElementChildren(parent);
+        for (int i = 0; i < children.size(); i++) {
+            Element child = children.get(i);
+            if (!name.equals(localName(child))) continue;
+            String value = child.getTextContent();
+            return value == null ? "" : value.trim();
+        }
+        return "";
+    }
+
+    private static String localName(Element element) {
+        String local = element.getLocalName();
+        if (local != null) return local;
+        String name = element.getNodeName();
+        int colon = name.indexOf(':');
+        return colon < 0 ? name : name.substring(colon + 1);
+    }
+
+    private static int parseInt(String value, int fallback) {
+        try { return value.length() == 0 ? fallback : Integer.parseInt(value); }
+        catch (NumberFormatException e) { return fallback; }
     }
 
     private static String operation(String xml) {
@@ -339,7 +540,7 @@ public final class Ocpp15BridgeServer {
     private static String q(String k,String v){return "\""+json(k)+"\":\""+json(v)+"\"";}
     private static String n(String k,long v){return "\""+json(k)+"\":"+v;}
     private static String opt(String x,String n){String v=elementText(x,n);return v.length()==0?"":","+q(n,v);}
-    private static String optionalNumber(String x,String n){String v=elementText(x,n);return v.length()==0?"":",\""+json(n)+"\":"+v;}
+    private static String optionalNumber(String x,String n){String v=elementText(x,n);if(v.length()==0)return"";try{return",\""+json(n)+"\":"+Long.parseLong(v);}catch(NumberFormatException e){return"";}}
     private static String emptyDefault(String v,String d){return v==null||v.length()==0?d:v;}
     private static int fieldInt(String j,String f,int d){Matcher m=Pattern.compile("\\\""+Pattern.quote(f)+"\\\"\\s*:\\s*(-?\\d+)").matcher(j);return m.find()?Integer.parseInt(m.group(1)):d;}
     private static String fieldString(String j,String f,String d){Matcher m=Pattern.compile("\\\""+Pattern.quote(f)+"\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"])*)\\\"").matcher(j);return m.find()?m.group(1).replace("\\\"","\"").replace("\\\\","\\"):d;}
@@ -347,7 +548,7 @@ public final class Ocpp15BridgeServer {
     private static String xml(String v){return v==null?"":v.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");}
     private static String unxml(String v){return v.replace("&lt;","<").replace("&gt;",">").replace("&quot;","\"").replace("&apos;","'").replace("&amp;","&");}
     private static String json(String s){return s==null?"":s.replace("\\","\\\\").replace("\"","\\\"").replace("\r","\\r").replace("\n","\\n");}
-    private static String readUtf8(InputStream in)throws Exception{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>=0)o.write(b,0,n);return new String(o.toByteArray(),"UTF-8");}
+    private static String readUtf8(InputStream in)throws Exception{ByteArrayOutputStream o=new ByteArrayOutputStream();byte[]b=new byte[4096];int n;while((n=in.read(b))>=0){if(o.size()+n>1048576)throw new IllegalArgumentException("SOAP request exceeds 1 MiB");o.write(b,0,n);}return new String(o.toByteArray(),"UTF-8");}
     private static String normalizePath(String v){String p=v==null||v.trim().length()==0?"/QC45":v.trim();return p.charAt(0)=='/'?p:"/"+p;}
     private static String header(HttpExchange e,String n){String v=e.getRequestHeaders().getFirst(n);return v==null?"":v;}
     private static String utcNow(){SimpleDateFormat f=new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'",Locale.US);f.setTimeZone(TimeZone.getTimeZone("UTC"));return f.format(new Date());}

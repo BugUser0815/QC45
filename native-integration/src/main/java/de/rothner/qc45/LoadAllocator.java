@@ -3,6 +3,14 @@ package de.rothner.qc45;
 /** Pure AC/DC budget calculation used by {@link LoadManager}. */
 final class LoadAllocator {
     private static final double THREE_PHASE_KW_PER_A = 0.692820323d;
+    // Conservative command projection. Type2 may charge on only one 230 V
+    // phase; the DC rectifier also has conversion losses. Using separate
+    // factors prevents a released-but-not-yet-drawn target from exceeding a
+    // single phase at the grid connection point.
+    private static final double DC_KW_PER_GRID_A = 0.60d;
+    // 0.20 kW/A also covers -10% voltage and a non-ideal power factor instead
+    // of assuming exactly 230 V at unity PF.
+    private static final double AC_KW_PER_GRID_A = 0.20d;
 
     private LoadAllocator() {}
 
@@ -147,12 +155,42 @@ final class LoadAllocator {
         return fair;
     }
 
-    private static double projectedCurrentA(double measuredCriticalA, Targets targets,
-                                            int actualDcKw, int actualAcKw) {
+    /**
+     * A kW shifted from balanced DC to potentially single-phase AC consumes
+     * more current on the critical phase. Preserve as much demand transfer as
+     * possible without invalidating the projection already proven for the fair
+     * allocation.
+     */
+    static Targets constrainDemandTransfer(Targets fair, Targets transferred,
+                                           double measuredCriticalA,
+                                           int actualDcKw, int actualAcKw,
+                                           double commandCeilingA) {
+        int dcKw = transferred.dcKw;
+        int acKw = transferred.acKw;
+        while (projectedCurrentA(measuredCriticalA, new Targets(dcKw, acKw),
+                                 actualDcKw, actualAcKw) > commandCeilingA) {
+            if (acKw > fair.acKw && dcKw < fair.dcKw) {
+                acKw--;
+                dcKw++;
+            } else if (dcKw > fair.dcKw && acKw < fair.acKw) {
+                dcKw--;
+                acKw++;
+            } else {
+                // The fair allocation was already projection-checked. This is
+                // defensive for inconsistent callers or rapidly changed input.
+                return fair;
+            }
+        }
+        return new Targets(dcKw, acKw);
+    }
+
+    static double projectedCurrentA(double measuredCriticalA, Targets targets,
+                                    int actualDcKw, int actualAcKw) {
         int unreachedDcKw = Math.max(0, targets.dcKw - actualDcKw);
         int unreachedAcKw = Math.max(0, targets.acKw - actualAcKw);
         return measuredCriticalA
-            + (unreachedDcKw + unreachedAcKw) / THREE_PHASE_KW_PER_A;
+            + unreachedDcKw / DC_KW_PER_GRID_A
+            + unreachedAcKw / AC_KW_PER_GRID_A;
     }
 
     private static int normalize(int value, int min, int max) {

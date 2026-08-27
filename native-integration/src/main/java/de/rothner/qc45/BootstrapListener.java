@@ -6,7 +6,6 @@ import javax.servlet.ServletContextListener;
 /** Starts/stops the native integration with the existing EVCSD web application. */
 public final class BootstrapListener implements ServletContextListener {
     private volatile Integration integration;
-    private volatile RemoteStartAuthorizationFix remoteStartAuthorizationFix;
 
     public void contextInitialized(ServletContextEvent event) {
         try {
@@ -19,13 +18,7 @@ public final class BootstrapListener implements ServletContextListener {
         }
 
         try {
-            // Keep the production runtime minimal: only enforce the serializer
-            // generation required by the installed CCS stack. Historical current
-            // and hardware-metadata experiments are deliberately not applied.
-            CcsProtocolV3Enforcer.apply();
             integration = Integration.start();
-            CcsProtocolV3Enforcer.apply();
-            remoteStartAuthorizationFix = RemoteStartAuthorizationFix.start();
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
                 CcsRawTracerV2.installFromDefaultConfig();
@@ -46,14 +39,12 @@ public final class BootstrapListener implements ServletContextListener {
     }
 
     public void contextDestroyed(ServletContextEvent event) {
-        CcsFullRxTracer.shutdown();
-
-        RemoteStartAuthorizationFix authFix = remoteStartAuthorizationFix;
-        remoteStartAuthorizationFix = null;
-        if (authFix != null) authFix.shutdown();
-
         Integration current = integration;
         integration = null;
         if (current != null) current.stop();
+
+        CcsFullRxTracer.shutdown();
+        CcsRawTracerV2.shutdown();
+        FileLog.shutdown();
     }
 }

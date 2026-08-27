@@ -4,11 +4,14 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 {
+public final class ReflectionQC45 implements ChargingLimitIo {
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
+    private final Set<Integer> remoteConnectors = new HashSet<Integer>();
 
     public ReflectionQC45() throws Exception {
         centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
@@ -270,19 +273,7 @@ public final class ReflectionQC45 {
         return ((Boolean) centralClass.getMethod("isRemoteStarted").invoke(central())).booleanValue();
     }
 
-    public int activeDcConnector() throws Exception {
-        int c1 = powerKw(1), c2 = powerKw(2);
-        if (c1 > 0 && c2 > 0) return c1 >= c2 ? 1 : 2;
-        if (c1 > 0) return 1;
-        if (c2 > 0) return 2;
-        return 0;
-    }
-
-    public int stationPowerKw() throws Exception {
-        return Math.max(powerKw(1), powerKw(2)) + powerKw(3);
-    }
-
-    public void setConnectorLimitKw(int connector, int kw) throws Exception {
+    public synchronized void setConnectorLimitKw(int connector, int kw) throws Exception {
         if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
         kw = clamp(kw, 0, connector == 3 ? 22 : 50);
 
@@ -312,7 +303,7 @@ public final class ReflectionQC45 {
 
         boolean sentCcsStart = false;
         int quickCurrent = 0;
-        if (ccs && connector == 2 && kw > 0) {
+        if (ccs && connector == 2) {
             quickCurrent = refreshQuickChargeCurrentForPower(connector, kw);
             sentCcsStart = true;
         }
@@ -330,19 +321,85 @@ public final class ReflectionQC45 {
             + " acFixed=" + safeAcFixed());
     }
 
-    public void setDcBudgetKw(int kw) throws Exception {
-        kw = clamp(kw, 0, 50);
-        int active = activeDcConnector();
-        if (active == 0) {
-            setConnectorLimitKw(1, kw);
-            setConnectorLimitKw(2, kw);
-        } else {
-            setConnectorLimitKw(active, kw);
-        }
+    public boolean sessionActive(int connector) throws Exception {
+        Object sat = satellite(connector);
+        try {
+            Object tx = sat.getClass().getMethod("getActiveTransaction").invoke(sat);
+            if (tx != null) return true;
+        } catch (NoSuchMethodException ignored) {}
+        return powerKw(connector) > 0 || idTag(connector).length() > 0;
     }
 
-    public void setAcBudgetKw(int kw) throws Exception {
-        setConnectorLimitKw(3, clamp(kw, 0, 22));
+    public boolean isCcsCharge(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Object value = sat.getClass().getMethod("isCCSCharge").invoke(sat);
+        return value instanceof Boolean && ((Boolean)value).booleanValue();
+    }
+
+    public boolean emergencyStopPressed() throws Exception {
+        boolean observed = false;
+        Throwable lastFailure = null;
+        for (int connector = 1; connector <= 3; connector++) {
+            try {
+                Object sat = satellite(connector);
+                Field infoField = findSingleField(sat.getClass(), "infoState");
+                if (infoField == null) continue;
+                infoField.setAccessible(true);
+                Object info = infoField.get(sat);
+                if (info == null || findSingleField(info.getClass(), "epoPressed") == null) continue;
+                observed = true;
+                if (booleanField(info, "epoPressed", false)) return true;
+            } catch (Throwable e) {
+                lastFailure = e;
+            }
+        }
+        if (!observed) {
+            if (lastFailure instanceof Exception) throw (Exception)lastFailure;
+            throw new IllegalStateException("E-STOP state unavailable");
+        }
+        return false;
+    }
+
+    public synchronized boolean isRemoteSession(int connector) {
+        Integer key = Integer.valueOf(connector);
+        if (!remoteConnectors.contains(key)) return false;
+        try {
+            if (!sessionActive(connector)) {
+                remoteConnectors.remove(key);
+                return false;
+            }
+        } catch (Throwable ignored) {
+            // Keep the marker on an observation failure; clearing it could drop
+            // authorization from a still-active remote session.
+        }
+        return true;
+    }
+
+    /** Resolve a backend transaction after a bridge/JVM restart when possible. */
+    public int connectorForTransactionId(int transactionId) {
+        if (transactionId < 0) return 0;
+        for (int connector = 1; connector <= 3; connector++) {
+            try {
+                Object tx = activeTransaction(connector);
+                if (tx != null && transactionIdMatches(tx, transactionId)) return connector;
+            } catch (Throwable ignored) {}
+        }
+        return 0;
+    }
+
+    /** Safe fallback only when exactly one connector currently has a session. */
+    public int soleActiveConnector() {
+        int found = 0;
+        for (int connector = 1; connector <= 3; connector++) {
+            try {
+                if (!sessionActive(connector)) continue;
+                if (found != 0) return 0;
+                found = connector;
+            } catch (Throwable ignored) {
+                return 0;
+            }
+        }
+        return found;
     }
 
     public int globalMaxPower() throws Exception {
@@ -462,6 +519,7 @@ public final class ReflectionQC45 {
 
     public void remoteStart(String idTag, int connector) throws Exception {
         if (idTag == null || idTag.trim().length() == 0) throw new IllegalArgumentException("missing idTag");
+        if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
         idTag = idTag.trim();
         Object cm = central();
         Object listener = newNmsListener(cm);
@@ -469,12 +527,14 @@ public final class ReflectionQC45 {
         Object value = m.invoke(listener, "", idTag, Integer.valueOf(connector));
         boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
         boolean remote = remoteStarted();
-        System.out.println("[QC45] Native RemoteStart connector=" + connector + " idTag=" + idTag
+        System.out.println("[QC45] Native RemoteStart connector=" + connector
             + " remoteStartCharge=" + result + " remoteStarted=" + remote);
         if (!result) throw new IllegalStateException("remoteStartCharge returned false");
+        synchronized (this) { remoteConnectors.add(Integer.valueOf(connector)); }
     }
 
     public void remoteStop(int connector) throws Exception {
+        if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
         Object cm = central();
         Object target = satellite(connector);
         Object listener = newNmsListener(cm);
@@ -490,12 +550,21 @@ public final class ReflectionQC45 {
         Method abort = listener.getClass().getMethod("abortCharge", String.class, String.class, String.class);
         Object value = abort.invoke(listener, satelliteUniqueId, transactionUniqueId, "");
         boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
-        setRemoteStartedFalse(cm);
+        if (!result) throw new IllegalStateException("abortCharge returned false");
+        synchronized (this) { remoteConnectors.remove(Integer.valueOf(connector)); }
+        boolean anyRemote = hasAnyRemoteSession();
+        if (!anyRemote) setRemoteStartedFalse(cm);
         boolean remote = remoteStarted();
         System.out.println("[QC45] Native RemoteStop connector=" + connector
             + " satelliteUniqueId=" + satelliteUniqueId + " transactionUniqueId=" + transactionUniqueId
             + " abortCharge=" + result + " remoteStarted=" + remote);
-        if (!result) throw new IllegalStateException("abortCharge returned false");
+    }
+
+    private boolean hasAnyRemoteSession() {
+        for (int connector = 1; connector <= 3; connector++) {
+            if (isRemoteSession(connector)) return true;
+        }
+        return false;
     }
 
     private Object newNmsListener(Object cm) throws Exception {
@@ -528,6 +597,72 @@ public final class ReflectionQC45 {
             } catch (NoSuchFieldException ignored) { t = t.getSuperclass(); }
         }
         throw new IllegalStateException("Unable to clear remoteStarted");
+    }
+
+    private Object activeTransaction(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Method method = findMethod(sat.getClass(), "getActiveTransaction");
+        return method == null ? null : method.invoke(sat);
+    }
+
+    private static boolean transactionIdMatches(Object tx, int expected) {
+        String[] methods = new String[] {
+            "getTransactionId", "getCentralSystemTransactionId",
+            "getNmsTransactionId", "getId", "getUniqueId"
+        };
+        for (int i = 0; i < methods.length; i++) {
+            try {
+                Method method = findMethod(tx.getClass(), methods[i]);
+                if (method == null || method.getParameterTypes().length != 0) continue;
+                Integer value = integerValue(method.invoke(tx));
+                if (value != null && value.intValue() == expected) return true;
+            } catch (Throwable ignored) {}
+        }
+
+        Class<?> type = tx.getClass();
+        while (type != null) {
+            Field[] fields = type.getDeclaredFields();
+            for (int i = 0; i < fields.length; i++) {
+                Field field = fields[i];
+                String name = field.getName().toLowerCase(java.util.Locale.US);
+                if (name.indexOf("id") < 0
+                        || (name.indexOf("transaction") < 0 && name.indexOf("unique") < 0)) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Integer value = integerValue(field.get(tx));
+                    if (value != null && value.intValue() == expected) return true;
+                } catch (Throwable ignored) {}
+            }
+            type = type.getSuperclass();
+        }
+        return false;
+    }
+
+    private static Integer integerValue(Object value) {
+        if (value instanceof Number) return Integer.valueOf(((Number)value).intValue());
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        if (text.length() == 0) return null;
+        try { return Integer.valueOf(Integer.parseInt(text)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    private static Method findMethod(Class<?> type, String name) {
+        Class<?> current = type;
+        while (current != null) {
+            try {
+                Method method = current.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method;
+            } catch (NoSuchMethodException ignored) {
+                current = current.getSuperclass();
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private static int clamp(int value, int min, int max) {

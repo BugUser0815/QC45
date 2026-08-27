@@ -21,10 +21,14 @@ import java.util.Properties;
 public final class CcsFullRxTracer {
     private static final String PREFIX = "[QC45] CCS-FULL-RX ";
     private static volatile TraceState liveState;
+    private static Object hookedReader;
+    private static Field hookedField;
+    private static InputStream originalInput;
+    private static TraceInputStream wrapperInput;
 
     private CcsFullRxTracer() {}
 
-    public static void installFromDefaultConfig() throws Exception {
+    public static synchronized void installFromDefaultConfig() throws Exception {
         Properties p = new Properties();
         String explicit = System.getProperty("qc45.integration.config");
         File file = explicit == null || explicit.trim().length() == 0
@@ -43,10 +47,24 @@ public final class CcsFullRxTracer {
         install(flushMs, maxBytes);
     }
 
-    public static void shutdown() {
+    public static synchronized void shutdown() {
+        try {
+            if (hookedReader != null && hookedField != null && wrapperInput != null) {
+                hookedField.setAccessible(true);
+                if (hookedField.get(hookedReader) == wrapperInput) {
+                    hookedField.set(hookedReader, originalInput);
+                }
+            }
+        } catch (Throwable e) {
+            System.err.println(PREFIX + "stream restore failed: " + e);
+        }
         TraceState state = liveState;
         liveState = null;
         if (state != null) state.shutdown();
+        hookedReader = null;
+        hookedField = null;
+        originalInput = null;
+        wrapperInput = null;
     }
 
     private static void install(int flushMs, int maxBytes) throws Exception {
@@ -78,7 +96,12 @@ public final class CcsFullRxTracer {
         }
 
         TraceState state = new TraceState(port, serializer, flushMs, maxBytes);
-        inField.set(reader, new TraceInputStream((InputStream)inValue, state));
+        TraceInputStream wrapper = new TraceInputStream((InputStream)inValue, state);
+        inField.set(reader, wrapper);
+        hookedReader = reader;
+        hookedField = inField;
+        originalInput = (InputStream)inValue;
+        wrapperInput = wrapper;
         liveState = state;
 
         System.out.println(PREFIX + "installed port=" + port + " serializer=" + serializer

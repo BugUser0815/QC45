@@ -24,7 +24,11 @@ Logs aus der Zwischenversion mit `ccsV3Byte2=<Ampere>` zeigen, dass der Kona hoc
 
 ### ⛔ EVCSD darf beim Start selbständig auf 50 kW springen
 
-Behoben durch Pre-Arm und autoritatives `commandedDcKw`. Ein höherer gemeldeter EVCSD-Wert wird sofort zurückgesetzt.
+Ein 5-kW-Pre-Arm war ebenfalls nicht ausreichend sicher, weil er vor der
+eigentlichen Headroom-Berechnung Leistung freigab. Der aktuelle Stand startet
+fail-closed bei 0 kW. Erst nach fünf gültigen KSEM-Messungen wird ein frisch
+berechnetes Ziel unter aktiver Sperre vorbereitet und anschließend freigegeben.
+Der `ChargingLimitGuard` setzt fremde EVCSD-Änderungen zurück.
 
 ### ⛔ Alte Type2-Mitregelung ohne heutige Schutzmechanismen
 
@@ -35,6 +39,12 @@ Die frühe Hybridfassung wurde zu Recht verworfen: Sie verwendete gemeldete stat
 ### ⛔ Eine einzige dauerhafte KSEM-Verbindung als Zwang
 
 Nicht übernommen. Wegen paralleler Zugriffe durch QC45, PeakShaving, evcc/Monitoring sind kurze Verbindungen robust und ausreichend.
+
+### ⛔ Nur das untere 16-Bit-Wort des Phasenstroms lesen
+
+Verworfen. Oberhalb 65,535 A läuft das Low-Word über und kann einen gefährlich
+hohen Strom als kleinen Wert erscheinen lassen. Es wird immer der vollständige
+unsigned 32-Bit-Wert in der konfigurierten Wortreihenfolge ausgewertet.
 
 ## Peak Shaving
 
@@ -54,7 +64,8 @@ Falsch für das gewünschte Systemverhalten. Fake Export wird benötigt, um die 
 
 ### Historischer direkter OCPP-Client
 
-Im Source existiert noch `OcppClient.java` aus einem früheren direkten Native-OCPP-Ansatz. Der produktive `Integration.start()` verwendet heute stattdessen:
+`OcppClient.java` und die nur dafür benötigte `TlsSupport.java` wurden entfernt.
+Der produktive Stand verwendet ausschließlich:
 
 - `OcppBridgeClient`
 - `Ocpp15BridgeServer`

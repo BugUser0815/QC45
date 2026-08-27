@@ -38,8 +38,8 @@ Nur Register **110 und 111** sind beschreibbar. Alle anderen Schreibversuche lie
 | 60 | R | Gesamtstatus: 0 idle, 1 Session, 2 Charging | – |
 | 100 | R | Leistung aktiver DC-Ausgang | kW |
 | 101 | R | Type2-Leistung | kW |
-| **110** | **R/W** | **DC-Budget** | **kW** |
-| **111** | **R/W** | **AC/Type2-Budget** | **kW** |
+| **110** | **R/W** | **dauerhafte evcc-DC-Obergrenze** | **kW** |
+| **111** | **R/W** | **dauerhafte evcc-AC-Obergrenze** | **kW** |
 | 120 | R | Live-DC-Leistung für Lademonitor | kW |
 | 121 | R | DC-Soll/Limit für Lademonitor | kW |
 | 122 | R | Batterie-SoC aus `SatelliteInfo` | % |
@@ -54,16 +54,36 @@ Connector 1 und 2 sind als logische DC-Ausgänge behandelt. Sind beide Zustände
 
 ```mermaid
 flowchart LR
-  Client[evcc / Testclient] -->|FC06/16 Register 110| MB[ModbusServer]
-  MB -->|setDcBudgetKw| REF[ReflectionQC45]
-  REF --> EVCSD[Satellite / Configuration]
+  Client[evcc / Testclient] -->|FC06/16 Register 110/111| MB[ModbusServer]
+  MB -->|Wunschwerte| LIM[ChargingLimitCoordinator]
+  LM[LoadManager] -->|Netzfreigabe| LIM
+  FB[GridFailback] -->|Kappe / Sperre| LIM
+  LIM --> REF[ReflectionQC45] --> EVCSD[Satellite / Configuration]
 ```
 
-Register 110 steuert den DC-Budgetpfad, Register 111 den AC-Budgetpfad. Der native **LoadManager schreibt nicht über den Netzwerk-Modbus-Server**, sondern ruft denselben `ReflectionQC45`-Pfad direkt auf.
+Register 110 steuert die persistente DC-Anforderung, Register 111 die
+AC-Anforderung. Werte `1..4 kW` werden wie `0 kW` als Pause behandelt. Modbus
+schreibt nie mehr direkt in EVCSD und kann deshalb eine Failback-Sperre nicht
+überschreiben. FC16-Schreibvorgänge auf 110/111 werden atomar übernommen;
+Hardware-Reduktionen erfolgen vor Erhöhungen.
+
+Beim JVM-/Webapp-Start stehen beide Wunschregister zunächst auf 0 kW. Damit
+bleibt die Station auch bei nicht erreichbarem evcc fail-closed, bis evcc den
+jeweiligen Sollwert neu überträgt.
 
 ## Warum Multi-Client?
 
 Parallel können evcc, die lokale UI und Diagnosewerkzeuge lesen. Jeder Client erhält einen eigenen Thread und Socket. Das vermeidet, dass ein lang laufender Client alle anderen blockiert.
+
+Der Zugriff ist dennoch nicht offen: `modbus.allowedClients` enthält eine
+kommaseparierte Liste exakter IP-Adressen oder CIDR-Netze, zusätzlich ist
+Loopback erlaubt. Wildcards und Hostnamen werden abgelehnt; eine leere Liste
+bedeutet `loopback-only`. `modbus.maxClients` begrenzt parallele Sockets.
+
+Jeder Read-Request verwendet einen zusammenhängenden Snapshot. Dadurch stammen
+aktiver DC-Connector, Leistung, SoC, Zeit sowie beide High-/Low-Wörter der
+Energie aus demselben Snapshot, auch wenn während einer Blockabfrage ein
+Connectorwechsel stattfindet.
 
 Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/ModbusServer.java`
 

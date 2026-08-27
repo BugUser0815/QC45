@@ -11,13 +11,14 @@ flowchart TB
     JAR[qc45-integration.jar]
     MOD[Modbus TCP :1502]
     O15[OCPP 1.5 SOAP Loopback]
+    LIM[ChargingLimitCoordinator]
     REF[ReflectionQC45]
     HW[SatelliteModule / Master / Ladehardware]
     CCS[CCS Controller / HLC]
     EVCSD <--> JAR
     JAR --> MOD
     JAR --> O15
-    JAR --> REF --> HW --> CCS
+    JAR --> LIM --> REF --> HW --> CCS
   end
 
   EVCC[evcc QC45 Driver] <-->|Register 100/110 usw.| MOD
@@ -39,9 +40,10 @@ flowchart TB
 |---|---|---|
 | EVCSD | Originale Stationslogik, Transaktionen, Hardwarezustände | externes Peak Shaving |
 | `qc45-integration.jar` | OCPP-Bridge, Modbus, LoadManager, GridFailback, Diagnose | Sunny-Island-Speedwire |
-| evcc | gewünschtes Ladebudget per Modbus | OCPP-Authentifizierung/Transaktionsstart |
+| evcc | dauerhafte AC/DC-Wunschobergrenzen per Modbus | Netzfreigabe oder OCPP-Transaktionsstart |
 | LoadManager | gemeinsames, gleich priorisiertes DC/AC-Budget nach KSEM-Phasenstrom | externes Peak Shaving |
 | GridFailback | unabhängiger AC/DC-Überstrom- und Messausfallschutz | normale Leistungsoptimierung |
+| ChargingLimitCoordinator | Minimum aus evcc-Wunsch, Netzfreigabe und Schutzkappe; einzige Hardware-Schreibinstanz | eigene Messung oder Optimierung |
 | PeakShaving `lean` | virtuelles SMA eMeter für Sunny Island | QC45 direkt ansteuern |
 | SoC-Limiter | positive Entladeanforderung des Sunny Island begrenzen | Fake-Export/Ladeanforderung begrenzen |
 
@@ -51,6 +53,16 @@ flowchart TB
 2. **QC45/PeakShaving als Modbus-Client:** LoadManager/GridFailback lesen den KSEM auf Port `502`; der PeakShaving-Prozess liest KSEM und optional Sunny Island ebenfalls per Modbus.
 
 Diese Rollen dürfen nicht vermischt werden.
+
+Die wirksame Freigabe ist immer:
+
+```text
+P_effektiv = min(P_evcc, P_LoadManager, P_Failback)
+```
+
+Eine Failback-Sperre kann weder durch evcc noch durch EVCSD überschrieben
+werden. Der unabhängige Guard erkennt und korrigiert fremde EVCSD-Limitwrites
+spätestens im nächsten 250-ms-Zyklus.
 
 ## CCS-Protokollebenen
 
