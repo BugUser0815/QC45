@@ -45,6 +45,38 @@ Nur Register **110 und 111** sind beschreibbar. Alle anderen Schreibversuche lie
 | 122 | R | Batterie-SoC aus `SatelliteInfo` | % |
 | 123 | R | Ladezeit | s |
 | 124–125 | R | Sessionenergie U32 high/low | Wh |
+| 126 | R | AC/DC-UI-Schema-Version (`1`) | – |
+| 127 | R | AC/DC-Session-, Leistungs- und Schutzflags | Bitfeld |
+| 128 | R | aktiver DC-Connector (`0/1/2`) | – |
+| 129 | R | DC-Istleistung | kW |
+| 130 | R | evcc-DC-Anforderung | kW |
+| 131 | R | LoadManager-DC-Zuteilung | kW |
+| 132 | R | GridFailback-DC-Schutzkappe | kW |
+| 133 | R | wirksame DC-Freigabe | kW |
+| 134 | R | DC-Fahrzeug-SoC | % |
+| 135 | R | DC-Ladezeit | s |
+| 136–137 | R | DC-Sessionenergie U32 high/low | Wh |
+| 138 | R | AC-Istleistung | kW |
+| 139 | R | evcc-AC-Anforderung | kW |
+| 140 | R | LoadManager-AC-Zuteilung | kW |
+| 141 | R | GridFailback-AC-Schutzkappe | kW |
+| 142 | R | wirksame AC-Freigabe | kW |
+| 143 | R | AC-Ladezeit | s |
+| 144–145 | R | AC-Sessionenergie U32 high/low | Wh |
+
+Register 127 verwendet folgende Bits:
+
+| Bit | Bedeutung |
+|---:|---|
+| 0/1 | DC-/AC-Session aktiv |
+| 2/3 | DC-/AC-Leistungsfluss aktiv |
+| 4 | zentrale Sperre aktiv |
+| 5 | GridFailback-Sperre |
+| 6 | KSEM-/LoadManager-Sperre |
+| 7 | sichere Startsperre |
+| 8 | Shutdown-Sperre |
+| 9 | bedarfsgerechte Umverteilung aktiv |
+| 10 | reduzierte GridFailback-Schutzkappe aktiv |
 
 ## Aktiver DC-Connector
 
@@ -81,9 +113,9 @@ Loopback erlaubt. Wildcards und Hostnamen werden abgelehnt; eine leere Liste
 bedeutet `loopback-only`. `modbus.maxClients` begrenzt parallele Sockets.
 
 Jeder Read-Request verwendet einen zusammenhängenden Snapshot. Dadurch stammen
-aktiver DC-Connector, Leistung, SoC, Zeit sowie beide High-/Low-Wörter der
-Energie aus demselben Snapshot, auch wenn während einer Blockabfrage ein
-Connectorwechsel stattfindet.
+AC/DC-Leistungen, evcc-Wünsche, LoadManager-Zuteilungen, wirksame Freigaben,
+Sicherheitsstatus, SoC, Zeiten sowie High-/Low-Wörter beider Energiewerte aus
+demselben Abfragezustand.
 
 Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/ModbusServer.java`
 

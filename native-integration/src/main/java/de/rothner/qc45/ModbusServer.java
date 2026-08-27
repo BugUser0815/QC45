@@ -18,6 +18,22 @@ import java.util.HashSet;
 import java.util.Set;
 
 public final class ModbusServer extends Thread {
+    static final int UI_BALANCING_FIRST_REGISTER = 126;
+    static final int UI_BALANCING_REGISTER_COUNT = 20;
+    static final int UI_BALANCING_VERSION = 1;
+
+    static final int UI_FLAG_DC_SESSION = 1 << 0;
+    static final int UI_FLAG_AC_SESSION = 1 << 1;
+    static final int UI_FLAG_DC_FLOW = 1 << 2;
+    static final int UI_FLAG_AC_FLOW = 1 << 3;
+    static final int UI_FLAG_BLOCKED = 1 << 4;
+    static final int UI_FLAG_FAILBACK = 1 << 5;
+    static final int UI_FLAG_LOAD_METER = 1 << 6;
+    static final int UI_FLAG_STARTUP = 1 << 7;
+    static final int UI_FLAG_SHUTDOWN = 1 << 8;
+    static final int UI_FLAG_DEMAND_TRANSFER = 1 << 9;
+    static final int UI_FLAG_STAGE_LIMIT = 1 << 10;
+
     private final ReflectionQC45 station;
     private final ChargingLimitCoordinator limits;
     private final String bindAddress;
@@ -200,6 +216,10 @@ public final class ModbusServer extends Thread {
     }
 
     private int register(int address, ReadSnapshot snapshot) throws Exception {
+        if (address >= UI_BALANCING_FIRST_REGISTER
+                && address < UI_BALANCING_FIRST_REGISTER + UI_BALANCING_REGISTER_COUNT) {
+            return snapshot.balancingRegisters[address - UI_BALANCING_FIRST_REGISTER];
+        }
         switch (address) {
             case 0: return snapshot.stationPowerKw;
             case 1: return snapshot.power[1];
@@ -496,6 +516,35 @@ public final class ModbusServer extends Thread {
         return (int)(value & 0xffffL);
     }
 
+    static int[] uiBalancingBlock(int flags, int activeDc, int liveDcPowerKw,
+                                  ChargingLimitCoordinator.Snapshot balancing,
+                                  int socPct, long dcSeconds, long dcEnergyWh,
+                                  int liveAcPowerKw, long acSeconds, long acEnergyWh) {
+        if (balancing == null) throw new IllegalArgumentException("balancing snapshot is required");
+        return new int[] {
+            UI_BALANCING_VERSION,
+            flags & 0xffff,
+            activeDc,
+            liveDcPowerKw,
+            balancing.requestedDcKw,
+            balancing.gridDcKw,
+            balancing.stageDcCapKw,
+            balancing.effectiveDcKw,
+            socPct,
+            (int)Math.min(65535L, Math.max(0L, dcSeconds)),
+            highWord(dcEnergyWh),
+            lowWord(dcEnergyWh),
+            liveAcPowerKw,
+            balancing.requestedAcKw,
+            balancing.gridAcKw,
+            balancing.stageAcCapKw,
+            balancing.effectiveAcKw,
+            (int)Math.min(65535L, Math.max(0L, acSeconds)),
+            highWord(acEnergyWh),
+            lowWord(acEnergyWh)
+        };
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
@@ -537,9 +586,14 @@ public final class ModbusServer extends Thread {
         final int requestedDcKw;
         final int requestedAcKw;
         final int liveDcPowerKw;
+        final int liveAcPowerKw;
         final int socPct;
         final long chargingSeconds;
         final long sessionEnergyWh;
+        final long acChargingSeconds;
+        final long acSessionEnergyWh;
+        final ChargingLimitCoordinator.Snapshot balancing;
+        final int[] balancingRegisters;
 
         ReadSnapshot() throws Exception {
             synchronized (station) {
@@ -573,14 +627,34 @@ public final class ModbusServer extends Thread {
                 }
 
                 liveDcPowerKw = clamp(dcPower, 0, 65535);
+                liveAcPowerKw = clamp(session[3] ? livePowerKw(3) : 0, 0, 65535);
                 socPct = clamp(dcSoc, 0, 100);
                 chargingSeconds = Math.max(0L, dcSeconds);
                 sessionEnergyWh = Math.max(0L, dcEnergy);
+                acChargingSeconds = session[3] ? Math.max(0L, liveChargingTimeSeconds(3)) : 0L;
+                acSessionEnergyWh = session[3] ? Math.max(0L, sessionEnergyWh(3)) : 0L;
             }
             // Never acquire the coordinator while holding the station monitor:
             // coordinator writes use the opposite order (coordinator -> station).
-            requestedDcKw = limits.requestedDcKw();
-            requestedAcKw = limits.requestedAcKw();
+            balancing = limits.snapshot();
+            requestedDcKw = balancing.requestedDcKw;
+            requestedAcKw = balancing.requestedAcKw;
+
+            int flags = 0;
+            if (session[1] || session[2]) flags |= UI_FLAG_DC_SESSION;
+            if (session[3]) flags |= UI_FLAG_AC_SESSION;
+            if (liveDcPowerKw > 0) flags |= UI_FLAG_DC_FLOW;
+            if (liveAcPowerKw > 0) flags |= UI_FLAG_AC_FLOW;
+            if (balancing.blocked) flags |= UI_FLAG_BLOCKED;
+            if (balancing.failbackBlocked) flags |= UI_FLAG_FAILBACK;
+            if (balancing.loadMeterBlocked) flags |= UI_FLAG_LOAD_METER;
+            if (balancing.startupBlocked) flags |= UI_FLAG_STARTUP;
+            if (balancing.shutdownBlocked) flags |= UI_FLAG_SHUTDOWN;
+            if (balancing.demandTransfer) flags |= UI_FLAG_DEMAND_TRANSFER;
+            if (balancing.stageLimited) flags |= UI_FLAG_STAGE_LIMIT;
+            balancingRegisters = uiBalancingBlock(flags, activeDc, liveDcPowerKw,
+                balancing, socPct, chargingSeconds, sessionEnergyWh,
+                liveAcPowerKw, acChargingSeconds, acSessionEnergyWh);
         }
 
         private boolean safeSessionActive(int connector) {

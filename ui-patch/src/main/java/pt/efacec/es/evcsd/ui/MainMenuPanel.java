@@ -51,7 +51,7 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "ANSCHLUSS WÄHLEN",
             emergency ? "Der Not-Halt ist betätigt."
-                      : "Die vier Positionen entsprechen direkt den vier Gerätetasten");
+                      : "AC und ein DC-Anschluss können gleichzeitig laden");
 
         connectorKey(g, KEY_TOP_LEFT, "CCS", "CCS2",
             connectorState(showCcs, ccsInUse, ccsOut),
@@ -59,15 +59,20 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
         connectorKey(g, KEY_TOP_RIGHT, "CHAdeMO", "CHADEMO",
             connectorState(showChademo, chaInUse, chaOut),
             showChademo && !chaInUse && !chaOut && !emergency, chaOut, chaInUse);
-        connectorKey(g, KEY_BOTTOM_LEFT, "AC 11", "TYPE2",
+        connectorKey(g, KEY_BOTTOM_LEFT, "AC", "TYPE 2",
             connectorState(showAc, acInUse, acOut),
             showAc && !acInUse && !acOut && !emergency, acOut, acInUse);
         languageKey(g, KEY_BOTTOM_RIGHT, !emergency);
 
         g.setColor(SECONDARY);
-        g.setFont(font(java.awt.Font.PLAIN, 15));
+        g.setFont(font(java.awt.Font.BOLD, 14));
         centered(g, emergency ? "Laden gesperrt"
-                              : "Taste neben dem gewünschten Anschluss drücken", 320, 254);
+                              : "DYNAMISCHES LOAD BALANCING", 320, 246);
+        if (!emergency) {
+            g.setColor(YELLOW);
+            g.setFont(font(java.awt.Font.PLAIN, 12));
+            centered(g, "AC + DC · gleichberechtigt und netzsicher", 320, 268);
+        }
     }
 
     private void connectorKey(Graphics2D g, int position, String label, String kind,

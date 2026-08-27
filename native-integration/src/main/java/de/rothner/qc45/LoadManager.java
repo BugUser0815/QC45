@@ -170,7 +170,9 @@ public final class LoadManager extends Thread {
                     fair, target, criticalA, safetyCreditedDcKw,
                     safetyCreditedAcKw, commandCeilingA);
 
-                limits.setGridTargets(active.dcConnector, active.ac, target.dcKw, target.acKw);
+                boolean demandTransfer = target.dcKw != fair.dcKw || target.acKw != fair.acKw;
+                limits.setGridTargets(active.dcConnector, active.ac,
+                    target.dcKw, target.acKw, demandTransfer);
                 releasePreparedMeterBlocks();
                 previousActualDcKw = actualDcKw;
                 previousActualAcKw = actualAcKw;
@@ -182,7 +184,7 @@ public final class LoadManager extends Thread {
                         + "kW actualDC=" + actualDcKw + "kW actualAC=" + actualAcKw
                         + "kW evccCapDC=" + requestedDcMax + "kW evccCapAC="
                         + requestedAcMax + "kW priority=equal demandTransfer="
-                        + (target.dcKw != fair.dcKw || target.acKw != fair.acKw));
+                        + demandTransfer);
                 }
             } catch (Throwable e) {
                 markMeterOrControlFailure(now, e);

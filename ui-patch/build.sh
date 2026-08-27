@@ -16,6 +16,14 @@ resource_root="$script_dir/src/main/resources"
 sources_file="$script_dir/target/sources.txt"
 pinned_ecj=${QC45_ECJ_JAR:-"${HOME}/.local/share/qc45-ui-deployer/ecj-3.32.0.jar"}
 
+jar_tool() {
+    if command -v jar >/dev/null 2>&1; then
+        jar "$@"
+    else
+        java -m jdk.jartool/sun.tools.jar.Main "$@"
+    fi
+}
+
 rm -rf "$classes_dir"
 mkdir -p "$classes_dir" "$(dirname -- "$output_jar")"
 find "$source_root" -type f -name '*.java' | sort > "$sources_file"
@@ -31,7 +39,19 @@ elif command -v ecj >/dev/null 2>&1; then
         -d "$classes_dir" \
         @"$sources_file"
 elif command -v javac >/dev/null 2>&1; then
-    javac -source 7 -target 7 -encoding UTF-8 \
+    if javac --help 2>&1 | grep -q -- '--release'; then
+        javac --release 7 -encoding UTF-8 \
+            -classpath "$base_jar" \
+            -d "$classes_dir" \
+            @"$sources_file"
+    else
+        javac -source 7 -target 7 -encoding UTF-8 \
+            -classpath "$base_jar" \
+            -d "$classes_dir" \
+            @"$sources_file"
+    fi
+elif java --list-modules 2>/dev/null | grep -q '^jdk.compiler@'; then
+    java -m jdk.compiler/com.sun.tools.javac.Main --release 7 -encoding UTF-8 \
         -classpath "$base_jar" \
         -d "$classes_dir" \
         @"$sources_file"
@@ -46,18 +66,18 @@ fi
 
 cp "$base_jar" "$output_jar"
 
-jar uf "$output_jar" -C "$classes_dir" pt/efacec/es/evcsd/ui
+jar_tool uf "$output_jar" -C "$classes_dir" pt/efacec/es/evcsd/ui
 
 for ui_class in WaitingForCardChargingTimer MainMenuPanel InCCSChargingPanel DtcPanel; do
     class_path="pt/efacec/es/evcsd/ui/$ui_class.class"
-    if ! jar tf "$output_jar" | grep -qx "$class_path"; then
+    if ! jar_tool tf "$output_jar" | grep -qx "$class_path"; then
         echo "Missing compiled UI class: $class_path" >&2
         exit 1
     fi
 done
 
 logo_path="pt/efacec/es/evcsd/ui/sgs-logo.png"
-if ! jar tf "$output_jar" | grep -qx "$logo_path"; then
+if ! jar_tool tf "$output_jar" | grep -qx "$logo_path"; then
     echo "Missing SGS logo resource: $logo_path" >&2
     exit 1
 fi

@@ -113,6 +113,33 @@ public final class ChargingLimitCoordinatorTest {
         assertLimits(io, 0, 0, 0);
     }
 
+    @Test
+    public void snapshotSeparatesEvccGridSafetyAndEffectiveLimits() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.requestBudgets(50, 22);
+        limits.setGridTargets(2, true, 17, 13, true);
+
+        ChargingLimitCoordinator.Snapshot blocked = limits.snapshot();
+        assertTrue(blocked.blocked);
+        assertTrue(blocked.startupBlocked);
+        assertEquals(50, blocked.requestedDcKw);
+        assertEquals(17, blocked.gridDcKw);
+        assertEquals(0, blocked.effectiveDcKw);
+
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setStageCaps(15, 12);
+        ChargingLimitCoordinator.Snapshot active = limits.snapshot();
+        assertEquals(2, active.activeDcConnector);
+        assertTrue(active.acActive);
+        assertTrue(active.demandTransfer);
+        assertTrue(active.stageLimited);
+        assertEquals(15, active.effectiveDcKw);
+        assertEquals(12, active.effectiveAcKw);
+    }
+
     private static ChargingLimitCoordinator coordinator(FakeIo io) {
         return new ChargingLimitCoordinator(io, 5, 50, 5, 22);
     }

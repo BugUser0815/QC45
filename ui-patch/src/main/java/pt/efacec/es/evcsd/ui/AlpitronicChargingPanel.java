@@ -5,7 +5,11 @@ import pt.efacec.es.evcsd.ui.info.ChargeInfo;
 /** Active sessions all use the approved Modbus-backed charging monitor. */
 class AlpitronicChargingPanel extends WaitingForCardChargingTimer {
     AlpitronicChargingPanel(int modus, boolean usesCreditCard) {
-        super("de", modus, usesCreditCard, true);
+        this(modus, usesCreditCard, 0);
+    }
+
+    AlpitronicChargingPanel(int modus, boolean usesCreditCard, int connector) {
+        super("de", modus, usesCreditCard, true, connector);
         AlpitronicSessionState.markCharging();
     }
 

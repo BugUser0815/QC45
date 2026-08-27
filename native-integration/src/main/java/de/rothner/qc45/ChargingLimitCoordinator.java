@@ -33,6 +33,7 @@ public final class ChargingLimitCoordinator {
     private int activeDcConnector;
     private boolean acActive;
     private boolean ccsAvailable;
+    private boolean demandTransfer;
     private final int[] applied = new int[] { -1, -1, -1, -1 };
 
     public ChargingLimitCoordinator(ChargingLimitIo io,
@@ -90,11 +91,19 @@ public final class ChargingLimitCoordinator {
     /** Publish the load manager's grid-safe allocation. */
     public synchronized void setGridTargets(int dcConnector, boolean acIsActive,
                                             int dcKw, int acKw) throws Exception {
+        setGridTargets(dcConnector, acIsActive, dcKw, acKw, false);
+    }
+
+    /** Publish the allocation and whether unused entitlement is being transferred. */
+    public synchronized void setGridTargets(int dcConnector, boolean acIsActive,
+                                            int dcKw, int acKw,
+                                            boolean transferringDemand) throws Exception {
         if (dcConnector < 0 || dcConnector > 2) throw new IllegalArgumentException("DC connector must be 0..2");
         activeDcConnector = dcConnector;
         acActive = acIsActive;
         gridDcKw = dcConnector == 0 ? 0 : normalize(dcKw, minDcKw, maxDcKw);
         gridAcKw = acIsActive ? normalize(acKw, minAcKw, maxAcKw) : 0;
+        demandTransfer = transferringDemand && dcConnector > 0 && acIsActive;
         apply(false);
     }
 
@@ -143,6 +152,25 @@ public final class ChargingLimitCoordinator {
     public synchronized int requestedAcKw() { return requestedAcKw; }
     public synchronized int effectiveDcKw() { return targets()[activeDcConnector == 0 ? 1 : activeDcConnector]; }
     public synchronized int effectiveAcKw() { return targets()[3]; }
+
+    /** One coherent view for diagnostics, Modbus and the local charging screen. */
+    public synchronized Snapshot snapshot() {
+        int[] target = targets();
+        int effectiveDc = activeDcConnector == 0 ? 0 : target[activeDcConnector];
+        return new Snapshot(
+            requestedDcKw, requestedAcKw,
+            gridDcKw, gridAcKw,
+            stageDcCapKw, stageAcCapKw,
+            effectiveDc, target[3],
+            activeDcConnector, acActive,
+            !blockers.isEmpty(),
+            blockers.contains(STARTUP),
+            blockers.contains(FAILBACK),
+            blockers.contains(LOAD_METER),
+            blockers.contains(SHUTDOWN),
+            demandTransfer && blockers.isEmpty(),
+            stageDcCapKw < maxDcKw || stageAcCapKw < maxAcKw);
+    }
 
     /** Reassert the effective values if EVCSD or another legacy path changed them. */
     public synchronized void reconcile() throws Exception {
@@ -223,5 +251,53 @@ public final class ChargingLimitCoordinator {
     private static int normalize(int value, int min, int max) {
         if (value < min) return 0;
         return clamp(value, min, max);
+    }
+
+    public static final class Snapshot {
+        public final int requestedDcKw;
+        public final int requestedAcKw;
+        public final int gridDcKw;
+        public final int gridAcKw;
+        public final int stageDcCapKw;
+        public final int stageAcCapKw;
+        public final int effectiveDcKw;
+        public final int effectiveAcKw;
+        public final int activeDcConnector;
+        public final boolean acActive;
+        public final boolean blocked;
+        public final boolean startupBlocked;
+        public final boolean failbackBlocked;
+        public final boolean loadMeterBlocked;
+        public final boolean shutdownBlocked;
+        public final boolean demandTransfer;
+        public final boolean stageLimited;
+
+        private Snapshot(int requestedDcKw, int requestedAcKw,
+                         int gridDcKw, int gridAcKw,
+                         int stageDcCapKw, int stageAcCapKw,
+                         int effectiveDcKw, int effectiveAcKw,
+                         int activeDcConnector, boolean acActive,
+                         boolean blocked, boolean startupBlocked,
+                         boolean failbackBlocked, boolean loadMeterBlocked,
+                         boolean shutdownBlocked, boolean demandTransfer,
+                         boolean stageLimited) {
+            this.requestedDcKw = requestedDcKw;
+            this.requestedAcKw = requestedAcKw;
+            this.gridDcKw = gridDcKw;
+            this.gridAcKw = gridAcKw;
+            this.stageDcCapKw = stageDcCapKw;
+            this.stageAcCapKw = stageAcCapKw;
+            this.effectiveDcKw = effectiveDcKw;
+            this.effectiveAcKw = effectiveAcKw;
+            this.activeDcConnector = activeDcConnector;
+            this.acActive = acActive;
+            this.blocked = blocked;
+            this.startupBlocked = startupBlocked;
+            this.failbackBlocked = failbackBlocked;
+            this.loadMeterBlocked = loadMeterBlocked;
+            this.shutdownBlocked = shutdownBlocked;
+            this.demandTransfer = demandTransfer;
+            this.stageLimited = stageLimited;
+        }
     }
 }

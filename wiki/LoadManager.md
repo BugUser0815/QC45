@@ -49,6 +49,11 @@ Die 13-kW-AC-Freigabe besteht dabei aus 11 kW gemessenem Bedarf plus 2 kW Aufwac
 
 Das Gesamtbudget bleibt unverändert bei 30 kW. Nimmt das AC-Fahrzeug anschließend mindestens einen Teil seiner Aufwachreserve auf, wird zuerst DC wieder auf 15 kW reduziert und danach AC auf 15 kW freigegeben. Dasselbe Verfahren funktioniert spiegelbildlich für ungenutzten DC-Anteil zugunsten von AC. Sind beide Fahrzeuge bedarfsgedeckelt oder nutzt der Empfänger seinen fairen Anteil noch nicht, findet keine Umverteilung statt.
 
+Der lokale Lademonitor zeigt diesen Zustand direkt an. Für AC und DC sind
+jeweils Istleistung, evcc-Obergrenze, LoadManager-Zuteilung und wirksame
+Freigabe sichtbar; eine aktive Umverteilung wird ausdrücklich als
+`BEDARFSGERECHT` gekennzeichnet.
+
 ## Regel- und Schutzprinzip
 
 1. KSEM liefert L1/L2/L3; maßgeblich ist die höchste Phase.

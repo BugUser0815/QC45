@@ -20,7 +20,7 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
     public MultipleChargingPanel(boolean isCHADEMO, boolean isCCS, boolean isAC,
             boolean acinUse, boolean chainUse, boolean ccsinUse,
             boolean acOut, boolean chaOut, boolean ccsOut, int acType) {
-        super("MEHRFACHLADUNG", YELLOW);
+        super(multipleStatus(acinUse, chainUse, ccsinUse), YELLOW);
         this.isChademo = isCHADEMO;
         this.isCcs = isCCS;
         this.isAc = isAC;
@@ -38,29 +38,37 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
 
     public void setInfo(EpoInfo info) {
         emergency = info != null && info.isShowEpoPressed();
-        setStatus(emergency ? "NOT-HALT" : "MEHRFACHLADUNG", emergency ? RED : YELLOW);
+        setStatus(emergency ? "NOT-HALT"
+            : multipleStatus(acInUse, chaInUse, ccsInUse), emergency ? RED : YELLOW);
     }
 
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "WEITEREN ANSCHLUSS WÄHLEN",
             emergency ? "Der Not-Halt ist betätigt."
-                      : "Die vier Positionen entsprechen direkt den vier Gerätetasten");
+                      : "Ein DC-Anschluss und Type 2 dürfen parallel laden");
 
         connectorKey(g, KEY_TOP_LEFT, "CCS", "CCS",
-            connectorState(isCcs, ccsInUse, ccsOut),
-            isCcs && !ccsInUse && !ccsOut && !emergency, ccsOut, ccsInUse);
+            connectorState(isCcs, ccsInUse, ccsOut, chaInUse),
+            isCcs && !ccsInUse && !ccsOut && !chaInUse && !emergency,
+            ccsOut, ccsInUse);
         connectorKey(g, KEY_TOP_RIGHT, "CHAdeMO", "CHADEMO",
-            connectorState(isChademo, chaInUse, chaOut),
-            isChademo && !chaInUse && !chaOut && !emergency, chaOut, chaInUse);
+            connectorState(isChademo, chaInUse, chaOut, ccsInUse),
+            isChademo && !chaInUse && !chaOut && !ccsInUse && !emergency,
+            chaOut, chaInUse);
         connectorKey(g, KEY_BOTTOM_LEFT, acLabel(), "AC",
-            connectorState(isAc, acInUse, acOut),
+            connectorState(isAc, acInUse, acOut, false),
             isAc && !acInUse && !acOut && !emergency, acOut, acInUse);
         languageKey(g, KEY_BOTTOM_RIGHT, !emergency);
 
         g.setColor(SECONDARY);
-        g.setFont(font(java.awt.Font.PLAIN, 15));
+        g.setFont(font(java.awt.Font.BOLD, 14));
         centered(g, emergency ? "Laden gesperrt"
-                              : "Taste neben dem gewünschten Anschluss drücken", 320, 254);
+                              : "AC + DC · GLEICHE PRIORITÄT", 320, 248);
+        if (!emergency) {
+            g.setColor(YELLOW);
+            g.setFont(font(java.awt.Font.PLAIN, 12));
+            centered(g, "Freie Leistung wird bedarfsgerecht umverteilt", 320, 270);
+        }
     }
 
     private String acLabel() {
@@ -173,10 +181,20 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
         g.drawArc(cx - 12, cy - 9, 24, 18, 180, 180);
     }
 
-    private String connectorState(boolean visible, boolean inUse, boolean outOfService) {
+    private String connectorState(boolean visible, boolean inUse,
+                                  boolean outOfService, boolean otherDcInUse) {
         if (!visible) return "NICHT VERBAUT";
         if (outOfService) return "AUSSER BETRIEB";
         if (inUse) return "BELEGT";
+        if (otherDcInUse) return "DC-PFAD BELEGT";
         return "VERFÜGBAR";
+    }
+
+    private static String multipleStatus(boolean ac, boolean chademo, boolean ccs) {
+        boolean dc = chademo || ccs;
+        if (ac && dc) return "AC + DC";
+        if (ac) return "AC AKTIV";
+        if (dc) return "DC AKTIV";
+        return "PARALLELLADEN";
     }
 }

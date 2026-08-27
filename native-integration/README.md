@@ -46,6 +46,11 @@ Modbus TCP registers used by evcc and the local charging screen:
 123   charging time [s]
 124   session energy high word [Wh]
 125   session energy low word [Wh]
+126   AC/DC UI schema version (=1)
+127   AC/DC session, flow and safety flags
+128   active DC connector (0/1/2)
+129-137 DC actual/request/grid/cap/effective/SoC/time/energy
+138-145 AC actual/request/grid/cap/effective/time/energy
 ```
 
 Only registers 110 and 111 are writable. Values below the configured technical
@@ -61,7 +66,15 @@ Modbus access is restricted by `modbus.allowedClients` (exact IP addresses or
 CIDR networks); loopback is always permitted. Multi-register writes of 110/111
 are applied atomically and all reductions are written before any increase.
 
-The local charging screen reads registers 120-125 as one block. Session energy is reconstructed as `((reg124 << 16) | reg125)` Wh. The implementation is tied to fields and methods verified against the original QC45 EVCSD firmware: `SatelliteInfo.power`, `voltage`, `electricCurrent`, `battEnergyPct`, `chargingTime`, `energy`, `initialEnergy`, plus `SatelliteModule.getActiveTransaction()`, `getCurrentEnergy()` and `getStartTime()`. If the reported DC power is zero while voltage and current are available, register 120 falls back to `voltage * electricCurrent / 1000`.
+The local charging screen prefers the coherent, versioned AC/DC block 126-145
+and falls back to the legacy DC block 120-125. It can therefore display actual,
+evcc-requested, grid-allocated and effective power for AC and DC at the same
+time, including failback and demand-transfer state. The implementation is tied
+to fields and methods verified against the original QC45 EVCSD firmware:
+`SatelliteInfo.power`, `voltage`, `electricCurrent`, `battEnergyPct`,
+`chargingTime`, `energy`, `initialEnergy`, plus
+`SatelliteModule.getActiveTransaction()`, `getCurrentEnergy()` and
+`getStartTime()`.
 
 For installations with the Iskra DC meter, `initialEnergy` is captured at session start and registers 124/125 expose `energy - initialEnergy`. Without that absolute meter baseline, `initialEnergy` remains zero and the charger-reported session energy is exposed directly.
 

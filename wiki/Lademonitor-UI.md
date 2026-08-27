@@ -40,23 +40,38 @@ Die Tastenerfassung selbst verbleibt unverändert in der originalen EVCSD-UI:
 `MainForm` übergibt die Tastencodes weiterhin an die bestehende
 Zustandsmaschine. Der Patch ändert ausschließlich Darstellung und Beschriftung.
 
-## Aktiver Ladevorgang
+## Aktiver Ladevorgang und Load Balancing
 
-Aktuelle Ladeleistung und Fahrzeug-SoC sind die Hauptwerte. DC-Sollleistung,
-Energie, Ladezeit und Pufferbatterie-SoC stehen in einer nachgeordneten Ebene.
-Der rote Bereich ist kein lokaler Stop-Taster, sondern trägt ausschließlich den
-Hinweis `zum beenden Karte vorhalten oder App benutzen.`
+Die Hauptansicht stellt AC und den aktiven DC-Ausgang gleichberechtigt
+nebeneinander dar. Für beide Ladearten werden angezeigt:
+
+| Anzeige | Bedeutung |
+|---|---|
+| `IST` | tatsächlich gemessene Fahrzeugleistung |
+| `EVCC` | aktuell geltende evcc-Obergrenze |
+| `NETZ` | vom LoadManager netzsicher berechnete Zuteilung |
+| `FREIGABE` | tatsächlich wirksames Minimum einschließlich Failback |
+
+Zusätzlich bleiben DC-Fahrzeug-SoC, AC/DC-Gesamtleistung, gemeinsame
+Sessionenergie, ladeartspezifische Zeit und Pufferbatterie-SoC sichtbar. Die
+Fußzeile unterscheidet faire gemeinsame Zuteilung, bedarfsgerechte Umverteilung
+und Sicherheitszustände. Der rote Bereich ist kein lokaler Stop-Taster, sondern
+trägt ausschließlich den Hinweis `Zum Beenden Karte vorhalten oder App benutzen.`
 
 Die QC45-Werte stammen aus einer FC03-Abfrage des lokalen Modbus-Servers auf
 `127.0.0.1:1502`:
 
 | Register | Inhalt |
 |---:|---|
-| 120 | aktuelle DC-Leistung [kW] |
-| 121 | freigegebenes DC-Limit [kW] |
-| 122 | Fahrzeug-SoC [%] |
-| 123 | Ladezeit [s] |
-| 124/125 | Sessionenergie [Wh] U32 |
+| 126 | Schema-Version (`1`) |
+| 127 | Session-/Leistungs-/Schutzstatus als Bitfeld |
+| 128 | aktiver DC-Connector (`0/1/2`) |
+| 129–137 | DC Ist, evcc, Netz, Schutzkappe, Freigabe, SoC, Zeit, Energie |
+| 138–145 | AC Ist, evcc, Netz, Schutzkappe, Freigabe, Zeit, Energie |
+
+Eine ältere native Integrations-JAR wird automatisch erkannt. In diesem Fall
+verwendet die Oberfläche weiterhin den kompatiblen DC-Block `120–125`, bis die
+neue Integrations-JAR installiert wurde.
 
 Bei Kommunikationsfehlern werden gültige Werte höchstens fünf Sekunden
 gehalten. Der Pufferbatterie-SoC wird nachgeordnet über evcc gelesen und
@@ -76,3 +91,7 @@ cd ui-patch
 
 Die proprietäre Basis-JAR wird nicht im Repository gespeichert. Siehe auch
 [Modbus TCP](Modbus-TCP) und [Build & Installation](Build-und-Installation).
+
+`ui-patch/test.sh` baut zusätzlich ein Java-7-Testoverlay und rendert Auswahl,
+Parallelauswahl, `AC + DC bedarfsgerecht` sowie `GridFailback` als echte
+640×480-PNG-Dateien. Dieser Test läuft auch in GitHub Actions.
