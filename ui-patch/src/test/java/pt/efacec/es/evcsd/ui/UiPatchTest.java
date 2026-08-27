@@ -15,6 +15,7 @@ public final class UiPatchTest {
 
     public static void main(String[] args) throws Exception {
         if (args.length != 6) throw new IllegalArgumentException("six preview paths are required");
+        require(ConnectorImages.resourcesAvailable(), "connector image resources");
         verifyDecoder();
         render(args[0], 0);
         render(args[1], 1);

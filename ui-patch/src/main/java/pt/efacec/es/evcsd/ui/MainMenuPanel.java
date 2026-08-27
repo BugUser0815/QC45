@@ -3,10 +3,9 @@ package pt.efacec.es.evcsd.ui;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
-import java.awt.geom.GeneralPath;
 import pt.efacec.es.evcsd.ui.info.EpoInfo;
 
-/** Connector selection using SGS-styled, technically recognisable plug faces. */
+/** Connector selection using bundled, technically recognisable plug images. */
 public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInfo> {
     private final boolean acInUse;
     private final boolean chaInUse;
@@ -94,7 +93,8 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
 
         int iconX = left ? x + 45 : x + width - 45;
         int textX = left ? x + 125 : x + 65;
-        drawConnectorSymbol(g, kind, iconX, y + 44, border, enabled || inUse || outOfService);
+        ConnectorImages.draw(g, kind, iconX, y + 44, 74, 74,
+            enabled || inUse || outOfService);
 
         g.setColor(enabled || inUse || outOfService ? PRIMARY : SECONDARY);
         g.setFont(font(java.awt.Font.BOLD, "CHAdeMO".equals(label) ? 14 : 17));
@@ -138,147 +138,6 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
         g.setStroke(new BasicStroke(4.0f));
         g.drawLine(innerX, centerY - 10, outerX, centerY);
         g.drawLine(outerX, centerY, innerX, centerY + 10);
-    }
-
-    /**
-     * Front-facing connector drawings based on the physical plug geometry used by
-     * European CCS2, CHAdeMO and IEC 62196-2 Type 2 cables. The drawings are kept
-     * deliberately vector-only so they remain sharp on the native 640x480 panel.
-     */
-    private void drawConnectorSymbol(Graphics2D g, String kind, int cx, int cy,
-                                     Color stateColor, boolean visible) {
-        Color shell = visible ? new Color(61, 64, 64) : new Color(34, 36, 36);
-        Color face = visible ? new Color(12, 14, 14) : new Color(22, 24, 24);
-        Color metal = visible ? new Color(224, 226, 226) : DIVIDER;
-        Color accent = visible ? stateColor : DIVIDER;
-
-        if ("CCS2".equals(kind)) {
-            drawCcs2Plug(g, cx, cy, shell, face, metal, accent);
-        } else if ("CHADEMO".equals(kind)) {
-            drawChademoPlug(g, cx, cy, shell, face, metal, accent);
-        } else {
-            drawType2Plug(g, cx, cy, shell, face, metal, accent);
-        }
-    }
-
-    /** CCS Combo 2 DC cable plug: PE + CP/PP above, two large DC contacts below. */
-    private void drawCcs2Plug(Graphics2D g, int cx, int cy, Color shell, Color face,
-                              Color metal, Color accent) {
-        drawCableTail(g, cx - 17, cy + 22, cx - 27, cy + 33, shell);
-
-        g.setColor(shell);
-        g.fillRoundRect(cx - 25, cy - 29, 50, 39, 17, 17);
-        g.fillRoundRect(cx - 22, cy + 5, 44, 25, 12, 12);
-        g.setColor(accent);
-        g.setStroke(new BasicStroke(2.4f));
-        g.drawRoundRect(cx - 25, cy - 29, 50, 39, 17, 17);
-        g.drawRoundRect(cx - 22, cy + 5, 44, 25, 12, 12);
-
-        g.setColor(face);
-        g.fillRoundRect(cx - 20, cy - 24, 40, 30, 13, 13);
-        g.fillRoundRect(cx - 17, cy + 9, 34, 17, 8, 8);
-
-        // The real DC cable plug only populates the signalling/earth contacts
-        // in the Type-2 half: two small pilots and the central PE contact.
-        drawContact(g, cx - 8, cy - 17, 4, metal, face);
-        drawContact(g, cx + 8, cy - 17, 4, metal, face);
-        drawContact(g, cx, cy - 7, 6, metal, face);
-
-        drawContact(g, cx - 9, cy + 17, 9, metal, face);
-        drawContact(g, cx + 9, cy + 17, 9, metal, face);
-
-        g.setColor(YELLOW);
-        g.fillRect(cx - 24, cy - 2, 3, 7);
-    }
-
-    /** CHAdeMO plug face: circular shell, two large DC contacts plus control contacts. */
-    private void drawChademoPlug(Graphics2D g, int cx, int cy, Color shell, Color face,
-                                 Color metal, Color accent) {
-        drawCableTail(g, cx - 16, cy + 20, cx - 25, cy + 32, shell);
-
-        g.setColor(shell);
-        g.fillOval(cx - 28, cy - 28, 56, 56);
-        g.setColor(accent);
-        g.setStroke(new BasicStroke(2.4f));
-        g.drawOval(cx - 28, cy - 28, 56, 56);
-        g.setColor(face);
-        g.fillOval(cx - 23, cy - 23, 46, 46);
-
-        drawContact(g, cx - 10, cy, 9, metal, face);
-        drawContact(g, cx + 10, cy, 9, metal, face);
-
-        drawContact(g, cx - 10, cy - 14, 4, metal, face);
-        drawContact(g, cx, cy - 17, 4, metal, face);
-        drawContact(g, cx + 10, cy - 14, 4, metal, face);
-        drawContact(g, cx - 15, cy + 12, 4, metal, face);
-        drawContact(g, cx - 5, cy + 16, 4, metal, face);
-        drawContact(g, cx + 5, cy + 16, 4, metal, face);
-        drawContact(g, cx + 15, cy + 12, 4, metal, face);
-        drawContact(g, cx, cy + 10, 3, metal, face);
-
-        g.setColor(YELLOW);
-        g.fillRect(cx - 3, cy - 28, 6, 3);
-        g.fillRect(cx - 28, cy - 3, 3, 6);
-        g.fillRect(cx + 25, cy - 3, 3, 6);
-    }
-
-    /** IEC 62196-2 Type 2 AC plug with the recognisable seven-contact layout. */
-    private void drawType2Plug(Graphics2D g, int cx, int cy, Color shell, Color face,
-                               Color metal, Color accent) {
-        drawCableTail(g, cx - 15, cy + 21, cx - 24, cy + 33, shell);
-
-        GeneralPath body = new GeneralPath();
-        body.moveTo(cx - 21, cy - 24);
-        body.quadTo(cx - 25, cy - 20, cx - 25, cy - 12);
-        body.lineTo(cx - 25, cy + 13);
-        body.quadTo(cx - 25, cy + 25, cx - 13, cy + 27);
-        body.lineTo(cx + 13, cy + 27);
-        body.quadTo(cx + 25, cy + 25, cx + 25, cy + 13);
-        body.lineTo(cx + 25, cy - 12);
-        body.quadTo(cx + 25, cy - 20, cx + 21, cy - 24);
-        body.closePath();
-        g.setColor(shell);
-        g.fill(body);
-        g.setColor(accent);
-        g.setStroke(new BasicStroke(2.4f));
-        g.draw(body);
-
-        g.setColor(face);
-        g.fillRoundRect(cx - 20, cy - 19, 40, 40, 14, 14);
-
-        drawContact(g, cx - 8, cy - 12, 4, metal, face);
-        drawContact(g, cx + 8, cy - 12, 4, metal, face);
-        drawContact(g, cx - 12, cy, 6, metal, face);
-        drawContact(g, cx, cy, 6, metal, face);
-        drawContact(g, cx + 12, cy, 6, metal, face);
-        drawContact(g, cx - 7, cy + 12, 6, metal, face);
-        drawContact(g, cx + 7, cy + 12, 6, metal, face);
-
-        g.setColor(YELLOW);
-        g.fillRect(cx - 4, cy - 24, 8, 3);
-    }
-
-    private void drawCableTail(Graphics2D g, int x1, int y1, int x2, int y2, Color shell) {
-        g.setColor(new Color(20, 22, 22));
-        g.setStroke(new BasicStroke(11.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.drawLine(x1, y1, x2, y2);
-        g.setColor(shell);
-        g.setStroke(new BasicStroke(4.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.drawLine(x1 + 1, y1, x2 + 1, y2);
-    }
-
-    private void drawContact(Graphics2D g, int cx, int cy, int diameter,
-                             Color metal, Color face) {
-        int outer = diameter + 4;
-        g.setColor(metal);
-        g.fillOval(cx - outer / 2, cy - outer / 2, outer, outer);
-        g.setColor(face);
-        g.fillOval(cx - diameter / 2, cy - diameter / 2, diameter, diameter);
-        if (diameter >= 6) {
-            g.setColor(new Color(132, 134, 134));
-            int core = Math.max(2, diameter / 3);
-            g.fillOval(cx - core / 2, cy - core / 2, core, core);
-        }
     }
 
     private void drawLanguageSymbol(Graphics2D g, int cx, int cy, Color color) {

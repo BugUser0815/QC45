@@ -82,4 +82,12 @@ if ! jar_tool tf "$output_jar" | grep -qx "$logo_path"; then
     exit 1
 fi
 
+for connector_image in ccs2 chademo type2; do
+    image_path="pt/efacec/es/evcsd/ui/connectors/$connector_image.png"
+    if ! jar_tool tf "$output_jar" | grep -qx "$image_path"; then
+        echo "Missing connector image resource: $image_path" >&2
+        exit 1
+    fi
+done
+
 echo "$output_jar"

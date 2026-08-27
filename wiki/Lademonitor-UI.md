@@ -10,6 +10,7 @@ ohne Markenassets oder eine pixelgenaue Kopie zu verwenden.
 - Gelb ausschließlich für aktiven Status, Auswahl und Ladefortschritt
 - identische Kopfzeile mit QC45, Statuspunkt und Uhrzeit
 - feste Funktionsfelder an den Positionen der vier haptischen Gerätetasten
+- eingebettete, freigestellte Produktbilder für CCS2, CHAdeMO und Type 2
 - rechteckige, eindeutig beschriftete Aktionsflächen
 - keine Werbung, Animationen, Verläufe oder dekorativen Instrumente
 

@@ -96,7 +96,8 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
 
         int iconX = left ? x + 31 : x + width - 31;
         int textX = left ? x + 113 : x + 77;
-        drawConnectorSymbol(g, kind, iconX, y + 31, border);
+        ConnectorImages.draw(g, kind, iconX, y + 31, 52, 52,
+            enabled || inUse || outOfService);
 
         g.setColor(enabled || inUse || outOfService ? PRIMARY : SECONDARY);
         g.setFont(font(java.awt.Font.BOLD, 16));
@@ -140,35 +141,6 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
         g.setStroke(new java.awt.BasicStroke(4.0f));
         g.drawLine(innerX, centerY - 10, outerX, centerY);
         g.drawLine(outerX, centerY, innerX, centerY + 10);
-    }
-
-    private void drawConnectorSymbol(Graphics2D g, String kind, int cx, int cy, java.awt.Color color) {
-        g.setColor(color);
-        g.setStroke(new java.awt.BasicStroke(2.0f));
-        g.drawOval(cx - 14, cy - 14, 28, 28);
-
-        if ("CCS".equals(kind)) {
-            g.fillOval(cx - 8, cy - 8, 4, 4);
-            g.fillOval(cx + 4, cy - 8, 4, 4);
-            g.fillOval(cx - 8, cy + 1, 4, 4);
-            g.fillOval(cx + 4, cy + 1, 4, 4);
-            g.fillOval(cx - 9, cy + 16, 7, 7);
-            g.fillOval(cx + 2, cy + 16, 7, 7);
-            g.drawLine(cx - 12, cy + 12, cx - 12, cy + 18);
-            g.drawLine(cx + 12, cy + 12, cx + 12, cy + 18);
-        } else if ("CHADEMO".equals(kind)) {
-            g.fillOval(cx - 7, cy - 7, 5, 5);
-            g.fillOval(cx + 2, cy - 7, 5, 5);
-            g.fillOval(cx - 7, cy + 2, 5, 5);
-            g.fillOval(cx + 2, cy + 2, 5, 5);
-            g.drawArc(cx - 9, cy - 10, 18, 20, 205, 130);
-        } else {
-            g.fillOval(cx - 7, cy - 8, 4, 4);
-            g.fillOval(cx + 3, cy - 8, 4, 4);
-            g.fillOval(cx - 9, cy + 1, 4, 4);
-            g.fillOval(cx + 5, cy + 1, 4, 4);
-            g.fillOval(cx - 2, cy + 5, 4, 4);
-        }
     }
 
     private void drawLanguageSymbol(Graphics2D g, int cx, int cy, java.awt.Color color) {

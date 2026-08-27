@@ -1,8 +1,8 @@
 # QC45 Oberfläche im reduzierten Schnelllader-Design
 
 Dieser Patch ersetzt die operativen Ansichten der vorhandenen EVCSD-UI-JAR
-durch eine einheitliche, codegerenderte Oberfläche für das 640×480-Display der
-QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
+durch eine einheitliche Oberfläche für das 640×480-Display der QC45. Die
+proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 
 ## Gestaltungsprinzipien
 
@@ -10,6 +10,7 @@ QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - Weiß und Grau für Inhalte; Gelb nur für Auswahl, Status und Fortschritt
 - einheitliche Kopfzeile mit Gerätestatus und lokaler Uhrzeit
 - vier feste Softkey-Felder passend zu den physischen QC45-Gerätetasten
+- freigestellte Produktbilder für CCS2, CHAdeMO und Type 2 statt gezeichneter Stecker-Symbole
 - Bereitschaftsseite mit dem originalen SGS-Elektrotechnik-Logo samt Schriftzug `Alexander & Marion Rothner`
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
