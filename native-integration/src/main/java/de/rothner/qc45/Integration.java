@@ -10,7 +10,7 @@ public final class Integration {
     private static final int DEFAULT_MIN_DC_KW = 5;
     private static final int DEFAULT_MAX_DC_KW = 50;
     private static final int DEFAULT_MIN_AC_KW = 5;
-    private static final int DEFAULT_MAX_AC_KW = 22;
+    private static final int DEFAULT_MAX_AC_KW = 43;
     private static final double MAX_GRID_LIMIT_A = 35.0d;
     private static final double MAX_CONTROL_TARGET_A = 32.0d;
     private static final double MAX_REDUCE_THRESHOLD_A = 34.0d;
@@ -83,7 +83,7 @@ public final class Integration {
             minAcKw = positiveInt(p, "loadmanager.minAcKw", DEFAULT_MIN_AC_KW);
             maxAcKw = positiveInt(p, "loadmanager.maxAcKw", DEFAULT_MAX_AC_KW);
             if (maxDcKw < minDcKw || maxDcKw > 50
-                    || maxAcKw < minAcKw || maxAcKw > 22) {
+                    || maxAcKw < minAcKw || maxAcKw > 43) {
                 throw new IllegalArgumentException("connector limits exceed QC45 hardware or minimum");
             }
         } catch (Throwable e) {

@@ -11,7 +11,7 @@ Der native LoadManager regelt **den aktiven DC-Ausgang und Type2/AC gemeinsam** 
 | wirksame Freigabegrenze mit Failback | `34.0 A` |
 | Hysterese | `0.8 A` |
 | DC Minimum / Maximum | `5 / 50 kW` |
-| AC Minimum / Maximum | `5 / 22 kW` |
+| AC Minimum / Maximum | `5 / 43 kW` |
 | Ramp-up | `2 kW / Regelzyklus` |
 | Regelintervall | `1000 ms` |
 | stabile Bedarfserkennung | `5000 ms` |
@@ -29,9 +29,11 @@ Aus Istleistung und Strom-Headroom wird zuerst **ein Gesamtbudget** ermittelt. S
 | 20 kW | 10 kW | 10 kW |
 | 21 kW | 10 kW | 10 kW + 1 kW Reserve |
 | 44 kW | 22 kW | 22 kW |
-| 50 kW | 28 kW | 22 kW |
+| 50 kW | 25 kW | 25 kW |
+| 86 kW | 43 kW | 43 kW |
+| 93 kW | 50 kW | 43 kW |
 
-Ein ungerades Kilowatt bleibt als neutrale Reserve, solange beide Ausgänge noch gleich hoch begrenzt werden können. Erst wenn AC sein Hardwaremaximum von 22 kW erreicht, erhält DC den verbleibenden Anteil. Reicht das Budget nicht für beide technischen Mindestwerte, werden **beide** Ausgänge auf 0 kW pausiert; keiner erhält stillschweigend Vorrang.
+Ein ungerades Kilowatt bleibt als neutrale Reserve, solange beide Ausgänge noch gleich hoch begrenzt werden können. Erst wenn AC sein Hardwaremaximum von 43 kW erreicht, erhält DC den verbleibenden Anteil. Reicht das Budget nicht für beide technischen Mindestwerte, werden **beide** Ausgänge auf 0 kW pausiert; keiner erhält stillschweigend Vorrang.
 
 ## Bedarfsgerechte Umverteilung
 

@@ -10,7 +10,7 @@ public final class ChargingLimitGuardTest {
     public void stopsActiveSessionThatDrawsPowerAgainstZeroTarget() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
-            station, 5, 50, 5, 22);
+            station, 5, 50, 5, 43);
         limits.initializeSafeZero();
         station.session[2] = true;
         station.power[2] = 35;
@@ -31,7 +31,7 @@ public final class ChargingLimitGuardTest {
     public void keepsSuspendedZeroPowerSessionOpen() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
-            station, 5, 50, 5, 22);
+            station, 5, 50, 5, 43);
         limits.initializeSafeZero();
         station.session[2] = true;
 

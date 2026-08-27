@@ -47,9 +47,9 @@ public final class ModbusServerTest {
             new ChargingLimitIo() {
                 public int limitKw(int connector) { return 0; }
                 public void setConnectorLimitKw(int connector, int kw) {}
-            }, 5, 50, 5, 22);
+            }, 5, 50, 5, 43);
         limits.setCcsAvailable(true);
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setGridTargets(2, true, 17, 13, true);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
 
@@ -67,9 +67,9 @@ public final class ModbusServerTest {
         assertEquals(78, block[8]);
         assertEquals(70000L, ((long)block[10] << 16) | block[11]);
         assertEquals(11, block[12]);
-        assertEquals(22, block[13]);
+        assertEquals(43, block[13]);
         assertEquals(13, block[14]);
-        assertEquals(22, block[15]);
+        assertEquals(43, block[15]);
         assertEquals(13, block[16]);
         assertEquals(80000L, ((long)block[18] << 16) | block[19]);
     }

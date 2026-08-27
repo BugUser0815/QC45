@@ -275,7 +275,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
 
     public synchronized void setConnectorLimitKw(int connector, int kw) throws Exception {
         if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
-        kw = clamp(kw, 0, connector == 3 ? 22 : 50);
+        kw = clamp(kw, 0, connector == 3 ? 43 : 50);
 
         Object cm = central();
         Object conf = centralClass.getMethod("getConf").invoke(cm);

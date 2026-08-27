@@ -19,8 +19,8 @@ ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
 # evcc / local load management
-# Both request registers start at 0 kW after a restart and must be written by
-# evcc before the corresponding connector can receive a positive limit.
+# Both channels start in autonomous mode. The first evcc write takes control of
+# only the addressed channel; an explicit 0 kW remains a persistent pause.
 modbus.enabled=true
 modbus.bindAddress=0.0.0.0
 modbus.port=1502
@@ -90,7 +90,7 @@ loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50
 loadmanager.minAcKw=5
-loadmanager.maxAcKw=22
+loadmanager.maxAcKw=43
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
 # Reassign a stably unused fair share to the other connector. The source keeps

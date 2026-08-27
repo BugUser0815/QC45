@@ -26,7 +26,7 @@ public final class UiPatchTest {
         renderPanel(new MainMenuPanel("", false, false, false,
             false, false, false, true, true, true, false), args[4]);
         renderPanel(new MultipleChargingPanel(true, true, true,
-            false, false, true, false, false, false, 22), args[5]);
+            false, false, true, false, false, false, 43), args[5]);
         renderLogoPanel(new WaitingForCard(null), args[6]);
         renderIdleFallback(args[7]);
         System.out.println("UI tests passed; eight 640x480 previews rendered");
@@ -184,7 +184,7 @@ public final class UiPatchTest {
             LoadBalancingTelemetry.VERSION, flags, 2,
             blocked ? 0 : 17, 50, 17, blocked ? 0 : 50, blocked ? 0 : 17,
             78, 754, 0, 12400,
-            blocked ? 0 : 11, 22, 13, blocked ? 0 : 22, blocked ? 0 : 13,
+            blocked ? 0 : 11, 43, 13, blocked ? 0 : 43, blocked ? 0 : 13,
             302, 0, 5200
         };
     }

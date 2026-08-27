@@ -74,6 +74,7 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
     private String acLabel() {
         if (acType == 11) return "AC 11";
         if (acType == 22) return "AC 22";
+        if (acType == 43) return "AC 43";
         return "AC";
     }
 

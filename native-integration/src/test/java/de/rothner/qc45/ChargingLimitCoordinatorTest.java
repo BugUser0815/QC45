@@ -14,7 +14,7 @@ public final class ChargingLimitCoordinatorTest {
     public void startsAutonomousUntilEvccWrites() {
         ChargingLimitCoordinator limits = coordinator(new FakeIo());
         assertEquals(50, limits.requestedDcKw());
-        assertEquals(22, limits.requestedAcKw());
+        assertEquals(43, limits.requestedAcKw());
         assertTrue(!limits.evccControlsDc());
         assertTrue(!limits.evccControlsAc());
         assertTrue(limits.snapshot().startupBlocked);
@@ -25,7 +25,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(new FakeIo());
         limits.requestDcBudget(0);
         assertEquals(0, limits.requestedDcKw());
-        assertEquals(22, limits.requestedAcKw());
+        assertEquals(43, limits.requestedAcKw());
         assertTrue(limits.evccControlsDc());
         assertTrue(!limits.evccControlsAc());
     }
@@ -55,13 +55,13 @@ public final class ChargingLimitCoordinatorTest {
         limits.initializeSafeZero();
         limits.setCcsAvailable(true);
         limits.setGridTargets(1, true, 30, 20);
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         assertLimits(io, 0, 0, 0);
 
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         assertLimits(io, 30, 0, 20);
         limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         assertLimits(io, 0, 0, 0);
     }
 
@@ -70,7 +70,7 @@ public final class ChargingLimitCoordinatorTest {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargets(1, false, 30, 0);
         assertEquals(30, io.value[1]);
@@ -100,7 +100,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
         limits.setCcsAvailable(true);
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargets(1, true, 20, 20);
         io.operations.clear();
@@ -116,7 +116,7 @@ public final class ChargingLimitCoordinatorTest {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargets(2, false, 20, 0);
         assertEquals(0, io.value[2]);
@@ -129,7 +129,7 @@ public final class ChargingLimitCoordinatorTest {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setCcsAvailable(true);
         limits.setGridTargets(1, true, 20, 20);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
@@ -150,7 +150,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
         limits.setCcsAvailable(true);
-        limits.requestBudgets(50, 22);
+        limits.requestBudgets(50, 43);
         limits.setGridTargets(2, true, 17, 13, true);
 
         ChargingLimitCoordinator.Snapshot blocked = limits.snapshot();
@@ -180,7 +180,7 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {
-        return new ChargingLimitCoordinator(io, 5, 50, 5, 22);
+        return new ChargingLimitCoordinator(io, 5, 50, 5, 43);
     }
 
     private static void assertLimits(FakeIo io, int c1, int c2, int c3) {
@@ -190,7 +190,7 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     private static final class FakeIo implements ChargingLimitIo {
-        final int[] value = new int[] { 0, 50, 50, 22 };
+        final int[] value = new int[] { 0, 50, 50, 43 };
         final List<String> operations = new ArrayList<String>();
         int failReadConnector;
 

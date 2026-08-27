@@ -19,7 +19,7 @@ flowchart LR
 | Modus | Ausgang | Power-Reg. | Budget-Reg. | Maximum |
 |---|---|---:|---:|---:|
 | `dc` | aktiver CHAdeMO- oder CCS-Ausgang | 100 | 110 | 50 kW |
-| `type2` / `ac` | Type2 Connector 3 | 101 | 111 | 22 kW |
+| `type2` / `ac` | Type2 Connector 3 | 101 | 111 | 43 kW |
 
 ## Statusabbildung
 
