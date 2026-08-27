@@ -10,6 +10,12 @@
 | Over-limit pause | Phase ≥ `35 A` | sofort nach Messwert | DC `0 kW`, AC `0 kW`, Erhöhungen blockiert |
 | Persistenter Trip | Phase ≥ `35 A` | `250 ms` | alle drei Connectoren stoppen und Latch setzen |
 | Instant Trip | Phase ≥ `38 A` | sofort | alle drei Connectoren stoppen und Latch setzen |
+
+Unabhängig vom KSEM überwacht der 250-ms-Limit-Guard die tatsächlich gemessene
+Connectorleistung. Fließt nach 750 ms weiterhin Leistung, obwohl die wirksame
+Freigabe 0 kW beträgt, wird die Transaktion abgebrochen und eine bis zum
+Neustart verriegelte Leistungsfehler-Sperre gesetzt. Damit kann ein vom
+CCS-Controller nicht umgesetztes 0-kW-Telegramm den Schutz nicht umgehen.
 | Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
 
 Abfrageintervall: **100 ms**.

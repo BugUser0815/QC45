@@ -34,6 +34,7 @@ public final class ModbusServer extends Thread {
     static final int UI_FLAG_DEMAND_TRANSFER = 1 << 9;
     static final int UI_FLAG_STAGE_LIMIT = 1 << 10;
     static final int UI_FLAG_CONFIGURATION = 1 << 11;
+    static final int UI_FLAG_LIMIT_MISMATCH = 1 << 12;
 
     private final ReflectionQC45 station;
     private final ChargingLimitCoordinator limits;
@@ -654,6 +655,7 @@ public final class ModbusServer extends Thread {
             if (balancing.demandTransfer) flags |= UI_FLAG_DEMAND_TRANSFER;
             if (balancing.stageLimited) flags |= UI_FLAG_STAGE_LIMIT;
             if (balancing.configurationBlocked) flags |= UI_FLAG_CONFIGURATION;
+            if (balancing.limitMismatchBlocked) flags |= UI_FLAG_LIMIT_MISMATCH;
             balancingRegisters = uiBalancingBlock(flags, activeDc, liveDcPowerKw,
                 balancing, socPct, chargingSeconds, sessionEnergyWh,
                 liveAcPowerKw, acChargingSeconds, acSessionEnergyWh);

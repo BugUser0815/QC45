@@ -14,16 +14,17 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 5) throw new IllegalArgumentException("five preview paths are required");
+        if (args.length != 6) throw new IllegalArgumentException("six preview paths are required");
         verifyDecoder();
         render(args[0], 0);
         render(args[1], 1);
         render(args[2], 2);
+        render(args[3], 3);
         renderPanel(new MainMenuPanel("", false, false, false,
-            false, false, false, true, true, true, false), args[3]);
+            false, false, false, true, true, true, false), args[4]);
         renderPanel(new MultipleChargingPanel(true, true, true,
-            false, false, true, false, false, false, 22), args[4]);
-        System.out.println("UI tests passed; five 640x480 previews rendered");
+            false, false, true, false, false, false, 22), args[5]);
+        System.out.println("UI tests passed; six 640x480 previews rendered");
     }
 
     private static void verifyDecoder() {
@@ -110,6 +111,10 @@ public final class UiPatchTest {
                 | LoadBalancingTelemetry.FLAG_BLOCKED
                 | LoadBalancingTelemetry.FLAG_STARTUP
                 | LoadBalancingTelemetry.FLAG_CONFIGURATION;
+        } else if (safetyState == 3) {
+            flags = LoadBalancingTelemetry.FLAG_DC_SESSION
+                | LoadBalancingTelemetry.FLAG_BLOCKED
+                | LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH;
         }
         boolean blocked = safetyState != 0;
         return new int[] {

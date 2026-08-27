@@ -16,6 +16,7 @@ public final class ChargingLimitCoordinator {
     public static final String FAILBACK = "failback";
     public static final String LOAD_METER = "loadmanager-meter";
     public static final String CONFIGURATION = "configuration";
+    public static final String LIMIT_MISMATCH = "limit-mismatch";
     public static final String SHUTDOWN = "shutdown";
 
     private final ChargingLimitIo io;
@@ -154,6 +155,23 @@ public final class ChargingLimitCoordinator {
     public synchronized int effectiveDcKw() { return targets()[activeDcConnector == 0 ? 1 : activeDcConnector]; }
     public synchronized int effectiveAcKw() { return targets()[3]; }
 
+    public synchronized int effectiveConnectorKw(int connector) {
+        if (connector < 1 || connector > 3) {
+            throw new IllegalArgumentException("connector must be 1..3");
+        }
+        return targets()[connector];
+    }
+
+    /** Force the effective value through the native hardware path. */
+    public synchronized void reassertConnectorLimit(int connector) throws Exception {
+        if (connector < 1 || connector > 3) {
+            throw new IllegalArgumentException("connector must be 1..3");
+        }
+        int target = targets()[connector];
+        io.setConnectorLimitKw(connector, target);
+        applied[connector] = target;
+    }
+
     /** One coherent view for diagnostics, Modbus and the local charging screen. */
     public synchronized Snapshot snapshot() {
         int[] target = targets();
@@ -169,6 +187,7 @@ public final class ChargingLimitCoordinator {
             blockers.contains(FAILBACK),
             blockers.contains(LOAD_METER),
             blockers.contains(CONFIGURATION),
+            blockers.contains(LIMIT_MISMATCH),
             blockers.contains(SHUTDOWN),
             demandTransfer && blockers.isEmpty(),
             stageDcCapKw < maxDcKw || stageAcCapKw < maxAcKw);
@@ -271,6 +290,7 @@ public final class ChargingLimitCoordinator {
         public final boolean failbackBlocked;
         public final boolean loadMeterBlocked;
         public final boolean configurationBlocked;
+        public final boolean limitMismatchBlocked;
         public final boolean shutdownBlocked;
         public final boolean demandTransfer;
         public final boolean stageLimited;
@@ -282,8 +302,9 @@ public final class ChargingLimitCoordinator {
                          int activeDcConnector, boolean acActive,
                          boolean blocked, boolean startupBlocked,
                          boolean failbackBlocked, boolean loadMeterBlocked,
-                         boolean configurationBlocked, boolean shutdownBlocked,
-                         boolean demandTransfer, boolean stageLimited) {
+                         boolean configurationBlocked, boolean limitMismatchBlocked,
+                         boolean shutdownBlocked, boolean demandTransfer,
+                         boolean stageLimited) {
             this.requestedDcKw = requestedDcKw;
             this.requestedAcKw = requestedAcKw;
             this.gridDcKw = gridDcKw;
@@ -299,6 +320,7 @@ public final class ChargingLimitCoordinator {
             this.failbackBlocked = failbackBlocked;
             this.loadMeterBlocked = loadMeterBlocked;
             this.configurationBlocked = configurationBlocked;
+            this.limitMismatchBlocked = limitMismatchBlocked;
             this.shutdownBlocked = shutdownBlocked;
             this.demandTransfer = demandTransfer;
             this.stageLimited = stageLimited;

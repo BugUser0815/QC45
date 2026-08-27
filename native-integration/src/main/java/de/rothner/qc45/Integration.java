@@ -63,7 +63,7 @@ public final class Integration {
             DEFAULT_MIN_AC_KW, DEFAULT_MAX_AC_KW);
         try { limits.initializeSafeZero(); }
         catch (Throwable e) { System.err.println("[QC45] initial safety zero failed; guard will retry: " + e); }
-        ChargingLimitGuard limitGuard = new ChargingLimitGuard(limits, 250);
+        ChargingLimitGuard limitGuard = new ChargingLimitGuard(station, limits, 250);
         limitGuard.start();
 
         Properties p;
@@ -97,7 +97,7 @@ public final class Integration {
             limits = new ChargingLimitCoordinator(station, minDcKw, maxDcKw, minAcKw, maxAcKw);
             try { limits.initializeSafeZero(); }
             catch (Throwable e) { System.err.println("[QC45] configured safety zero failed; guard will retry: " + e); }
-            limitGuard = new ChargingLimitGuard(limits, 250);
+            limitGuard = new ChargingLimitGuard(station, limits, 250);
             limitGuard.start();
         }
 
@@ -136,18 +136,29 @@ public final class Integration {
                     + " -> effective " + thresholdValues(failbackReduceA, failbackTripA,
                         failbackInstantTripA));
             }
-            long failbackReduceDelayMs = nonNegativeInt(p, "failback.reduceDelayMs", 500);
-            long failbackTripDelayMs = nonNegativeInt(p, "failback.tripDelayMs", 250);
-            int failbackIntervalMs = positiveInt(p, "failback.intervalMs", 100);
+            long configuredFailbackReduceDelayMs = nonNegativeInt(p, "failback.reduceDelayMs", 500);
+            long configuredFailbackTripDelayMs = nonNegativeInt(p, "failback.tripDelayMs", 250);
+            int configuredFailbackIntervalMs = positiveInt(p, "failback.intervalMs", 100);
+            long[] failbackTiming = conservativeFailbackTiming(
+                configuredFailbackReduceDelayMs, configuredFailbackTripDelayMs,
+                configuredFailbackIntervalMs);
+            long failbackReduceDelayMs = failbackTiming[0];
+            long failbackTripDelayMs = failbackTiming[1];
+            int failbackIntervalMs = (int)failbackTiming[2];
+            if (failbackReduceDelayMs != configuredFailbackReduceDelayMs
+                    || failbackTripDelayMs != configuredFailbackTripDelayMs
+                    || failbackIntervalMs != configuredFailbackIntervalMs) {
+                System.err.println("[QC45] failback timing compatibility migration: configured "
+                    + timingValues(configuredFailbackReduceDelayMs,
+                        configuredFailbackTripDelayMs, configuredFailbackIntervalMs)
+                    + " -> effective " + timingValues(failbackReduceDelayMs,
+                        failbackTripDelayMs, failbackIntervalMs));
+            }
             int reduceDcKw = nonNegativeInt(p, "failback.reduceDcKw", minDcKw);
             int reduceAcKw = nonNegativeInt(p, "failback.reduceAcKw", minAcKw);
             boolean autoResetHardTrip = bool(p, "failback.autoResetHardTrip", false);
             long resetDelayMs = nonNegativeInt(p, "failback.resetDelayMs", 60000);
 
-            if (failbackReduceDelayMs > 500L || failbackTripDelayMs > 250L
-                    || failbackIntervalMs > MAX_FAILBACK_INTERVAL_MS) {
-                throw new IllegalArgumentException("failback timing may only be made faster than 500/250/100ms");
-            }
             if (autoResetHardTrip && resetDelayMs < 60000L) {
                 throw new IllegalArgumentException("timed hard-trip reset must wait at least 60000ms");
             }
@@ -381,6 +392,24 @@ public final class Integration {
                                           double instantTripA) {
         return "reduceA=" + reduceA + "A, tripA=" + tripA
             + "A, instantTripA=" + instantTripA + "A";
+    }
+
+    static long[] conservativeFailbackTiming(long reduceDelayMs, long tripDelayMs,
+                                             int intervalMs) {
+        if (reduceDelayMs < 0L || tripDelayMs < 0L || intervalMs <= 0) {
+            throw new IllegalArgumentException("failback timing must be non-negative with a positive interval");
+        }
+        return new long[] {
+            Math.min(reduceDelayMs, 500L),
+            Math.min(tripDelayMs, 250L),
+            Math.min(intervalMs, MAX_FAILBACK_INTERVAL_MS)
+        };
+    }
+
+    private static String timingValues(long reduceDelayMs, long tripDelayMs,
+                                       int intervalMs) {
+        return "reduceDelayMs=" + reduceDelayMs + ", tripDelayMs=" + tripDelayMs
+            + ", intervalMs=" + intervalMs;
     }
 
     public void stop() {

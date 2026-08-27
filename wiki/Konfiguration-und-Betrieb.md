@@ -124,6 +124,10 @@ Abstand überführt; das Log nennt konfigurierte und wirksame Werte. Ist keine
 positive, sichere Reihenfolge möglich, hält die Integration AC und DC auf
 0 kW, startet OCPP und die Diagnoseoberfläche aber weiterhin.
 
+Ältere Failback-Zeiten werden ebenfalls ausschließlich verschärft. Insbesondere
+wird ein historisches `failback.intervalMs=200` automatisch auf 100 ms
+reduziert, statt LoadManager und GridFailback vollständig abzuschalten.
+
 Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Erst wenn die Überschreitung `tripDelayMs` lang bestehen bleibt, werden alle Connectoren gestoppt und der Hard-Trip-Latch gesetzt.
 
 Ein KSEM-Fehler pausiert sofort. Standardmäßig wird der Hard Trip nur über eine

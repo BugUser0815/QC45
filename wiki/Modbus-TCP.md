@@ -78,6 +78,7 @@ Register 127 verwendet folgende Bits:
 | 9 | bedarfsgerechte Umverteilung aktiv |
 | 10 | reduzierte GridFailback-Schutzkappe aktiv |
 | 11 | ungültige Sicherheitskonfiguration; Laden bleibt gesperrt |
+| 12 | gemessene Leistung trotz wirksamer 0-kW-Freigabe; Notabschaltung verriegelt |
 
 ## Aktiver DC-Connector
 

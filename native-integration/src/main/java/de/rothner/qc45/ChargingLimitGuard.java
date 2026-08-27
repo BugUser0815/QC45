@@ -9,16 +9,26 @@ package de.rothner.qc45;
  * vulnerable to a later legacy EVCSD overwrite.
  */
 final class ChargingLimitGuard extends Thread {
+    private static final long ZERO_REASSERT_MS = 1000L;
+    private static final long ZERO_POWER_GRACE_MS = 750L;
+    private static final long STOP_RETRY_MS = 2000L;
+
+    private final ChargingSessionIo station;
     private final ChargingLimitCoordinator limits;
     private final int intervalMs;
+    private final long[] zeroSince = new long[] { 0L, 0L, 0L, 0L };
+    private final long[] lastZeroReassert = new long[] { 0L, 0L, 0L, 0L };
+    private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
     private volatile boolean running = true;
     private long lastErrorLog;
 
-    ChargingLimitGuard(ChargingLimitCoordinator limits, int intervalMs) {
+    ChargingLimitGuard(ChargingSessionIo station,
+                       ChargingLimitCoordinator limits, int intervalMs) {
         super("QC45-ChargingLimitGuard");
-        if (limits == null || intervalMs <= 0) {
-            throw new IllegalArgumentException("limits and a positive interval are required");
+        if (station == null || limits == null || intervalMs <= 0) {
+            throw new IllegalArgumentException("station, limits and a positive interval are required");
         }
+        this.station = station;
         this.limits = limits;
         this.intervalMs = intervalMs;
         setDaemon(true);
@@ -28,7 +38,7 @@ final class ChargingLimitGuard extends Thread {
         System.out.println("[QC45] charging-limit guard started interval=" + intervalMs + "ms");
         while (running) {
             try {
-                limits.reconcile();
+                runCycle(System.currentTimeMillis());
             } catch (Throwable e) {
                 long now = System.currentTimeMillis();
                 if (now - lastErrorLog >= 5000L) {
@@ -43,6 +53,47 @@ final class ChargingLimitGuard extends Thread {
             }
         }
         System.out.println("[QC45] charging-limit guard stopped");
+    }
+
+    void runCycle(long now) throws Exception {
+        Exception reconcileFailure = null;
+        try { limits.reconcile(); }
+        catch (Exception e) { reconcileFailure = e; }
+        for (int connector = 1; connector <= 3; connector++) {
+            int effectiveKw = limits.effectiveConnectorKw(connector);
+            if (effectiveKw != 0) {
+                zeroSince[connector] = 0L;
+                continue;
+            }
+
+            boolean active = station.sessionActive(connector);
+            if (!active) {
+                zeroSince[connector] = 0L;
+                continue;
+            }
+
+            if (zeroSince[connector] == 0L) zeroSince[connector] = now;
+            if (lastZeroReassert[connector] == 0L
+                    || now - lastZeroReassert[connector] >= ZERO_REASSERT_MS) {
+                try { limits.reassertConnectorLimit(connector); }
+                catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
+                lastZeroReassert[connector] = now;
+            }
+
+            int actualKw = station.powerKw(connector);
+            if (actualKw <= 0 || now - zeroSince[connector] < ZERO_POWER_GRACE_MS) continue;
+
+            try { limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true); }
+            catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
+            if (lastStopAttempt[connector] != 0L
+                    && now - lastStopAttempt[connector] < STOP_RETRY_MS) continue;
+            lastStopAttempt[connector] = now;
+            System.err.println("[QC45] LIMIT MISMATCH HARD STOP connector=" + connector
+                + " effective=0kW actual=" + actualKw
+                + "kW -> transaction abort; restart required");
+            station.remoteStop(connector);
+        }
+        if (reconcileFailure != null) throw reconcileFailure;
     }
 
     void shutdown() {

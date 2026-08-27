@@ -8,7 +8,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 implements ChargingLimitIo {
+public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo {
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
     private final Set<Integer> remoteConnectors = new HashSet<Integer>();

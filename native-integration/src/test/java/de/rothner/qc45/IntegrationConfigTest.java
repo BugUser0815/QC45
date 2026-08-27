@@ -42,4 +42,12 @@ public final class IntegrationConfigTest {
             assertTrue(e.getMessage().contains("must be finite and > 0"));
         }
     }
+
+    @Test
+    public void migratesLegacyFailbackTimingOnlyTowardsFasterProtection() {
+        long[] value = Integration.conservativeFailbackTiming(800L, 400L, 200);
+        assertEquals(500L, value[0]);
+        assertEquals(250L, value[1]);
+        assertEquals(100L, value[2]);
+    }
 }

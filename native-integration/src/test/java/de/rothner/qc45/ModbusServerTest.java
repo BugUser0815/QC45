@@ -40,6 +40,7 @@ public final class ModbusServerTest {
         assertEquals(0, ModbusServer.UI_FLAG_DC_SESSION & ModbusServer.UI_FLAG_AC_SESSION);
         assertEquals(0, ModbusServer.UI_FLAG_BLOCKED & ModbusServer.UI_FLAG_DEMAND_TRANSFER);
         assertEquals(0, ModbusServer.UI_FLAG_CONFIGURATION & ModbusServer.UI_FLAG_STARTUP);
+        assertEquals(0, ModbusServer.UI_FLAG_LIMIT_MISMATCH & ModbusServer.UI_FLAG_FAILBACK);
 
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             new ChargingLimitIo() {

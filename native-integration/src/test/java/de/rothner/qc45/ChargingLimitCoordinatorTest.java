@@ -126,6 +126,7 @@ public final class ChargingLimitCoordinatorTest {
         assertTrue(blocked.blocked);
         assertTrue(blocked.startupBlocked);
         assertTrue(!blocked.configurationBlocked);
+        assertTrue(!blocked.limitMismatchBlocked);
         assertEquals(50, blocked.requestedDcKw);
         assertEquals(17, blocked.gridDcKw);
         assertEquals(0, blocked.effectiveDcKw);
