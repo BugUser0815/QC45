@@ -3,6 +3,7 @@ package pt.efacec.es.evcsd.ui;
 import java.awt.Image;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import javax.imageio.ImageIO;
@@ -14,8 +15,9 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 6) throw new IllegalArgumentException("six preview paths are required");
+        if (args.length != 8) throw new IllegalArgumentException("eight preview paths are required");
         require(ConnectorImages.resourcesAvailable(), "connector image resources");
+        verifyLogoResource();
         verifyDecoder();
         render(args[0], 0);
         render(args[1], 1);
@@ -25,7 +27,23 @@ public final class UiPatchTest {
             false, false, false, true, true, true, false), args[4]);
         renderPanel(new MultipleChargingPanel(true, true, true,
             false, false, true, false, false, false, 22), args[5]);
-        System.out.println("UI tests passed; six 640x480 previews rendered");
+        renderLogoPanel(new WaitingForCard(null), args[6]);
+        renderIdleFallback(args[7]);
+        System.out.println("UI tests passed; eight 640x480 previews rendered");
+    }
+
+    private static void verifyLogoResource() throws Exception {
+        InputStream in = UiPatchTest.class.getResourceAsStream(
+            "/pt/efacec/es/evcsd/ui/sgs-logo.png");
+        require(in != null, "SGS logo resource");
+        try {
+            BufferedImage logo = ImageIO.read(in);
+            require(logo != null, "SGS logo must be decodable");
+            require(logo.getWidth() == 420 && logo.getHeight() == 101,
+                "SGS logo dimensions");
+        } finally {
+            in.close();
+        }
     }
 
     private static void verifyDecoder() {
@@ -83,6 +101,45 @@ public final class UiPatchTest {
         java.awt.Graphics2D graphics = image.createGraphics();
         panel.paint(graphics);
         graphics.dispose();
+        writeAndVerify(image, path);
+    }
+
+    private static void renderLogoPanel(JPanel panel, String path) throws Exception {
+        panel.setSize(640, 480);
+        BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D graphics = image.createGraphics();
+        panel.paint(graphics);
+        graphics.dispose();
+        writeAndVerifyLogo(image, path);
+    }
+
+    private static void renderIdleFallback(String path) throws Exception {
+        InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
+        try {
+            Method render = WaitingForCardChargingTimer.class.getDeclaredMethod("renderIdlePage");
+            render.setAccessible(true);
+            ImageIcon icon = (ImageIcon)render.invoke(panel);
+            BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D graphics = image.createGraphics();
+            graphics.drawImage(icon.getImage(), 0, 0, null);
+            graphics.dispose();
+            writeAndVerifyLogo(image, path);
+        } finally {
+            panel.stop();
+        }
+    }
+
+    private static void writeAndVerifyLogo(BufferedImage image, String path) throws Exception {
+        int lightPixels = 0;
+        for (int y = 141; y < 242; y++) {
+            for (int x = 110; x < 530; x++) {
+                int rgb = image.getRGB(x, y);
+                if (((rgb >> 16) & 0xff) > 220
+                        && ((rgb >> 8) & 0xff) > 220
+                        && (rgb & 0xff) > 220) lightPixels++;
+            }
+        }
+        require(lightPixels > 20000, "SGS logo was not painted");
         writeAndVerify(image, path);
     }
 

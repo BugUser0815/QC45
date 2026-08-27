@@ -127,8 +127,10 @@ insbesondere das SGS-Logo der Bereitschaftsseite, werden ebenfalls in die JAR
 siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
 
 Ein eigenständiger Headless-Test kompiliert das komplette Overlay gegen
-minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert sechs
-640×480-Vorschaubilder für Auswahl, Parallelauswahl, AC/DC-Laden und Failback:
+minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert acht
+640×480-Vorschaubilder für Auswahl, Parallelauswahl, AC/DC-Laden, Failback und
+beide Bereitschaftspfade. Das eingebettete SGS-Logo muss sich dabei tatsächlich
+decodieren lassen und in beiden Bereitschaftsbildern sichtbar sein:
 
 ```bash
 ./test.sh

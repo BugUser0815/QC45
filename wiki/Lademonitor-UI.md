@@ -102,5 +102,6 @@ Die proprietäre Basis-JAR wird nicht im Repository gespeichert. Siehe auch
 `ui-patch/test.sh` baut zusätzlich ein Java-7-Testoverlay und rendert Auswahl,
 Parallelauswahl, `AC + DC bedarfsgerecht`, `GridFailback`, die
 Konfigurationssperre sowie die Notabschaltung bei einer verletzten
-0-kW-Freigabe als echte 640×480-PNG-Dateien. Dieser Test läuft auch in GitHub
-Actions.
+0-kW-Freigabe als echte 640×480-PNG-Dateien. Zusätzlich werden beide
+Bereitschaftspfade gerendert; ein nicht decodierbares oder unsichtbares SGS-Logo
+lässt den Test fehlschlagen. Dieser Test läuft auch in GitHub Actions.
