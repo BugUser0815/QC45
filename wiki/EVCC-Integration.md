@@ -41,9 +41,11 @@ P_kW = ceil(I_A × √3 × 400 V / 1000)
 
 Positive Werte werden auf mindestens 5 kW und das jeweilige Ausgangsmaximum begrenzt. `0 A` schreibt `0 kW`.
 
-Nach einem Neustart der nativen Integration stehen beide Wunschwerte zunächst
-auf 0 kW. Der jeweilige evcc-Ladepunkt muss seinen Sollwert daher neu schreiben;
-ohne erreichbares evcc bleibt der Ausgang bewusst pausiert.
+Nach einem Neustart arbeitet jeder Ausgang zunächst autonom unter Kontrolle von
+LoadManager, KSEM und Failback. Erst der erste evcc-Schreibzugriff auf Register
+110 beziehungsweise 111 übernimmt den betreffenden Ausgang. Schreibt evcc
+explizit `0`, bleibt dieser Ausgang pausiert; schreibt evcc nichts, kann die
+native Regelung ohne evcc laden.
 
 > [!NOTE]
 > Diese Umrechnung ist die **EVCC-Schnittstellenanpassung** von Ampere auf das QC45-Leistungsbudget. Sie hat nichts mit dem verworfenen Versuch zu tun, Ampere in EFACEC-CCS-V3-Byte 2 zu schreiben.

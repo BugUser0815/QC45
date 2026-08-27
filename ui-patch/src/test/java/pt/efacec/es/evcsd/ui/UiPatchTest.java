@@ -55,15 +55,20 @@ public final class UiPatchTest {
         require(data.totalActualKw() == 28, "total power");
         require(data.totalEnergyWh() == 17600L, "total energy");
         require(data.demandTransfer(), "demand transfer flag");
+        require(!data.evccControlsDc(), "DC must render autonomous before an evcc write");
+        require(!data.evccControlsAc(), "AC must render autonomous before an evcc write");
 
         raw = telemetry(0);
         raw[1] = LoadBalancingTelemetry.FLAG_BLOCKED
             | LoadBalancingTelemetry.FLAG_STARTUP
-            | LoadBalancingTelemetry.FLAG_CONFIGURATION;
+            | LoadBalancingTelemetry.FLAG_CONFIGURATION
+            | LoadBalancingTelemetry.FLAG_EVCC_DC;
         data = LoadBalancingTelemetry.decode(raw);
         require(data.blocked(), "configuration block");
         require(data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION),
             "configuration flag");
+        require(data.evccControlsDc(), "DC evcc control flag must decode");
+        require(!data.evccControlsAc(), "AC must remain autonomous independently");
 
         raw[0] = 99;
         try {

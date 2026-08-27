@@ -58,9 +58,11 @@ minimum are normalized to 0 kW. evcc requests never write EVCSD directly; the
 effective connector limit is always the minimum of evcc request, grid-safe
 LoadManager allocation and GridFailback cap/block.
 
-After a JVM/webapp start both evcc request caps are 0 kW until evcc explicitly
-writes registers 110/111. This fail-closed default prevents unattended charging
-with a stale or absent external request.
+After a JVM/webapp start both outputs use their configured maximum as an
+autonomous request cap. Startup, KSEM and failback blockers still keep the
+hardware at 0 kW until the LoadManager has prepared a grid-safe target. The
+first evcc write takes control of only the addressed output; an explicit 0 kW
+then remains a persistent pause for that output.
 
 Modbus access is restricted by `modbus.allowedClients` (exact IP addresses or
 CIDR networks); loopback is always permitted. Multi-register writes of 110/111
@@ -129,13 +131,15 @@ Expected log lines:
 
 ```text
 [QC45] native integration started safety=fail-closed AC+DC coordinator=active
+[QC45] power requests DC=AUTO 50kW AC=AUTO 22kW; first Modbus write takes control of that channel
 [QC45] Modbus TCP listening on 0.0.0.0:1502 ...
 [QC45] OCPP bridge connected: wss://...
 [QC45] OCPP15 SOAP RX op=bootNotification ...
 ```
 
 At process/webapp start all three connectors are first forced to 0 kW. Charging
-can be released only after five valid KSEM reads and a positive evcc request.
+can be released only after five valid KSEM reads and a freshly calculated
+grid-safe target. evcc is optional until it explicitly writes a channel budget.
 Missing/invalid configuration starts a persistent degraded safe mode which
 continues to reassert 0 kW.
 

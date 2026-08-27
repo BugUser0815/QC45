@@ -445,17 +445,18 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         drawLoadCard(g, 18, "DC", dcConnectorName(data.activeDcConnector),
             data.dcSession(), data.dcActualKw, data.dcRequestedKw,
             data.dcGridKw, data.dcStageCapKw, data.dcEffectiveKw,
-            data.dcSocPct, data.dcSeconds, data);
+            data.dcSocPct, data.dcSeconds, data.evccControlsDc(), data);
         drawLoadCard(g, 330, "AC", "TYPE 2",
             data.acSession(), data.acActualKw, data.acRequestedKw,
             data.acGridKw, data.acStageCapKw, data.acEffectiveKw,
-            -1, data.acSeconds, data);
+            -1, data.acSeconds, data.evccControlsAc(), data);
     }
 
     private void drawLoadCard(Graphics2D g, int x, String channel, String connector,
                               boolean session, int actualKw, int requestedKw,
                               int gridKw, int stageCapKw, int effectiveKw,
-                              int socPct, int seconds, LoadBalancingTelemetry data) {
+                              int socPct, int seconds, boolean evccControlled,
+                              LoadBalancingTelemetry data) {
         int y = 60;
         int width = 292;
         int height = 188;
@@ -499,7 +500,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.drawString("FREIGABE  " + effectiveKw + " kW", x + 20, y + 155);
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 11));
-        rightAligned(g, "EVCC " + requestedKw + "  ·  NETZ "
+        rightAligned(g, (evccControlled ? "EVCC " : "AUTO ") + requestedKw + "  ·  NETZ "
             + gridKw, x + width - 18, y + 155);
 
         g.setColor(accent);

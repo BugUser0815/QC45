@@ -49,7 +49,8 @@ nebeneinander dar. Für beide Ladearten werden angezeigt:
 | Anzeige | Bedeutung |
 |---|---|
 | `IST` | tatsächlich gemessene Fahrzeugleistung |
-| `EVCC` | aktuell geltende evcc-Obergrenze |
+| `AUTO` | autonome Obergrenze, solange evcc für den Ausgang nichts geschrieben hat |
+| `EVCC` | vom ersten evcc-Schreibzugriff an geltende evcc-Obergrenze |
 | `NETZ` | vom LoadManager netzsicher berechnete Zuteilung |
 | `FREIGABE` | tatsächlich wirksames Minimum einschließlich Failback |
 

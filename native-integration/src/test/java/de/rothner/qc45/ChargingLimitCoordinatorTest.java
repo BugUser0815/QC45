@@ -11,10 +11,41 @@ import static org.junit.Assert.fail;
 
 public final class ChargingLimitCoordinatorTest {
     @Test
-    public void startsWithFailClosedEvccRequests() {
+    public void startsAutonomousUntilEvccWrites() {
         ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        assertEquals(50, limits.requestedDcKw());
+        assertEquals(22, limits.requestedAcKw());
+        assertTrue(!limits.evccControlsDc());
+        assertTrue(!limits.evccControlsAc());
+        assertTrue(limits.snapshot().startupBlocked);
+    }
+
+    @Test
+    public void firstEvccWriteTakesOverOnlyItsOwnChannel() throws Exception {
+        ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        limits.requestDcBudget(0);
         assertEquals(0, limits.requestedDcKw());
-        assertEquals(0, limits.requestedAcKw());
+        assertEquals(22, limits.requestedAcKw());
+        assertTrue(limits.evccControlsDc());
+        assertTrue(!limits.evccControlsAc());
+    }
+
+    @Test
+    public void autonomousAcAndDcReleaseOnlyAfterSafeGridTarget() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargets(2, true, 15, 15);
+        assertLimits(io, 0, 0, 0);
+
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        assertLimits(io, 0, 15, 15);
+
+        limits.requestDcBudget(0);
+        assertLimits(io, 0, 0, 15);
+        assertTrue(limits.evccControlsDc());
+        assertTrue(!limits.evccControlsAc());
     }
 
     @Test

@@ -40,7 +40,7 @@ flowchart TB
 |---|---|---|
 | EVCSD | Originale Stationslogik, Transaktionen, Hardwarezustände | externes Peak Shaving |
 | `qc45-integration.jar` | OCPP-Bridge, Modbus, LoadManager, GridFailback, Diagnose | Sunny-Island-Speedwire |
-| evcc | dauerhafte AC/DC-Wunschobergrenzen per Modbus | Netzfreigabe oder OCPP-Transaktionsstart |
+| evcc | optionale dauerhafte AC/DC-Wunschobergrenzen ab dem ersten Schreibzugriff | Netzfreigabe oder OCPP-Transaktionsstart |
 | LoadManager | gemeinsames, gleich priorisiertes DC/AC-Budget nach KSEM-Phasenstrom | externes Peak Shaving |
 | GridFailback | unabhängiger AC/DC-Überstrom- und Messausfallschutz | normale Leistungsoptimierung |
 | ChargingLimitCoordinator | Minimum aus evcc-Wunsch, Netzfreigabe und Schutzkappe; einzige Hardware-Schreibinstanz | eigene Messung oder Optimierung |

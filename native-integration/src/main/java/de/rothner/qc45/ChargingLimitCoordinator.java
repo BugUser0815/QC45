@@ -28,6 +28,8 @@ public final class ChargingLimitCoordinator {
 
     private int requestedDcKw;
     private int requestedAcKw;
+    private boolean evccControlsDc;
+    private boolean evccControlsAc;
     private int gridDcKw;
     private int gridAcKw;
     private int stageDcCapKw;
@@ -51,10 +53,11 @@ public final class ChargingLimitCoordinator {
         this.maxDcKw = maxDcKw;
         this.minAcKw = minAcKw;
         this.maxAcKw = maxAcKw;
-        // No evcc request has been received yet. Starting at zero avoids an
-        // unintended charge after a JVM/webapp restart while evcc is offline.
-        this.requestedDcKw = 0;
-        this.requestedAcKw = 0;
+        // Native load balancing is autonomous until evcc explicitly writes a
+        // budget for the respective output. Startup, KSEM and failback blockers
+        // still keep the hardware at zero until a grid-safe target exists.
+        this.requestedDcKw = maxDcKw;
+        this.requestedAcKw = maxAcKw;
         this.stageDcCapKw = maxDcKw;
         this.stageAcCapKw = maxAcKw;
         this.ccsAvailable = false;
@@ -73,6 +76,8 @@ public final class ChargingLimitCoordinator {
         if (nextAcKw < requestedAcKw) gridAcKw = Math.min(gridAcKw, nextAcKw);
         requestedDcKw = nextDcKw;
         requestedAcKw = nextAcKw;
+        evccControlsDc = true;
+        evccControlsAc = true;
         apply(false);
     }
 
@@ -80,6 +85,7 @@ public final class ChargingLimitCoordinator {
         int nextKw = normalize(kw, minDcKw, maxDcKw);
         if (nextKw < requestedDcKw) gridDcKw = Math.min(gridDcKw, nextKw);
         requestedDcKw = nextKw;
+        evccControlsDc = true;
         apply(false);
     }
 
@@ -87,6 +93,7 @@ public final class ChargingLimitCoordinator {
         int nextKw = normalize(kw, minAcKw, maxAcKw);
         if (nextKw < requestedAcKw) gridAcKw = Math.min(gridAcKw, nextKw);
         requestedAcKw = nextKw;
+        evccControlsAc = true;
         apply(false);
     }
 
@@ -152,6 +159,8 @@ public final class ChargingLimitCoordinator {
     public synchronized boolean isCcsAvailable() { return ccsAvailable; }
     public synchronized int requestedDcKw() { return requestedDcKw; }
     public synchronized int requestedAcKw() { return requestedAcKw; }
+    public synchronized boolean evccControlsDc() { return evccControlsDc; }
+    public synchronized boolean evccControlsAc() { return evccControlsAc; }
     public synchronized int effectiveDcKw() { return targets()[activeDcConnector == 0 ? 1 : activeDcConnector]; }
     public synchronized int effectiveAcKw() { return targets()[3]; }
 
@@ -182,6 +191,7 @@ public final class ChargingLimitCoordinator {
             stageDcCapKw, stageAcCapKw,
             effectiveDc, target[3],
             activeDcConnector, acActive,
+            evccControlsDc, evccControlsAc,
             !blockers.isEmpty(),
             blockers.contains(STARTUP),
             blockers.contains(FAILBACK),
@@ -285,6 +295,8 @@ public final class ChargingLimitCoordinator {
         public final int effectiveAcKw;
         public final int activeDcConnector;
         public final boolean acActive;
+        public final boolean evccControlsDc;
+        public final boolean evccControlsAc;
         public final boolean blocked;
         public final boolean startupBlocked;
         public final boolean failbackBlocked;
@@ -300,6 +312,7 @@ public final class ChargingLimitCoordinator {
                          int stageDcCapKw, int stageAcCapKw,
                          int effectiveDcKw, int effectiveAcKw,
                          int activeDcConnector, boolean acActive,
+                         boolean evccControlsDc, boolean evccControlsAc,
                          boolean blocked, boolean startupBlocked,
                          boolean failbackBlocked, boolean loadMeterBlocked,
                          boolean configurationBlocked, boolean limitMismatchBlocked,
@@ -315,6 +328,8 @@ public final class ChargingLimitCoordinator {
             this.effectiveAcKw = effectiveAcKw;
             this.activeDcConnector = activeDcConnector;
             this.acActive = acActive;
+            this.evccControlsDc = evccControlsDc;
+            this.evccControlsAc = evccControlsAc;
             this.blocked = blocked;
             this.startupBlocked = startupBlocked;
             this.failbackBlocked = failbackBlocked;

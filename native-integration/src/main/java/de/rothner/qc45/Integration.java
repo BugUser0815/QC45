@@ -325,6 +325,9 @@ public final class Integration {
             loadManager, failback, lagMonitor, authFix);
         if (safetyReady) {
             System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
+            System.out.println("[QC45] power requests DC=AUTO " + maxDcKw
+                + "kW AC=AUTO " + maxAcKw
+                + "kW; first Modbus write takes control of that channel");
         } else {
             System.err.println("[QC45] native integration communications started in DEGRADED SAFE MODE; "
                 + "OCPP/Modbus remain available, charging remains blocked at 0kW");

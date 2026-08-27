@@ -101,9 +101,12 @@ schreibt nie mehr direkt in EVCSD und kann deshalb eine Failback-Sperre nicht
 überschreiben. FC16-Schreibvorgänge auf 110/111 werden atomar übernommen;
 Hardware-Reduktionen erfolgen vor Erhöhungen.
 
-Beim JVM-/Webapp-Start stehen beide Wunschregister zunächst auf 0 kW. Damit
-bleibt die Station auch bei nicht erreichbarem evcc fail-closed, bis evcc den
-jeweiligen Sollwert neu überträgt.
+Beim JVM-/Webapp-Start zeigen beide Wunschregister zunächst das konfigurierte
+Ausgangsmaximum. Solange kein Schreibzugriff erfolgt, ist das die autonome
+Obergrenze des nativen LoadManagers. Der erste Schreibzugriff übernimmt nur den
+betreffenden Ausgang für evcc; `0 kW` bleibt danach eine explizite Pause. Die
+Station startet unabhängig davon hardwareseitig bei 0 kW und gibt erst nach
+gültiger KSEM-Prüfung ein netzsicheres Ziel frei.
 
 ## Warum Multi-Client?
 

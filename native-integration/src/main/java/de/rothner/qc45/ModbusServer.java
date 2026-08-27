@@ -35,6 +35,8 @@ public final class ModbusServer extends Thread {
     static final int UI_FLAG_STAGE_LIMIT = 1 << 10;
     static final int UI_FLAG_CONFIGURATION = 1 << 11;
     static final int UI_FLAG_LIMIT_MISMATCH = 1 << 12;
+    static final int UI_FLAG_EVCC_DC = 1 << 13;
+    static final int UI_FLAG_EVCC_AC = 1 << 14;
 
     private final ReflectionQC45 station;
     private final ChargingLimitCoordinator limits;
@@ -208,7 +210,14 @@ public final class ModbusServer extends Thread {
         }
         // One atomic coordinator update preserves reduction-before-increase
         // ordering when evcc writes both budgets in a single Modbus request.
-        limits.requestBudgets(dcKw, acKw);
+        // A one-register FC16 write must take control only of that channel.
+        if (address == 110 && count == 2) limits.requestBudgets(dcKw, acKw);
+        else if (address == 110) limits.requestDcBudget(dcKw);
+        else limits.requestAcBudget(acKw);
+        System.out.println("[QC45] Modbus evcc request registers=" + address
+            + ".." + (address + count - 1) + " effectiveRequestDC="
+            + limits.requestedDcKw() + "kW effectiveRequestAC="
+            + limits.requestedAcKw() + "kW");
 
         byte[] result = new byte[5];
         result[0] = 16;
@@ -656,6 +665,8 @@ public final class ModbusServer extends Thread {
             if (balancing.stageLimited) flags |= UI_FLAG_STAGE_LIMIT;
             if (balancing.configurationBlocked) flags |= UI_FLAG_CONFIGURATION;
             if (balancing.limitMismatchBlocked) flags |= UI_FLAG_LIMIT_MISMATCH;
+            if (balancing.evccControlsDc) flags |= UI_FLAG_EVCC_DC;
+            if (balancing.evccControlsAc) flags |= UI_FLAG_EVCC_AC;
             balancingRegisters = uiBalancingBlock(flags, activeDc, liveDcPowerKw,
                 balancing, socPct, chargingSeconds, sessionEnergyWh,
                 liveAcPowerKw, acChargingSeconds, acSessionEnergyWh);

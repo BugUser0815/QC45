@@ -101,9 +101,12 @@ Pause normalisiert. Nach einer Absenkung wird eine alte höhere Grid-Freigabe
 verworfen; eine spätere evcc-Erhöhung muss erneut mit maximal 2 kW pro Zyklus
 vom LoadManager freigegeben werden.
 
-Nach einem JVM-/Webapp-Start beginnen beide evcc-Obergrenzen fail-closed bei
-0 kW. Erst ein expliziter Schreibzugriff auf Register 110 beziehungsweise 111
-erlaubt dem LoadManager, den jeweiligen Ausgang hochzurampen.
+Nach einem JVM-/Webapp-Start arbeitet jeder Ausgang zunächst autonom mit seinem
+konfigurierten Maximum als Wunschobergrenze. Die Start-, KSEM- und
+Failback-Sperren halten die Hardware trotzdem so lange auf 0 kW, bis ein frisches
+netzsicheres Ziel berechnet wurde. Der erste Modbus-Schreibzugriff übernimmt nur
+den beschriebenen Ausgang für evcc; ein ausdrücklich geschriebenes `0 kW`
+bleibt anschließend eine dauerhafte Pause.
 
 ## Zusammenspiel mit GridFailback
 

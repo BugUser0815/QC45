@@ -19,6 +19,8 @@ final class LoadBalancingTelemetry {
     static final int FLAG_STAGE_LIMIT = 1 << 10;
     static final int FLAG_CONFIGURATION = 1 << 11;
     static final int FLAG_LIMIT_MISMATCH = 1 << 12;
+    static final int FLAG_EVCC_DC = 1 << 13;
+    static final int FLAG_EVCC_AC = 1 << 14;
 
     final int flags;
     final int activeDcConnector;
@@ -76,6 +78,8 @@ final class LoadBalancingTelemetry {
     boolean acSession() { return has(FLAG_AC_SESSION); }
     boolean blocked() { return has(FLAG_BLOCKED); }
     boolean demandTransfer() { return has(FLAG_DEMAND_TRANSFER); }
+    boolean evccControlsDc() { return has(FLAG_EVCC_DC); }
+    boolean evccControlsAc() { return has(FLAG_EVCC_AC); }
     int totalActualKw() { return dcActualKw + acActualKw; }
     int totalEffectiveKw() { return dcEffectiveKw + acEffectiveKw; }
     long totalEnergyWh() { return dcEnergyWh + acEnergyWh; }
