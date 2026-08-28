@@ -384,15 +384,16 @@ public final class Integration {
                 + "more conservative than 34/35A (configured " + values + ")");
         }
         if (Math.abs(instantTripA - SLS_E_INSTANT_TRIP_A) > 0.000001d) {
-            throw new IllegalArgumentException("failback.instantTripA is fixed by the 35A SLS-E "
-                + "magnetic range at " + SLS_E_INSTANT_TRIP_A + "A (configured " + values + ")");
+            throw new IllegalArgumentException("failback.instantTripA is fixed at the conservative "
+                + "lower 35A SLS-E magnetic boundary of " + SLS_E_INSTANT_TRIP_A
+                + "A (configured " + values + ")");
         }
     }
 
     static double[] conservativeFailbackThresholds(double reduceA, double tripA,
                                                     double instantTripA) {
         // Reject nonsensical values instead of hiding them, but migrate every
-        // historical 38A instant threshold to the fixed E35 magnetic range.
+        // historical instant threshold to the conservative lower E35 boundary.
         if (reduceA <= 0.0d || tripA <= 0.0d || instantTripA <= 0.0d
                 || Double.isNaN(reduceA) || Double.isNaN(tripA)
                 || Double.isNaN(instantTripA) || Double.isInfinite(reduceA)

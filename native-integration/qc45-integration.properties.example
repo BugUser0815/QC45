@@ -106,12 +106,12 @@ failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
 failback.tripA=35.0
-# Minimum debounce for the SLS-E magnetic high-current band. At lower currents
-# the built-in E35 time/current envelope automatically requires much longer.
+# Compatibility minimum for timed E35 overload bands. The conservative instant
+# trip at the lower magnetic boundary remains immediate.
 failback.tripDelayMs=250
-# Fixed 6.25 x In end of the E35 magnetic range. Historical 38A values are
-# migrated automatically and can no longer cause nuisance hard trips.
-failback.instantTripA=218.75
+# Fixed 5 x In lower E35 magnetic boundary for an assumed preloaded 35A SLS.
+# Historical 38A and 218.75A values are migrated automatically.
+failback.instantTripA=175.0
 failback.intervalMs=100
 # false (default): hard trip resets only after E-STOP press+release and five safe KSEM reads.
 # true: allow a timed reset after resetDelayMs continuously below reduceA.

@@ -182,9 +182,10 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
 - At 34 A the failback applies its configured reduction; at 35 A it immediately
   blocks AC/DC. The additional latched hard trip follows a conservative 35 A SLS-E
   time/current envelope: below 1.05 x In no latch is accumulated, then the delay
-  falls from 60 minutes to 5 minutes, 60 seconds, 10 seconds, 1 second and finally
-  the configured magnetic debounce. The instant threshold is fixed at 6.25 x In
-  (218.75 A); historical 38 A configurations are migrated automatically.
+  falls from 60 minutes to 5 minutes, 60 seconds, 10 seconds and 1 second. Assuming
+  a preloaded SLS, every tolerance uses the lower current boundary; the instant
+  threshold is therefore fixed at 5 x In (175 A). Historical 38 A and 218.75 A
+  configurations are migrated automatically.
 - KSEM failure immediately blocks AC/DC at 0 kW while transactions remain alive.
 - The zero-limit mismatch guard allows the bounded initial KSEM qualification
   and one complete LoadManager cycle, then aborts persistent power against 0 kW.

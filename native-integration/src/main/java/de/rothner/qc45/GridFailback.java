@@ -4,7 +4,9 @@ package de.rothner.qc45;
 public final class GridFailback extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
     static final double SLS_NOMINAL_A = 35.0d;
-    static final double SLS_E_INSTANT_MULTIPLIER = 6.25d;
+    // Use the lower current boundary of the magnetic E-characteristic. This
+    // deliberately assumes a preloaded SLS instead of a cold upper tolerance.
+    static final double SLS_E_INSTANT_MULTIPLIER = 5.0d;
     static final double SLS_E_INSTANT_A = SLS_NOMINAL_A * SLS_E_INSTANT_MULTIPLIER;
 
     private final ReflectionQC45 station;

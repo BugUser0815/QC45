@@ -9,12 +9,12 @@ import static org.junit.Assert.fail;
 public final class IntegrationConfigTest {
     @Test
     public void acceptsCanonicalFailbackEnvelope() {
-        Integration.validateFailbackThresholds(34.0d, 35.0d, 218.75d);
+        Integration.validateFailbackThresholds(34.0d, 35.0d, 175.0d);
     }
 
     @Test
     public void acceptsMoreConservativeOrderedThresholds() {
-        Integration.validateFailbackThresholds(32.5d, 33.0d, 218.75d);
+        Integration.validateFailbackThresholds(32.5d, 33.0d, 175.0d);
     }
 
     @Test
@@ -22,7 +22,7 @@ public final class IntegrationConfigTest {
         double[] value = Integration.conservativeFailbackThresholds(34.0d, 35.0d, 35.0d);
         assertEquals(34.0d, value[0], 0.000001d);
         assertEquals(35.0d, value[1], 0.000001d);
-        assertEquals(218.75d, value[2], 0.000001d);
+        assertEquals(175.0d, value[2], 0.000001d);
     }
 
     @Test
@@ -30,7 +30,15 @@ public final class IntegrationConfigTest {
         double[] value = Integration.conservativeFailbackThresholds(34.0d, 35.0d, 38.0d);
         assertEquals(34.0d, value[0], 0.000001d);
         assertEquals(35.0d, value[1], 0.000001d);
-        assertEquals(218.75d, value[2], 0.000001d);
+        assertEquals(175.0d, value[2], 0.000001d);
+    }
+
+    @Test
+    public void migratesPreviouslyPublishedSixPointTwoFiveMultiple() {
+        double[] value = Integration.conservativeFailbackThresholds(34.0d, 35.0d, 218.75d);
+        assertEquals(34.0d, value[0], 0.000001d);
+        assertEquals(35.0d, value[1], 0.000001d);
+        assertEquals(175.0d, value[2], 0.000001d);
     }
 
     @Test
@@ -38,7 +46,7 @@ public final class IntegrationConfigTest {
         double[] value = Integration.conservativeFailbackThresholds(36.0d, 37.0d, 39.0d);
         assertEquals(34.0d, value[0], 0.000001d);
         assertEquals(35.0d, value[1], 0.000001d);
-        assertEquals(218.75d, value[2], 0.000001d);
+        assertEquals(175.0d, value[2], 0.000001d);
     }
 
     @Test

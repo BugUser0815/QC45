@@ -9,7 +9,7 @@
 | Reduce | Phase ≥ `34 A` | `500 ms` | DC und AC höchstens je `5 kW`; niemals hochsetzen |
 | Over-limit pause | Phase ≥ `35 A` | sofort nach Messwert | DC `0 kW`, AC `0 kW`, Erhöhungen blockiert |
 | SLS-E Hard Trip | zeit-/stromabhängig, siehe unten | Kennlinie | alle drei Connectoren stoppen und Latch setzen |
-| Instant Trip | Phase ≥ `218,75 A` (`6,25 × In`) | sofort | alle drei Connectoren stoppen und Latch setzen |
+| Instant Trip | Phase ≥ `175 A` (`5 × In`) | sofort | alle drei Connectoren stoppen und Latch setzen |
 | Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
 
 Unabhängig vom KSEM überwacht der 250-ms-Limit-Guard die tatsächlich gemessene
@@ -36,8 +36,7 @@ konservativen Software-Abbildung eines 35-A-SLS mit E-Charakteristik:
 | `52,5 A` bis `< 70 A` | `60 s` kontinuierlich |
 | `70 A` bis `< 105 A` | `10 s` kontinuierlich |
 | `105 A` bis `< 175 A` | `1 s` kontinuierlich |
-| `175 A` bis `< 218,75 A` | mindestens `tripDelayMs` (Standard `250 ms`) |
-| `≥ 218,75 A` | sofort |
+| `≥ 175 A` | sofort |
 
 Sinkt der Strom unter `1,05 × In`, wird die bis dahin gemessene Trip-Zeit
 vollständig verworfen. Die Over-limit-Pause bleibt bestehen, bis fünf
@@ -45,6 +44,8 @@ aufeinanderfolgende Messungen unter `reduceA` liegen.
 
 Damit führt eine kurze Überschreitung nicht sofort zum gelatchten Trip; es
 bleibt aber während der gesamten Prüfung keine Ladeleistung freigegeben.
+Für alle Kennlinien-Toleranzen gilt wegen der angenommenen thermischen
+Vorbelastung des SLS ausdrücklich die jeweils kleinere Stromgrenze.
 
 ## Hard Trip
 

@@ -111,7 +111,7 @@ failback.reduceDcKw=5
 failback.reduceAcKw=5
 failback.tripA=35.0
 failback.tripDelayMs=250
-failback.instantTripA=218.75
+failback.instantTripA=175.0
 failback.intervalMs=100
 failback.autoResetHardTrip=false
 failback.resetDelayMs=60000
@@ -119,9 +119,11 @@ failback.resetDelayMs=60000
 
 `reduceA` und `tripA` müssen strikt aufsteigend sein und dürfen die sicheren
 Standardwerte 34/35 A nicht überschreiten. `instantTripA` ist für den
-35-A-SLS-E fest auf `6,25 × In = 218,75 A` gesetzt. Historische Werte wie
-`38.0` werden beim Start automatisch migriert; das Log nennt konfigurierten
-und wirksamen Wert. Nicht positive oder nicht endliche Werte halten die
+35-A-SLS-E fest auf die untere magnetische Grenze `5 × In = 175 A` gesetzt.
+Damit wird eine thermische Vorbelastung angenommen und bei jeder Toleranz die
+kleinere Stromgrenze verwendet. Historische Werte wie `38.0` oder `218.75`
+werden beim Start automatisch migriert; das Log nennt konfigurierten und
+wirksamen Wert. Nicht positive oder nicht endliche Werte halten die
 Integration im sicheren 0-kW-Modus, während OCPP und Diagnose weiter starten.
 
 Ältere Failback-Zeiten werden ebenfalls ausschließlich verschärft. Insbesondere
@@ -131,8 +133,8 @@ reduziert, statt LoadManager und GridFailback vollständig abzuschalten.
 Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Der Hard-Trip-Latch folgt
 danach der stromabhängigen E35-Kennlinie: unter `1,05 × In` entsteht kein
 Latch, bei 38,6 A erst nach 60 Minuten kontinuierlicher Belastung. Mit höherem
-Strom sinkt die Zeit stufenweise bis auf `tripDelayMs` im magnetischen Bereich;
-ab 218,75 A erfolgt der Instant Trip.
+Strom sinkt die Zeit stufenweise bis auf eine Sekunde; ab 175 A erfolgt der
+Instant Trip.
 
 Ein KSEM-Fehler pausiert sofort. Standardmäßig wird der Hard Trip nur über eine
 E-STOP-Betätigung mit anschließendem Loslassen und fünf sicheren Reads

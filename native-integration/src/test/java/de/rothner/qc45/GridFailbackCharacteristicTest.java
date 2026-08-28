@@ -21,11 +21,10 @@ public final class GridFailbackCharacteristicTest {
         assertEquals(60000L, GridFailback.requiredHardTripDelayMs(52.5d, 250L));
         assertEquals(10000L, GridFailback.requiredHardTripDelayMs(70.0d, 250L));
         assertEquals(1000L, GridFailback.requiredHardTripDelayMs(105.0d, 250L));
-        assertEquals(250L, GridFailback.requiredHardTripDelayMs(175.0d, 250L));
     }
 
     @Test
-    public void configuredDebounceRemainsTheLowerTimeBound() {
-        assertEquals(400L, GridFailback.requiredHardTripDelayMs(175.0d, 400L));
+    public void lowerMagneticBoundaryIsUsedForPreloadedSls() {
+        assertEquals(175.0d, GridFailback.SLS_E_INSTANT_A, 0.000001d);
     }
 }
