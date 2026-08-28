@@ -188,4 +188,40 @@ public final class LoadAllocatorTest {
         assertEquals(5, held.dcKw);
         assertEquals(13, held.acKw);
     }
+
+    @Test
+    public void dcRampWaitsUntilVehicleReachesPreviousRelease() {
+        LoadAllocator.Targets held = LoadAllocator.plan(
+            true, false,
+            0, 0,
+            5, 0,
+            7.0d, 28.0d, 34.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(5, held.dcKw);
+        assertEquals(0, held.acKw);
+    }
+
+    @Test
+    public void dcRampReleasesOneStepAfterStableCatchup() {
+        LoadAllocator.Targets next = LoadAllocator.plan(
+            true, false,
+            5, 0,
+            5, 0,
+            15.0d, 28.0d, 34.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(7, next.dcKw);
+        assertEquals(0, next.acKw);
+    }
+
+    @Test
+    public void catchupGuardNeverDelaysReduction() {
+        LoadAllocator.Targets reduced = LoadAllocator.plan(
+            true, false,
+            0, 0,
+            11, 0,
+            33.0d, 28.0d, 34.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(0, reduced.dcKw);
+        assertEquals(0, reduced.acKw);
+    }
 }

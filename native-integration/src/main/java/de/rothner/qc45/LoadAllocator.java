@@ -11,6 +11,11 @@ final class LoadAllocator {
     // 0.20 kW/A also covers -10% voltage and a non-ideal power factor instead
     // of assuming exactly 230 V at unity PF.
     private static final double AC_KW_PER_GRID_A = 0.20d;
+    // Do not queue several increases in front of a slowly reacting vehicle.
+    // The next step is released only after the previous target is observed
+    // within this tolerance. LoadManager already supplies the lower of two
+    // consecutive actual-power samples, so one spike cannot unlock the ramp.
+    private static final int RELEASE_CATCHUP_TOLERANCE_KW = 1;
 
     private LoadAllocator() {}
 
@@ -76,6 +81,24 @@ final class LoadAllocator {
             targets = fairTargets(dcActive, acActive, desiredTotalKw,
                 minDcKw, maxDcKw, minAcKw, maxAcKw);
         }
+
+        // CCS vehicles can react several seconds after a new power limit. Never
+        // stack 5 -> 7 -> 9 -> 11 kW commands while the vehicle still draws 0.
+        // Hold each output at its already released value until that value has
+        // been reached on two consecutive LoadManager observations. Reductions
+        // remain immediate and an initial 0 -> technical-minimum start is still
+        // allowed.
+        int caughtUpDcKw = targets.dcKw;
+        int caughtUpAcKw = targets.acKw;
+        if (dcActive && commandedDcKw > 0 && targets.dcKw > commandedDcKw
+                && actualDcKw < commandedDcKw - RELEASE_CATCHUP_TOLERANCE_KW) {
+            caughtUpDcKw = commandedDcKw;
+        }
+        if (acActive && commandedAcKw > 0 && targets.acKw > commandedAcKw
+                && actualAcKw < commandedAcKw - RELEASE_CATCHUP_TOLERANCE_KW) {
+            caughtUpAcKw = commandedAcKw;
+        }
+        targets = new Targets(caughtUpDcKw, caughtUpAcKw);
 
         if (criticalA >= commandCeilingA) return new Targets(0, 0);
         return targets;

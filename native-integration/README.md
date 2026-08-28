@@ -187,6 +187,9 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
 - After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe
   5 kW minimum without authorization or a start command. A detected session sends
   that target through the full CCS path and holds it for three seconds before ramping.
+- Positive ramp steps are never queued ahead of a delayed vehicle response. The next
+  2 kW step requires the previous release to be reached within 1 kW on two consecutive
+  LoadManager observations; reductions remain immediate.
 - The 250 ms guard also reasserts positive limits and hard-stops a transaction that
   keeps drawing more than 3 kW above its released limit for one second.
 - A positive CCS target uses the connector's active transaction as its control

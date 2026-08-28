@@ -60,7 +60,7 @@ Freigabe sichtbar; eine aktive Umverteilung wird ausdrücklich als
 
 1. KSEM liefert L1/L2/L3; maßgeblich ist die höchste Phase.
 2. `targetA - maxPhaseA` bestimmt den Headroom.
-3. Erhöhungen sind auf `rampUpKwPerLoop` begrenzt, Reduktionen erfolgen ohne Rampe.
+3. Erhöhungen sind auf `rampUpKwPerLoop` begrenzt und werden nicht gestapelt: Die nächste Stufe wird erst freigegeben, wenn die vorherige Freigabe in zwei aufeinanderfolgenden Istwerten bis auf 1 kW erreicht wurde. Reduktionen erfolgen ohne Rampe.
 4. Bereits freigegebene, vom Fahrzeug aber noch nicht abgerufene Leistung wird als mögliche Zusatzlast mitgerechnet.
 5. Neu gemessene Fahrzeugleistung wird erst nach einem weiteren Zyklus als bereits im KSEM-Messwert enthalten gutgeschrieben. Das schließt den Zeitversatz zwischen Stations- und Netz-Messwert.
 6. Bedarfstransfer verändert zwar nicht die kW-Summe, wird aber erneut auf den Phasenstrom geprüft, weil eine Verschiebung von DC zu einphasigem AC mehr kritischen Phasenstrom erzeugen kann.
