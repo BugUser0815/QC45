@@ -60,7 +60,10 @@ java -Djava.awt.headless=true -cp "$patched_jar:$runner_classes" \
     "$preview_dir/parallel-connector-selection.png" \
     "$preview_dir/waiting-for-card-sgs-logo.png" \
     "$preview_dir/idle-fallback-sgs-logo.png" \
-    "$preview_dir/ccs-vehicle-connected.png"
+    "$preview_dir/ccs-vehicle-connected.png" \
+    "$preview_dir/prepare-ccs.png" \
+    "$preview_dir/prepare-chademo.png" \
+    "$preview_dir/prepare-type2.png"
 
 class_header=$(od -An -t u1 -j 6 -N 2 \
     "$script_dir/target/classes/pt/efacec/es/evcsd/ui/WaitingForCardChargingTimer.class")
@@ -81,3 +84,6 @@ echo "$preview_dir/parallel-connector-selection.png"
 echo "$preview_dir/waiting-for-card-sgs-logo.png"
 echo "$preview_dir/idle-fallback-sgs-logo.png"
 echo "$preview_dir/ccs-vehicle-connected.png"
+echo "$preview_dir/prepare-ccs.png"
+echo "$preview_dir/prepare-chademo.png"
+echo "$preview_dir/prepare-type2.png"

@@ -15,7 +15,7 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 9) throw new IllegalArgumentException("nine preview paths are required");
+        if (args.length != 12) throw new IllegalArgumentException("twelve preview paths are required");
         require(ConnectorImages.resourcesAvailable(), "connector image resources");
         verifyLogoResource();
         verifyDecoder();
@@ -30,7 +30,10 @@ public final class UiPatchTest {
         renderLogoPanel(new WaitingForCard(null), args[6]);
         renderIdleFallback(args[7]);
         renderSparsePanel(new CCSNotChargingPanel(null), args[8]);
-        System.out.println("UI tests passed; nine 640x480 previews rendered");
+        renderSparsePanel(new PrepareCCSChargePanel(), args[9]);
+        renderSparsePanel(new PrepareChademoChargePanel(), args[10]);
+        renderSparsePanel(new PrepareACChargePanel(43), args[11]);
+        System.out.println("UI tests passed; twelve 640x480 previews rendered");
     }
 
     private static void verifyLogoResource() throws Exception {
