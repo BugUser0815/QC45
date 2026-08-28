@@ -111,24 +111,28 @@ failback.reduceDcKw=5
 failback.reduceAcKw=5
 failback.tripA=35.0
 failback.tripDelayMs=250
-failback.instantTripA=38.0
+failback.instantTripA=218.75
 failback.intervalMs=100
 failback.autoResetHardTrip=false
 failback.resetDelayMs=60000
 ```
 
-Die drei Stromschwellen müssen strikt aufsteigend sein:
-`reduceA < tripA < instantTripA`. Kollidierende Altwerte werden beim Start
-ausschließlich nach unten in eine sichere Reihenfolge mit mindestens 0,1 A
-Abstand überführt; das Log nennt konfigurierte und wirksame Werte. Ist keine
-positive, sichere Reihenfolge möglich, hält die Integration AC und DC auf
-0 kW, startet OCPP und die Diagnoseoberfläche aber weiterhin.
+`reduceA` und `tripA` müssen strikt aufsteigend sein und dürfen die sicheren
+Standardwerte 34/35 A nicht überschreiten. `instantTripA` ist für den
+35-A-SLS-E fest auf `6,25 × In = 218,75 A` gesetzt. Historische Werte wie
+`38.0` werden beim Start automatisch migriert; das Log nennt konfigurierten
+und wirksamen Wert. Nicht positive oder nicht endliche Werte halten die
+Integration im sicheren 0-kW-Modus, während OCPP und Diagnose weiter starten.
 
 Ältere Failback-Zeiten werden ebenfalls ausschließlich verschärft. Insbesondere
 wird ein historisches `failback.intervalMs=200` automatisch auf 100 ms
 reduziert, statt LoadManager und GridFailback vollständig abzuschalten.
 
-Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Erst wenn die Überschreitung `tripDelayMs` lang bestehen bleibt, werden alle Connectoren gestoppt und der Hard-Trip-Latch gesetzt.
+Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Der Hard-Trip-Latch folgt
+danach der stromabhängigen E35-Kennlinie: unter `1,05 × In` entsteht kein
+Latch, bei 38,6 A erst nach 60 Minuten kontinuierlicher Belastung. Mit höherem
+Strom sinkt die Zeit stufenweise bis auf `tripDelayMs` im magnetischen Bereich;
+ab 218,75 A erfolgt der Instant Trip.
 
 Ein KSEM-Fehler pausiert sofort. Standardmäßig wird der Hard Trip nur über eine
 E-STOP-Betätigung mit anschließendem Loslassen und fünf sicheren Reads

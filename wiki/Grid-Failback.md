@@ -8,15 +8,15 @@
 |---|---|---:|---|
 | Reduce | Phase ≥ `34 A` | `500 ms` | DC und AC höchstens je `5 kW`; niemals hochsetzen |
 | Over-limit pause | Phase ≥ `35 A` | sofort nach Messwert | DC `0 kW`, AC `0 kW`, Erhöhungen blockiert |
-| Persistenter Trip | Phase ≥ `35 A` | `250 ms` | alle drei Connectoren stoppen und Latch setzen |
-| Instant Trip | Phase ≥ `38 A` | sofort | alle drei Connectoren stoppen und Latch setzen |
+| SLS-E Hard Trip | zeit-/stromabhängig, siehe unten | Kennlinie | alle drei Connectoren stoppen und Latch setzen |
+| Instant Trip | Phase ≥ `218,75 A` (`6,25 × In`) | sofort | alle drei Connectoren stoppen und Latch setzen |
+| Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
 
 Unabhängig vom KSEM überwacht der 250-ms-Limit-Guard die tatsächlich gemessene
 Connectorleistung. Fließt nach 750 ms weiterhin Leistung, obwohl die wirksame
 Freigabe 0 kW beträgt, wird die Transaktion abgebrochen und eine bis zum
 Neustart verriegelte Leistungsfehler-Sperre gesetzt. Damit kann ein vom
 CCS-Controller nicht umgesetztes 0-kW-Telegramm den Schutz nicht umgehen.
-| Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
 
 Abfrageintervall: **100 ms**.
 
@@ -24,9 +24,27 @@ Die Reduce-Stufe ist strikt reduktionsorientiert. Hat der LoadManager einen Ausg
 
 ## Verhalten am Netzlimit
 
-Schon der erste KSEM-Messwert ab `tripA` blockiert den LoadManager und setzt beide Ladearten auf 0 kW. Bleibt die Überschreitung für `tripDelayMs` bestehen, folgt der gelatchte Hard Trip. Fällt der Strom vorher wieder ab, bleibt die kurze Pause bestehen, bis fünf aufeinanderfolgende Messungen unter `reduceA` liegen.
+Schon der erste KSEM-Messwert ab `tripA` blockiert den LoadManager und setzt
+beide Ladearten auf 0 kW. Der zusätzliche gelatchte Hard Trip folgt der
+konservativen Software-Abbildung eines 35-A-SLS mit E-Charakteristik:
 
-Damit führt eine kurze Überschreitung nicht sofort zum Transaktionsabbruch; es bleibt aber während dieser Prüfung keine Ladeleistung freigegeben.
+| Maximaler Phasenstrom | Dauer bis zum Hard Trip |
+|---:|---:|
+| `35 A` bis `< 36,75 A` (`< 1,05 × In`) | kein Latch-Timer; Pause bleibt aktiv |
+| `36,75 A` bis `< 42 A` | `60 min` kontinuierlich |
+| `42 A` bis `< 52,5 A` | `5 min` kontinuierlich |
+| `52,5 A` bis `< 70 A` | `60 s` kontinuierlich |
+| `70 A` bis `< 105 A` | `10 s` kontinuierlich |
+| `105 A` bis `< 175 A` | `1 s` kontinuierlich |
+| `175 A` bis `< 218,75 A` | mindestens `tripDelayMs` (Standard `250 ms`) |
+| `≥ 218,75 A` | sofort |
+
+Sinkt der Strom unter `1,05 × In`, wird die bis dahin gemessene Trip-Zeit
+vollständig verworfen. Die Over-limit-Pause bleibt bestehen, bis fünf
+aufeinanderfolgende Messungen unter `reduceA` liegen.
+
+Damit führt eine kurze Überschreitung nicht sofort zum gelatchten Trip; es
+bleibt aber während der gesamten Prüfung keine Ladeleistung freigegeben.
 
 ## Hard Trip
 
