@@ -47,7 +47,7 @@ Modbus TCP registers used by evcc and the local charging screen:
 124   session energy high word [Wh]
 125   session energy low word [Wh]
 126   AC/DC UI schema version (=1)
-127   AC/DC session, flow and safety flags
+127   AC/DC session, flow, safety and RemoteStart flags
 128   active DC connector (0/1/2)
 129-137 DC actual/request/grid/cap/effective/SoC/time/energy
 138-145 AC actual/request/grid/cap/effective/time/energy

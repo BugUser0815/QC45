@@ -17,6 +17,8 @@ proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - normaler Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
 - nach RFID-Erkennung während einer laufenden Ladung reduzierte Abbruchansicht mit `LADEVORGANG ABBRECHEN` oben links
 - Beenden-Hinweis im normalen Ladebildschirm: `Zum Beenden Karte vorhalten oder App benutzen.`
+- RemoteStart-Sessions bleiben auf der vollständigen Ladeübersicht und zeigen
+  `Zum Beenden App benutzen.` statt der RFID-Abbruchansicht
 
 ## Ersetzte Betriebsansichten
 
@@ -59,6 +61,11 @@ In der Mitte bleiben nur `KARTE ERKANNT`, die Beenden-Frage und eine kompakte
 Statuszeile aus Ladeleistung, Fahrzeug-SoC und Ladezeit sichtbar. Die normalen
 AC-/CCS-/CHAdeMO-Ladepanels sind Unterklassen von `WaitingForCardChargingTimer`
 und behalten deshalb unverändert die vollständige Ladeansicht.
+
+Bei einer über OCPP gestarteten Session unterdrückt das RemoteStart-Flag aus dem
+nativen Telemetrieblock diese Kartenansicht. Auch wenn EVCSD dabei die Basisklasse
+öffnet, bleibt die vollständige AC/DC-Ladeübersicht sichtbar; der Vorgang wird
+über App beziehungsweise OCPP beendet.
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
 verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung der
@@ -127,9 +134,9 @@ insbesondere das SGS-Logo der Bereitschaftsseite, werden ebenfalls in die JAR
 siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
 
 Ein eigenständiger Headless-Test kompiliert das komplette Overlay gegen
-minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert acht
-640×480-Vorschaubilder für Auswahl, Parallelauswahl, AC/DC-Laden, Failback und
-beide Bereitschaftspfade. Das eingebettete SGS-Logo muss sich dabei tatsächlich
+minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert dreizehn
+640×480-Vorschaubilder einschließlich Auswahl, Vorbereitung, AC/DC-Laden,
+Failback, RemoteStart und beider Bereitschaftspfade. Das eingebettete SGS-Logo muss sich dabei tatsächlich
 decodieren lassen und in beiden Bereitschaftsbildern sichtbar sein:
 
 ```bash

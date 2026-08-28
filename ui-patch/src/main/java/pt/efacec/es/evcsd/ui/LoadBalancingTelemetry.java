@@ -21,6 +21,7 @@ final class LoadBalancingTelemetry {
     static final int FLAG_LIMIT_MISMATCH = 1 << 12;
     static final int FLAG_EVCC_DC = 1 << 13;
     static final int FLAG_EVCC_AC = 1 << 14;
+    static final int FLAG_REMOTE_START = 1 << 15;
 
     final int flags;
     final int activeDcConnector;
@@ -80,6 +81,7 @@ final class LoadBalancingTelemetry {
     boolean demandTransfer() { return has(FLAG_DEMAND_TRANSFER); }
     boolean evccControlsDc() { return has(FLAG_EVCC_DC); }
     boolean evccControlsAc() { return has(FLAG_EVCC_AC); }
+    boolean remoteStarted() { return has(FLAG_REMOTE_START); }
     int totalActualKw() { return dcActualKw + acActualKw; }
     int totalEffectiveKw() { return dcEffectiveKw + acEffectiveKw; }
     long totalEnergyWh() { return dcEnergyWh + acEnergyWh; }

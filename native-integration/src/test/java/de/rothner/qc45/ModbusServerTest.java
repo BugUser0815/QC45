@@ -42,6 +42,7 @@ public final class ModbusServerTest {
         assertEquals(0, ModbusServer.UI_FLAG_CONFIGURATION & ModbusServer.UI_FLAG_STARTUP);
         assertEquals(0, ModbusServer.UI_FLAG_LIMIT_MISMATCH & ModbusServer.UI_FLAG_FAILBACK);
         assertEquals(0, ModbusServer.UI_FLAG_EVCC_DC & ModbusServer.UI_FLAG_EVCC_AC);
+        assertEquals(0, ModbusServer.UI_FLAG_REMOTE_START & ModbusServer.UI_FLAG_EVCC_AC);
 
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             new ChargingLimitIo() {

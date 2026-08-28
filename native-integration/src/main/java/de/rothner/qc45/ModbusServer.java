@@ -37,6 +37,7 @@ public final class ModbusServer extends Thread {
     static final int UI_FLAG_LIMIT_MISMATCH = 1 << 12;
     static final int UI_FLAG_EVCC_DC = 1 << 13;
     static final int UI_FLAG_EVCC_AC = 1 << 14;
+    static final int UI_FLAG_REMOTE_START = 1 << 15;
 
     private final ReflectionQC45 station;
     private final ChargingLimitCoordinator limits;
@@ -667,6 +668,7 @@ public final class ModbusServer extends Thread {
             if (balancing.limitMismatchBlocked) flags |= UI_FLAG_LIMIT_MISMATCH;
             if (balancing.evccControlsDc) flags |= UI_FLAG_EVCC_DC;
             if (balancing.evccControlsAc) flags |= UI_FLAG_EVCC_AC;
+            if (remoteStarted) flags |= UI_FLAG_REMOTE_START;
             balancingRegisters = uiBalancingBlock(flags, activeDc, liveDcPowerKw,
                 balancing, socPct, chargingSeconds, sessionEnergyWh,
                 liveAcPowerKw, acChargingSeconds, acSessionEnergyWh);

@@ -231,7 +231,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
      * the full charging monitor.
      */
     private boolean showStopConfirmation() {
-        return getClass() == WaitingForCardChargingTimer.class;
+        if (getClass() != WaitingForCardChargingTimer.class) return false;
+        long now = System.currentTimeMillis();
+        return !freshBalancingData(now) || !lastBalancingData.remoteStarted();
     }
 
     private boolean isChargingSession() {
@@ -585,11 +587,13 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(data.blocked() ? Font.BOLD : Font.PLAIN, 11));
         centered(g, loadBalancingExplanation(data), 320, 438);
 
-        g.setColor(STOP_RED);
+        boolean remoteStarted = data.remoteStarted();
+        g.setColor(remoteStarted ? SECONDARY : STOP_RED);
         g.fillOval(104, 450, 8, 8);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 12));
-        g.drawString("Zum Beenden Karte vorhalten oder App benutzen.", 122, 459);
+        g.drawString(remoteStarted ? "Zum Beenden App benutzen."
+            : "Zum Beenden Karte vorhalten oder App benutzen.", 122, 459);
     }
 
     private String loadBalancingExplanation(LoadBalancingTelemetry data) {

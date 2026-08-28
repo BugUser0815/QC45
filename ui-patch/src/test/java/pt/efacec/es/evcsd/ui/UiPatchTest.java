@@ -15,7 +15,7 @@ public final class UiPatchTest {
     private UiPatchTest() {}
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 12) throw new IllegalArgumentException("twelve preview paths are required");
+        if (args.length != 13) throw new IllegalArgumentException("thirteen preview paths are required");
         require(ConnectorImages.resourcesAvailable(), "connector image resources");
         verifyLogoResource();
         verifyDecoder();
@@ -33,7 +33,8 @@ public final class UiPatchTest {
         renderSparsePanel(new PrepareCCSChargePanel(), args[9]);
         renderSparsePanel(new PrepareChademoChargePanel(), args[10]);
         renderSparsePanel(new PrepareACChargePanel(43), args[11]);
-        System.out.println("UI tests passed; twelve 640x480 previews rendered");
+        renderRemoteStartedOverview(args[12]);
+        System.out.println("UI tests passed; thirteen 640x480 previews rendered");
     }
 
     private static void verifyLogoResource() throws Exception {
@@ -74,6 +75,10 @@ public final class UiPatchTest {
         require(data.evccControlsDc(), "DC evcc control flag must decode");
         require(!data.evccControlsAc(), "AC must remain autonomous independently");
 
+        raw = telemetry(0, true);
+        data = LoadBalancingTelemetry.decode(raw);
+        require(data.remoteStarted(), "RemoteStart flag must decode");
+
         raw[0] = 99;
         try {
             LoadBalancingTelemetry.decode(raw);
@@ -111,6 +116,39 @@ public final class UiPatchTest {
         panel.paint(graphics);
         graphics.dispose();
         writeAndVerify(image, path);
+    }
+
+    private static void renderRemoteStartedOverview(String path) throws Exception {
+        WaitingForCardChargingTimer panel = new WaitingForCardChargingTimer();
+        try {
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0, true)));
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
+            set(panel, "lastBatterySoc", Integer.valueOf(64));
+
+            Method render = WaitingForCardChargingTimer.class.getDeclaredMethod("renderChargePage");
+            render.setAccessible(true);
+            ImageIcon icon = (ImageIcon)render.invoke(panel);
+            BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D graphics = image.createGraphics();
+            graphics.drawImage(icon.getImage(), 0, 0, null);
+            graphics.dispose();
+
+            int stopRedPixels = 0;
+            for (int y = 128; y < 190; y++) {
+                for (int x = 18; x < 208; x++) {
+                    int rgb = image.getRGB(x, y);
+                    int red = (rgb >> 16) & 0xff;
+                    int green = (rgb >> 8) & 0xff;
+                    int blue = rgb & 0xff;
+                    if (red > 120 && green < 70 && blue < 70) stopRedPixels++;
+                }
+            }
+            require(stopRedPixels < 20,
+                "RemoteStart must not render the RFID stop overlay");
+            writeAndVerify(image, path);
+        } finally {
+            panel.stop();
+        }
     }
 
     private static void renderSparsePanel(JPanel panel, String path) throws Exception {
@@ -178,6 +216,10 @@ public final class UiPatchTest {
     }
 
     private static int[] telemetry(int safetyState) {
+        return telemetry(safetyState, false);
+    }
+
+    private static int[] telemetry(int safetyState, boolean remoteStarted) {
         int flags = LoadBalancingTelemetry.FLAG_DC_SESSION
             | LoadBalancingTelemetry.FLAG_AC_SESSION
             | LoadBalancingTelemetry.FLAG_DC_FLOW
@@ -199,6 +241,7 @@ public final class UiPatchTest {
                 | LoadBalancingTelemetry.FLAG_BLOCKED
                 | LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH;
         }
+        if (remoteStarted) flags |= LoadBalancingTelemetry.FLAG_REMOTE_START;
         boolean blocked = safetyState != 0;
         return new int[] {
             LoadBalancingTelemetry.VERSION, flags, 2,
