@@ -228,7 +228,12 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
 
         Object cm = central();
         boolean loggedIn = ((Boolean) centralClass.getMethod("isLoggedIn").invoke(cm)).booleanValue();
-        satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(sat, Boolean.valueOf(loggedIn));
+        boolean transactionActive = activeTransaction(connector) != null;
+        boolean remoteSession = isRemoteSession(connector);
+        boolean controlAuthorized = ccsControlAuthorized(
+            effectiveKw, loggedIn, transactionActive, remoteSession);
+        satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(
+            sat, Boolean.valueOf(controlAuthorized));
 
         int quickCurrent = 0;
         try { quickCurrent = quickChargeMaxCurrentA(connector); } catch (Throwable ignored) {}
@@ -236,11 +241,20 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         System.out.println("[QC45] CCS power target connector=" + connector
             + " ccsV3Byte2=" + effectiveKw + "kW"
             + " loggedIn=" + loggedIn
+            + " transactionActive=" + transactionActive
+            + " remoteSession=" + remoteSession
+            + " controlAuthorized=" + controlAuthorized
             + " quickChargeMaxCurrent=" + quickCurrent + "A diagnostic-only"
             + " satelliteMaxPower=" + limitKw(connector) + "kW"
             + " actualPower=" + powerKw(connector) + "kW"
             + " ccsRx[" + ccsModuleTelemetry(connector) + "]");
         return quickCurrent;
+    }
+
+    static boolean ccsControlAuthorized(int targetKw, boolean loggedIn,
+                                        boolean transactionActive,
+                                        boolean remoteSession) {
+        return targetKw > 0 && (loggedIn || transactionActive || remoteSession);
     }
 
     public long energyRaw(int connector) throws Exception {

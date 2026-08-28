@@ -182,6 +182,10 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
 - At 34 A the failback applies its configured reduction; at 35 A it immediately
   blocks AC/DC and hard-trips after 250 ms continuous excess; 38 A trips immediately.
 - KSEM failure immediately blocks AC/DC at 0 kW while transactions remain alive.
+- The zero-limit mismatch guard allows the bounded initial KSEM qualification
+  and one complete LoadManager cycle, then aborts persistent power against 0 kW.
+- A positive CCS target uses the connector's active transaction as its control
+  authorization; a 0 kW target always sends the CCS control flag as false.
 - A hard trip retries RemoteStop until sessions end and is latched by default.
   Reset requires an E-STOP press/release plus five safe KSEM readings unless the
   explicitly opt-in timed reset is configured.

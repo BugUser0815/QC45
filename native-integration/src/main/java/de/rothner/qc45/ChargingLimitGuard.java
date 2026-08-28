@@ -10,7 +10,14 @@ package de.rothner.qc45;
  */
 final class ChargingLimitGuard extends Thread {
     private static final long ZERO_REASSERT_MS = 1000L;
-    private static final long ZERO_POWER_GRACE_MS = 750L;
+    // LoadManager is allowed to run at a one-second interval. A newly detected
+    // session must survive at least one complete control cycle before a
+    // temporary CCS precharge value can be classified as a limit violation.
+    private static final long ZERO_POWER_GRACE_MS = 2000L;
+    // Initial KSEM qualification takes five LoadManager reads. Keep the hard
+    // stop bounded if startup can never qualify, but do not count the expected
+    // CCS precharge window as an immediate mismatch.
+    private static final long STARTUP_ZERO_POWER_GRACE_MS = 10000L;
     private static final long STOP_RETRY_MS = 2000L;
 
     private final ChargingSessionIo station;
@@ -59,6 +66,7 @@ final class ChargingLimitGuard extends Thread {
         Exception reconcileFailure = null;
         try { limits.reconcile(); }
         catch (Exception e) { reconcileFailure = e; }
+        ChargingLimitCoordinator.Snapshot snapshot = limits.snapshot();
         for (int connector = 1; connector <= 3; connector++) {
             int effectiveKw = limits.effectiveConnectorKw(connector);
             if (effectiveKw != 0) {
@@ -81,7 +89,9 @@ final class ChargingLimitGuard extends Thread {
             }
 
             int actualKw = station.powerKw(connector);
-            if (actualKw <= 0 || now - zeroSince[connector] < ZERO_POWER_GRACE_MS) continue;
+            long graceMs = snapshot.startupBlocked
+                ? STARTUP_ZERO_POWER_GRACE_MS : ZERO_POWER_GRACE_MS;
+            if (actualKw <= 0 || now - zeroSince[connector] < graceMs) continue;
 
             try { limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true); }
             catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
