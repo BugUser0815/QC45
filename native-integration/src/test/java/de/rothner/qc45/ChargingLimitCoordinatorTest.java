@@ -179,6 +179,54 @@ public final class ChargingLimitCoordinatorTest {
         assertEquals(0, configurationBlocked.effectiveAcKw);
     }
 
+    @Test
+    public void gridApprovedIdlePrearmUsesNonAuthorizingWriter() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+
+        assertLimits(io, 5, 5, 0);
+        assertTrue(io.operations.contains("prearm1=5"));
+        assertTrue(io.operations.contains("prearm2=5"));
+        assertEquals("pre-arm is not an active allocation", 0, limits.effectiveDcKw());
+    }
+
+    @Test
+    public void safetyBlockClearsIdlePrearmWithAuthoritativeZero() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        io.operations.clear();
+
+        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
+
+        assertLimits(io, 0, 0, 0);
+        assertTrue(io.operations.contains("set1=0"));
+        assertTrue(io.operations.contains("set2=0"));
+    }
+
+    @Test
+    public void firstActiveCcsTargetReassertsPrearmedValueThroughFullWriter() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        io.operations.clear();
+
+        limits.setGridTargetsAndPrearm(2, false, 5, 0, 0, 0, false);
+
+        assertLimits(io, 0, 5, 0);
+        assertTrue(io.operations.contains("set2=5"));
+    }
+
     private static ChargingLimitCoordinator coordinator(FakeIo io) {
         return new ChargingLimitCoordinator(io, 5, 50, 5, 43);
     }
@@ -201,7 +249,13 @@ public final class ChargingLimitCoordinatorTest {
 
         public void setConnectorLimitKw(int connector, int kw) {
             value[connector] = kw;
+            operations.add("set" + connector + "=" + kw);
             operations.add(connector + "=" + kw);
+        }
+
+        public void preArmConnectorLimitKw(int connector, int kw) {
+            value[connector] = kw;
+            operations.add("prearm" + connector + "=" + kw);
         }
     }
 }

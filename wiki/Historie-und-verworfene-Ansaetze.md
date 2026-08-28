@@ -24,11 +24,13 @@ Logs aus der Zwischenversion mit `ccsV3Byte2=<Ampere>` zeigen, dass der Kona hoc
 
 ### ⛔ EVCSD darf beim Start selbständig auf 50 kW springen
 
-Ein 5-kW-Pre-Arm war ebenfalls nicht ausreichend sicher, weil er vor der
-eigentlichen Headroom-Berechnung Leistung freigab. Der aktuelle Stand startet
-fail-closed bei 0 kW. Erst nach fünf gültigen KSEM-Messungen wird ein frisch
-berechnetes Ziel unter aktiver Sperre vorbereitet und anschließend freigegeben.
-Der `ChargingLimitGuard` setzt fremde EVCSD-Änderungen zurück.
+Ein pauschaler 5-kW-Pre-Arm vor der Headroom-Berechnung war nicht ausreichend
+sicher. Der aktuelle Stand startet fail-closed bei 0 kW. Erst nach fünf gültigen
+KSEM-Messungen und einer konservativen Projektion wird ausschließlich am inaktiven
+DC-Satelliten ein nicht autorisierender 5-kW-Startwert hinterlegt. Beim erkannten
+Vorgang wird er autorisiert erneut übertragen und drei Sekunden gehalten. Der
+`ChargingLimitGuard` setzt fremde EVCSD-Änderungen zurück und beendet anhaltende
+Sollwertverletzungen.
 
 ### ⛔ Alte Type2-Mitregelung ohne heutige Schutzmechanismen
 

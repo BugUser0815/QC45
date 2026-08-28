@@ -184,6 +184,51 @@ final class LoadAllocator {
         return new Targets(dcKw, acKw);
     }
 
+    /**
+     * Calculate non-authorizing minimum limits for outputs which are currently
+     * idle. The projection includes all already released active power. When
+     * both outputs are idle and both are eligible, either both minimums fit or
+     * neither is pre-armed, preserving equal start priority.
+     */
+    static Targets safePrearm(boolean dcActive, boolean acActive,
+                              int activeDcTargetKw, int activeAcTargetKw,
+                              int actualDcKw, int actualAcKw,
+                              boolean dcEligible, boolean acEligible,
+                              int minDcKw, int minAcKw,
+                              double criticalA, double commandCeilingA) {
+        int prearmDcKw = !dcActive && dcEligible ? minDcKw : 0;
+        int prearmAcKw = !acActive && acEligible ? minAcKw : 0;
+        if (prearmDcKw == 0 && prearmAcKw == 0) return new Targets(0, 0);
+
+        Targets possible = new Targets(
+            dcActive ? Math.max(0, activeDcTargetKw) : prearmDcKw,
+            acActive ? Math.max(0, activeAcTargetKw) : prearmAcKw);
+        if (projectedCurrentA(criticalA, possible,
+                dcActive ? actualDcKw : 0,
+                acActive ? actualAcKw : 0) <= commandCeilingA) {
+            return new Targets(prearmDcKw, prearmAcKw);
+        }
+
+        // Do not silently favour AC or DC when both idle outputs asked for the
+        // same start opportunity but their combined technical minima do not fit.
+        if (!dcActive && !acActive && prearmDcKw > 0 && prearmAcKw > 0) {
+            return new Targets(0, 0);
+        }
+        return new Targets(0, 0);
+    }
+
+    /** Keep a newly observed session at its technical minimum while it settles. */
+    static Targets constrainStartupSettling(Targets target,
+                                            boolean dcSettling,
+                                            boolean acSettling,
+                                            int minDcKw, int minAcKw) {
+        int dcKw = dcSettling && target.dcKw > 0
+            ? Math.min(target.dcKw, minDcKw) : target.dcKw;
+        int acKw = acSettling && target.acKw > 0
+            ? Math.min(target.acKw, minAcKw) : target.acKw;
+        return new Targets(dcKw, acKw);
+    }
+
     static double projectedCurrentA(double measuredCriticalA, Targets targets,
                                     int actualDcKw, int actualAcKw) {
         int unreachedDcKw = Math.max(0, targets.dcKw - actualDcKw);

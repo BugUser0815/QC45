@@ -162,4 +162,30 @@ public final class LoadAllocatorTest {
         assertEquals(15, safe.dcKw);
         assertEquals(15, safe.acKw);
     }
+
+    @Test
+    public void idleCcsMinimumCanBePrearmedWhenGridProjectionIsSafe() {
+        LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
+            false, false, 0, 0, 0, 0,
+            true, false, 5, 5, 4.3d, 34.0d);
+        assertEquals(5, prearm.dcKw);
+        assertEquals(0, prearm.acKw);
+    }
+
+    @Test
+    public void simultaneousIdlePrearmIsRejectedWhenBothMinimumsDoNotFit() {
+        LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
+            false, false, 0, 0, 0, 0,
+            true, true, 5, 5, 4.3d, 34.0d);
+        assertEquals(0, prearm.dcKw);
+        assertEquals(0, prearm.acKw);
+    }
+
+    @Test
+    public void newSessionRemainsAtMinimumDuringSettlingWindow() {
+        LoadAllocator.Targets held = LoadAllocator.constrainStartupSettling(
+            new LoadAllocator.Targets(17, 13), true, false, 5, 5);
+        assertEquals(5, held.dcKw);
+        assertEquals(13, held.acKw);
+    }
 }

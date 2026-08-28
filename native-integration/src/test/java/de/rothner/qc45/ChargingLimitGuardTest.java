@@ -86,6 +86,49 @@ public final class ChargingLimitGuardTest {
         assertTrue(limits.snapshot().limitMismatchBlocked);
     }
 
+    @Test
+    public void hardStopsFirmwarePowerAboveIdlePrearm() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+        station.power[2] = 50;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        assertEquals(0, station.stopCount);
+        assertEquals(5, station.limit[2]);
+        guard.runCycle(2100L);
+
+        assertEquals(1, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+        assertEquals(0, station.limit[2]);
+    }
+
+    @Test
+    public void toleratesSmallTelemetryDifferenceAbovePositiveLimit() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+        station.power[2] = 8;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        guard.runCycle(5000L);
+
+        assertEquals(0, station.stopCount);
+        assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
     private static final class FakeStation implements ChargingLimitIo, ChargingSessionIo {
         final int[] limit = new int[] { 0, 0, 0, 0 };
         final int[] power = new int[] { 0, 0, 0, 0 };
@@ -95,6 +138,10 @@ public final class ChargingLimitGuardTest {
         public int limitKw(int connector) { return limit[connector]; }
 
         public void setConnectorLimitKw(int connector, int kw) {
+            limit[connector] = kw;
+        }
+
+        public void preArmConnectorLimitKw(int connector, int kw) {
             limit[connector] = kw;
         }
 

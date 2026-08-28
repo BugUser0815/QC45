@@ -32,6 +32,8 @@ public final class ChargingLimitCoordinator {
     private boolean evccControlsAc;
     private int gridDcKw;
     private int gridAcKw;
+    private int prearmDcKw;
+    private int prearmAcKw;
     private int stageDcCapKw;
     private int stageAcCapKw;
     private int activeDcConnector;
@@ -107,12 +109,40 @@ public final class ChargingLimitCoordinator {
     public synchronized void setGridTargets(int dcConnector, boolean acIsActive,
                                             int dcKw, int acKw,
                                             boolean transferringDemand) throws Exception {
+        setGridTargetsAndPrearm(dcConnector, acIsActive, dcKw, acKw,
+            0, 0, transferringDemand);
+    }
+
+    /**
+     * Atomically publish active allocations and safe next-session start values.
+     * Pre-arm values apply only to currently inactive outputs and are written
+     * through the non-authorizing satellite-only path.
+     */
+    public synchronized void setGridTargetsAndPrearm(
+                                            int dcConnector, boolean acIsActive,
+                                            int dcKw, int acKw,
+                                            int idleDcKw, int idleAcKw,
+                                            boolean transferringDemand) throws Exception {
         if (dcConnector < 0 || dcConnector > 2) throw new IllegalArgumentException("DC connector must be 0..2");
+        int oldDcConnector = activeDcConnector;
+        boolean oldAcActive = acActive;
         activeDcConnector = dcConnector;
         acActive = acIsActive;
         gridDcKw = dcConnector == 0 ? 0 : normalize(dcKw, minDcKw, maxDcKw);
         gridAcKw = acIsActive ? normalize(acKw, minAcKw, maxAcKw) : 0;
+        prearmDcKw = dcConnector == 0
+            ? normalize(idleDcKw, minDcKw, maxDcKw) : 0;
+        prearmAcKw = acIsActive
+            ? 0 : normalize(idleAcKw, minAcKw, maxAcKw);
         demandTransfer = transferringDemand && dcConnector > 0 && acIsActive;
+
+        // A pre-armed satellite may already contain the same numeric limit. A
+        // newly active session still needs one full writer call so CCS receives
+        // sendCcsStart(true) only after transaction authorization is observable.
+        if (dcConnector > 0 && dcConnector != oldDcConnector) {
+            applied[dcConnector] = -1;
+        }
+        if (acIsActive && !oldAcActive) applied[3] = -1;
         apply(false);
     }
 
@@ -161,8 +191,10 @@ public final class ChargingLimitCoordinator {
     public synchronized int requestedAcKw() { return requestedAcKw; }
     public synchronized boolean evccControlsDc() { return evccControlsDc; }
     public synchronized boolean evccControlsAc() { return evccControlsAc; }
-    public synchronized int effectiveDcKw() { return targets()[activeDcConnector == 0 ? 1 : activeDcConnector]; }
-    public synchronized int effectiveAcKw() { return targets()[3]; }
+    public synchronized int effectiveDcKw() {
+        return activeDcConnector == 0 ? 0 : targets()[activeDcConnector];
+    }
+    public synchronized int effectiveAcKw() { return acActive ? targets()[3] : 0; }
 
     public synchronized int effectiveConnectorKw(int connector) {
         if (connector < 1 || connector > 3) {
@@ -237,9 +269,18 @@ public final class ChargingLimitCoordinator {
 
         int dc = Math.min(requestedDcKw, Math.min(gridDcKw, stageDcCapKw));
         int ac = Math.min(requestedAcKw, Math.min(gridAcKw, stageAcCapKw));
+        int prearmDc = Math.min(requestedDcKw,
+            Math.min(prearmDcKw, stageDcCapKw));
+        int prearmAc = Math.min(requestedAcKw,
+            Math.min(prearmAcKw, stageAcCapKw));
         if (activeDcConnector == 1) target[1] = dc;
         else if (activeDcConnector == 2 && ccsAvailable) target[2] = dc;
+        else if (activeDcConnector == 0) {
+            target[1] = prearmDc;
+            if (ccsAvailable) target[2] = prearmDc;
+        }
         if (acActive) target[3] = ac;
+        else target[3] = prearmAc;
         return target;
     }
 
@@ -252,7 +293,7 @@ public final class ChargingLimitCoordinator {
             if (target[connector] < applied[connector]
                     || applied[connector] < 0 || (safetyCritical && target[connector] == 0)) {
                 try {
-                    io.setConnectorLimitKw(connector, target[connector]);
+                    writeTarget(connector, target[connector]);
                     applied[connector] = target[connector];
                 } catch (Exception e) {
                     if (first == null) first = e;
@@ -264,7 +305,7 @@ public final class ChargingLimitCoordinator {
             for (int connector = 1; connector <= 3; connector++) {
                 if (target[connector] > applied[connector]) {
                     try {
-                        io.setConnectorLimitKw(connector, target[connector]);
+                        writeTarget(connector, target[connector]);
                         applied[connector] = target[connector];
                     } catch (Exception e) {
                         if (first == null) first = e;
@@ -273,6 +314,14 @@ public final class ChargingLimitCoordinator {
             }
         }
         if (first != null) throw first;
+    }
+
+    private void writeTarget(int connector, int targetKw) throws Exception {
+        boolean idlePrearm = targetKw > 0
+            && ((connector <= 2 && activeDcConnector == 0)
+                || (connector == 3 && !acActive));
+        if (idlePrearm) io.preArmConnectorLimitKw(connector, targetKw);
+        else io.setConnectorLimitKw(connector, targetKw);
     }
 
     private static int clamp(int value, int min, int max) {

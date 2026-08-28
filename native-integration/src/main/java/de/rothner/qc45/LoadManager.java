@@ -9,6 +9,7 @@ package de.rothner.qc45;
  */
 public final class LoadManager extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
+    private static final long START_SETTLE_MS = 3000L;
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -33,6 +34,10 @@ public final class LoadManager extends Thread {
     private boolean previousAcActive;
     private int previousActualDcKw;
     private int previousActualAcKw;
+    private long dcSettleUntilMs;
+    private long acSettleUntilMs;
+    private int lastPrearmDcKw = -1;
+    private int lastPrearmAcKw = -1;
     private long lastErrorLog;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
@@ -102,7 +107,8 @@ public final class LoadManager extends Thread {
                     ChargingLimitCoordinator.LOAD_METER);
                 if (!meterHealthy || externalBlock) {
                     resetDemandTracking();
-                    limits.setGridTargets(active.dcConnector, active.ac, 0, 0);
+                    limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                        0, 0, 0, 0, false);
                     if (meterHealthy) releasePreparedMeterBlocks();
                     rememberActive(active);
                     sleepLoop();
@@ -112,7 +118,8 @@ public final class LoadManager extends Thread {
                 double criticalA = currents.max();
                 if (criticalA >= commandCeilingA) {
                     resetDemandTracking();
-                    limits.setGridTargets(active.dcConnector, active.ac, 0, 0);
+                    limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                        0, 0, 0, 0, false);
                     releasePreparedMeterBlocks();
                     rememberActive(active);
                     System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
@@ -132,8 +139,17 @@ public final class LoadManager extends Thread {
 
                 if (active.dcConnector == 0 && !active.ac) {
                     resetDemandTracking();
-                    limits.setGridTargets(0, false, 0, 0);
+                    dcSettleUntilMs = 0L;
+                    acSettleUntilMs = 0L;
+                    LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
+                        false, false, 0, 0, 0, 0,
+                        requestedDcMax >= minDcKw,
+                        false,
+                        minDcKw, minAcKw, criticalA, commandCeilingA);
+                    limits.setGridTargetsAndPrearm(0, false, 0, 0,
+                        prearm.dcKw, prearm.acKw, false);
                     releasePreparedMeterBlocks();
+                    logPrearm(prearm, criticalA);
                     rememberActive(active);
                     sleepLoop();
                     continue;
@@ -170,10 +186,41 @@ public final class LoadManager extends Thread {
                     fair, target, criticalA, safetyCreditedDcKw,
                     safetyCreditedAcKw, commandCeilingA);
 
-                boolean demandTransfer = target.dcKw != fair.dcKw || target.acKw != fair.acKw;
-                limits.setGridTargets(active.dcConnector, active.ac,
-                    target.dcKw, target.acKw, demandTransfer);
+                if (active.dcConnector > 0 && commandedDcKw == 0
+                        && target.dcKw > 0 && dcSettleUntilMs <= now) {
+                    dcSettleUntilMs = now + START_SETTLE_MS;
+                    System.out.println("[QC45] DC-SETTLE armed connector="
+                        + active.dcConnector + " limit=" + minDcKw
+                        + "kW until=" + dcSettleUntilMs);
+                }
+                if (active.ac && commandedAcKw == 0
+                        && target.acKw > 0 && acSettleUntilMs <= now) {
+                    acSettleUntilMs = now + START_SETTLE_MS;
+                    System.out.println("[QC45] AC-SETTLE armed connector=3 limit="
+                        + minAcKw + "kW until=" + acSettleUntilMs);
+                }
+                if (active.dcConnector == 0) dcSettleUntilMs = 0L;
+                if (!active.ac) acSettleUntilMs = 0L;
+                boolean dcSettling = active.dcConnector > 0 && now < dcSettleUntilMs;
+                boolean acSettling = active.ac && now < acSettleUntilMs;
+                target = LoadAllocator.constrainStartupSettling(target,
+                    dcSettling, acSettling,
+                    minDcKw, minAcKw);
+
+                boolean demandTransfer = !dcSettling && !acSettling
+                    && (target.dcKw != fair.dcKw || target.acKw != fair.acKw);
+                LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
+                    active.dcConnector > 0, active.ac,
+                    target.dcKw, target.acKw,
+                    actualDcKw, actualAcKw,
+                    requestedDcMax >= minDcKw,
+                    requestedAcMax >= minAcKw,
+                    minDcKw, minAcKw, criticalA, commandCeilingA);
+                limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                    target.dcKw, target.acKw,
+                    prearm.dcKw, prearm.acKw, demandTransfer);
                 releasePreparedMeterBlocks();
+                logPrearm(prearm, criticalA);
                 previousActualDcKw = actualDcKw;
                 previousActualAcKw = actualAcKw;
                 rememberActive(active);
@@ -258,6 +305,15 @@ public final class LoadManager extends Thread {
         acDemand.reset();
         previousActualDcKw = 0;
         previousActualAcKw = 0;
+    }
+
+    private void logPrearm(LoadAllocator.Targets prearm, double criticalA) {
+        if (prearm.dcKw == lastPrearmDcKw && prearm.acKw == lastPrearmAcKw) return;
+        System.out.println("[QC45] LoadManager start pre-arm grid=" + one(criticalA)
+            + "A DC=" + prearm.dcKw + "kW AC=" + prearm.acKw
+            + "kW non-authorizing=true settle=" + START_SETTLE_MS + "ms");
+        lastPrearmDcKw = prearm.dcKw;
+        lastPrearmAcKw = prearm.acKw;
     }
 
     private void sleepLoop() {

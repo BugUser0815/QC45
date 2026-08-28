@@ -85,8 +85,9 @@ für beide Ladearten:
 
 - beim JVM-/Webapp-Start werden alle drei Ausgänge zuerst aktiv auf 0 kW gesetzt;
 - erst fünf gültige KSEM-Reads dürfen die Start-Sperre lösen;
-- das 5-kW-Minimum wird nur dann freigegeben, wenn die konservative Projektion das komplette Startbudget unter 34 A hält;
-- meldet EVCSD bei AC oder DC mehr als zentral freigegeben, stellt der 250-ms-Guard den niedrigeren Wert wieder her;
+- danach wird der inaktive DC-Satellit nur bei ausreichendem Headroom mit einem nicht autorisierenden 5-kW-Startwert vorgerüstet; globale Konfigurationswerte bleiben dabei unangetastet und es wird kein Startbefehl gesendet;
+- beim ersten erkannten Vorgang wird der 5-kW-Wert über den vollständigen, autorisierten CCS-Pfad erneut übertragen und drei Sekunden gehalten;
+- meldet EVCSD bei AC oder DC mehr als zentral freigegeben, stellt der 250-ms-Guard den niedrigeren Wert wieder her; eine anhaltende positive Sollwertverletzung beendet den Vorgang hart;
 - ein neu hinzukommender AC- oder DC-Ladevorgang wird in die faire Gesamtverteilung aufgenommen, ohne eine unberechnete Vorbelegung.
 
 ## evcc-Wunschwerte

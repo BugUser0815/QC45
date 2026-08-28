@@ -48,6 +48,7 @@ public final class ModbusServerTest {
             new ChargingLimitIo() {
                 public int limitKw(int connector) { return 0; }
                 public void setConnectorLimitKw(int connector, int kw) {}
+                public void preArmConnectorLimitKw(int connector, int kw) {}
             }, 5, 50, 5, 43);
         limits.setCcsAvailable(true);
         limits.requestBudgets(50, 43);

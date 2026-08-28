@@ -335,6 +335,33 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
             + " acFixed=" + safeAcFixed());
     }
 
+    /**
+     * Store an authoritative start value directly on the satellite only.
+     *
+     * EVCSD copies SatelliteModule.satelliteMaxPower into the CCS V3
+     * START_CHARGE message. Keeping that field at the grid-approved minimum
+     * while idle prevents the firmware's 50 kW default from winning the race
+     * before LoadManager can observe a new transaction. This method deliberately
+     * does not touch Configuration and does not call sendCcsStart(): pre-arming
+     * must never authorize a transaction by itself.
+     */
+    public synchronized void preArmConnectorLimitKw(int connector, int kw) throws Exception {
+        if (connector < 1 || connector > 3) {
+            throw new IllegalArgumentException("connector must be 1..3");
+        }
+        kw = clamp(kw, 0, connector == 3 ? 43 : 50);
+        Object target = satellite(connector);
+        Class<?> satType = target.getClass();
+        int oldTarget = ((Number)satType.getMethod("getMaxPower").invoke(target)).intValue();
+        satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
+        if (oldTarget != kw) {
+            System.out.println("[QC45] NativePreArm connector=" + connector
+                + " requested=" + kw + "kW oldSatellite=" + oldTarget
+                + " newSatellite=" + limitKw(connector)
+                + " configurationUntouched=true startSent=false");
+        }
+    }
+
     public boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
         try {

@@ -184,6 +184,11 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
 - KSEM failure immediately blocks AC/DC at 0 kW while transactions remain alive.
 - The zero-limit mismatch guard allows the bounded initial KSEM qualification
   and one complete LoadManager cycle, then aborts persistent power against 0 kW.
+- After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe
+  5 kW minimum without authorization or a start command. A detected session sends
+  that target through the full CCS path and holds it for three seconds before ramping.
+- The 250 ms guard also reasserts positive limits and hard-stops a transaction that
+  keeps drawing more than 3 kW above its released limit for one second.
 - A positive CCS target uses the connector's active transaction as its control
   authorization; a 0 kW target always sends the CCS control flag as false.
 - A hard trip retries RemoteStop until sessions end and is latched by default.
