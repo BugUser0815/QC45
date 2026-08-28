@@ -3,6 +3,9 @@ package de.rothner.qc45;
 /** Independent, KSEM-backed last-resort protection for AC and DC. */
 public final class GridFailback extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
+    static final double SLS_NOMINAL_A = 35.0d;
+    static final double SLS_E_INSTANT_MULTIPLIER = 6.25d;
+    static final double SLS_E_INSTANT_A = SLS_NOMINAL_A * SLS_E_INSTANT_MULTIPLIER;
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -24,6 +27,7 @@ public final class GridFailback extends Thread {
     private volatile boolean overLimitPaused;
     private long reduceSince;
     private long tripSince;
+    private long currentTripDelayMs = Long.MAX_VALUE;
     private long resetSince;
     private long lastGridLog;
     private long lastControlErrorLog;
@@ -81,7 +85,8 @@ public final class GridFailback extends Thread {
         safeSetBlocked(true);
         System.out.println("[QC45] GridFailback started AC+DC hard-trip-reset="
             + (autoResetHardTrip ? "timed(" + resetDelayMs + "ms)" : "E-STOP press+release")
-            + " stable-below=" + one(reduceA) + "A");
+            + " stable-below=" + one(reduceA) + "A SLS=E35 instant="
+            + one(instantTripA) + "A");
 
         while (running) {
             long now = System.currentTimeMillis();
@@ -141,19 +146,31 @@ public final class GridFailback extends Thread {
         if (max >= tripA) {
             goodOverLimitReads = 0;
             goodMeterReads = 0;
+            long requiredDelayMs = requiredHardTripDelayMs(max, tripDelayMs);
             if (!overLimitPaused) {
                 overLimitPaused = true;
                 meterPaused = false;
-                tripSince = now;
                 safeSetBlocked(true);
                 System.err.println("[QC45] GRID FAILBACK OVER-LIMIT PAUSE: " + one(max)
-                    + "A >= " + one(tripA) + "A -> AC/DC=0kW");
+                    + "A >= " + one(tripA) + "A -> AC/DC=0kW; SLS-E hard-trip="
+                    + delayDescription(requiredDelayMs));
+            }
+            if (requiredDelayMs == Long.MAX_VALUE) {
+                // Up to 1.05 x In is inside the SLS-E non-tripping test range.
+                // The charging pause stays active, but it must not accumulate a
+                // latched trip that would require an E-STOP reset.
+                tripSince = 0L;
+                currentTripDelayMs = Long.MAX_VALUE;
             } else if (tripSince == 0L) {
                 tripSince = now;
-            }
-            if (now - tripSince >= tripDelayMs) {
-                hardTrip("phase current " + one(max) + "A >= " + one(tripA)
-                    + "A continuously for " + (now - tripSince) + "ms");
+                currentTripDelayMs = requiredDelayMs;
+            } else {
+                currentTripDelayMs = requiredDelayMs;
+                if (now - tripSince >= requiredDelayMs) {
+                    hardTrip("SLS-E time/current envelope exceeded at " + one(max)
+                        + "A after " + (now - tripSince) + "ms (required "
+                        + requiredDelayMs + "ms)");
+                }
             }
             return;
         }
@@ -161,6 +178,7 @@ public final class GridFailback extends Thread {
         // A trip timer represents continuous exposure and must also reset in
         // the 34..35 A band.
         tripSince = 0L;
+        currentTripDelayMs = Long.MAX_VALUE;
 
         if (meterPaused) {
             if (max < reduceA) {
@@ -217,6 +235,8 @@ public final class GridFailback extends Thread {
     private void onMeterFailure(long now, Throwable error) {
         goodMeterReads = 0;
         resetSince = 0L;
+        tripSince = 0L;
+        currentTripDelayMs = Long.MAX_VALUE;
         if (!tripped) {
             meterPaused = true;
             overLimitPaused = false;
@@ -289,6 +309,7 @@ public final class GridFailback extends Thread {
         tripped = false;
         reduceSince = 0L;
         tripSince = 0L;
+        currentTripDelayMs = Long.MAX_VALUE;
         resetSince = 0L;
         sawEStopPressed = false;
         goodEStopReleaseReads = 0;
@@ -342,7 +363,7 @@ public final class GridFailback extends Thread {
         long sleepMs = intervalMs;
         long now = System.currentTimeMillis();
         if (!tripped && overLimitPaused && tripSince > 0L) {
-            long remaining = tripDelayMs - (now - tripSince);
+            long remaining = currentTripDelayMs - (now - tripSince);
             if (remaining > 0L) sleepMs = Math.min(sleepMs, remaining);
         }
         if (!tripped && !stageReduced && reduceSince > 0L) {
@@ -355,5 +376,34 @@ public final class GridFailback extends Thread {
 
     private static String one(double value) {
         return String.format(java.util.Locale.US, "%.1f", Double.valueOf(value));
+    }
+
+    /**
+     * Conservative software envelope derived from the SLS E time/current
+     * characteristic. The charger is already blocked at tripA; this delay only
+     * decides whether the event must additionally become a latched hard trip.
+     */
+    static long requiredHardTripDelayMs(double currentA, long minimumDelayMs) {
+        double multiple = currentA / SLS_NOMINAL_A;
+        long characteristicDelayMs;
+        if (multiple < 1.05d) return Long.MAX_VALUE;
+        if (multiple < 1.20d) characteristicDelayMs = 3600000L;
+        else if (multiple < 1.50d) characteristicDelayMs = 300000L;
+        else if (multiple < 2.00d) characteristicDelayMs = 60000L;
+        else if (multiple < 3.00d) characteristicDelayMs = 10000L;
+        else if (multiple < 5.00d) characteristicDelayMs = 1000L;
+        else characteristicDelayMs = 100L;
+        return Math.max(minimumDelayMs, characteristicDelayMs);
+    }
+
+    private static String delayDescription(long delayMs) {
+        if (delayMs == Long.MAX_VALUE) return "disabled below 1.05xIn";
+        if (delayMs >= 60000L && delayMs % 60000L == 0L) {
+            return (delayMs / 60000L) + "min continuous";
+        }
+        if (delayMs >= 1000L && delayMs % 1000L == 0L) {
+            return (delayMs / 1000L) + "s continuous";
+        }
+        return delayMs + "ms continuous";
     }
 }

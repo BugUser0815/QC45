@@ -81,8 +81,9 @@ ksem.wordOrder=HIGH_LOW
 # One shared KSEM budget controls the active DC connector and Type2/AC.
 # When both charge, the released kW are split equally. The grid limit is a hard
 # command ceiling; targetA stays below it to retain control reserve.
-# Safety validation rejects values that weaken the 32/34/35/38 A envelope,
-# KSEM timeouts above 1 s or increases faster than 2 kW/s.
+# Safety validation preserves the 32/34/35 A operating envelope and the fixed
+# E35 magnetic range; it also rejects KSEM timeouts above 1 s or increases
+# faster than 2 kW/s.
 loadmanager.enabled=true
 loadmanager.targetA=32.0
 loadmanager.gridLimitA=35.0
@@ -105,8 +106,12 @@ failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
 failback.tripA=35.0
+# Minimum debounce for the SLS-E magnetic high-current band. At lower currents
+# the built-in E35 time/current envelope automatically requires much longer.
 failback.tripDelayMs=250
-failback.instantTripA=38.0
+# Fixed 6.25 x In end of the E35 magnetic range. Historical 38A values are
+# migrated automatically and can no longer cause nuisance hard trips.
+failback.instantTripA=218.75
 failback.intervalMs=100
 # false (default): hard trip resets only after E-STOP press+release and five safe KSEM reads.
 # true: allow a timed reset after resetDelayMs continuously below reduceA.

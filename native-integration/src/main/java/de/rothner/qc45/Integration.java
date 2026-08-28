@@ -14,7 +14,7 @@ public final class Integration {
     private static final double MAX_GRID_LIMIT_A = 35.0d;
     private static final double MAX_CONTROL_TARGET_A = 32.0d;
     private static final double MAX_REDUCE_THRESHOLD_A = 34.0d;
-    private static final double MAX_INSTANT_TRIP_A = 38.0d;
+    private static final double SLS_E_INSTANT_TRIP_A = GridFailback.SLS_E_INSTANT_A;
     private static final double MIN_FAILBACK_GAP_A = 0.1d;
     private static final double KSEM_CURRENT_SCALE = 0.001d;
     private static final int MAX_KSEM_TIMEOUT_MS = 1000;
@@ -124,7 +124,8 @@ public final class Integration {
             boolean failbackEnabled = bool(p, "failback.enabled", true);
             double configuredFailbackReduceA = positiveDecimal(p, "failback.reduceA", 34.0d);
             double configuredFailbackTripA = positiveDecimal(p, "failback.tripA", 35.0d);
-            double configuredFailbackInstantTripA = positiveDecimal(p, "failback.instantTripA", 38.0d);
+            double configuredFailbackInstantTripA = positiveDecimal(p, "failback.instantTripA",
+                SLS_E_INSTANT_TRIP_A);
             double[] failbackThresholds = conservativeFailbackThresholds(
                 configuredFailbackReduceA, configuredFailbackTripA,
                 configuredFailbackInstantTripA);
@@ -378,28 +379,32 @@ public final class Integration {
             throw new IllegalArgumentException("failback thresholds must satisfy "
                 + "reduceA < tripA < instantTripA (configured " + values + ")");
         }
-        if (reduceA > MAX_REDUCE_THRESHOLD_A
-                || tripA > MAX_GRID_LIMIT_A
-                || instantTripA > MAX_INSTANT_TRIP_A) {
-            throw new IllegalArgumentException("failback thresholds may only be made "
-                + "more conservative than 34/35/38A (configured " + values + ")");
+        if (reduceA > MAX_REDUCE_THRESHOLD_A || tripA > MAX_GRID_LIMIT_A) {
+            throw new IllegalArgumentException("failback reduction and pause thresholds may only be made "
+                + "more conservative than 34/35A (configured " + values + ")");
+        }
+        if (Math.abs(instantTripA - SLS_E_INSTANT_TRIP_A) > 0.000001d) {
+            throw new IllegalArgumentException("failback.instantTripA is fixed by the 35A SLS-E "
+                + "magnetic range at " + SLS_E_INSTANT_TRIP_A + "A (configured " + values + ")");
         }
     }
 
     static double[] conservativeFailbackThresholds(double reduceA, double tripA,
                                                     double instantTripA) {
-        try {
+        // Reject nonsensical values instead of hiding them, but migrate every
+        // historical 38A instant threshold to the fixed E35 magnetic range.
+        if (reduceA <= 0.0d || tripA <= 0.0d || instantTripA <= 0.0d
+                || Double.isNaN(reduceA) || Double.isNaN(tripA)
+                || Double.isNaN(instantTripA) || Double.isInfinite(reduceA)
+                || Double.isInfinite(tripA) || Double.isInfinite(instantTripA)) {
             validateFailbackThresholds(reduceA, tripA, instantTripA);
-            return new double[] { reduceA, tripA, instantTripA };
-        } catch (IllegalArgumentException invalid) {
-            double safeInstant = Math.min(instantTripA, MAX_INSTANT_TRIP_A);
-            double safeTrip = Math.min(Math.min(tripA, MAX_GRID_LIMIT_A),
-                safeInstant - MIN_FAILBACK_GAP_A);
-            double safeReduce = Math.min(Math.min(reduceA, MAX_REDUCE_THRESHOLD_A),
-                safeTrip - MIN_FAILBACK_GAP_A);
-            validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
-            return new double[] { safeReduce, safeTrip, safeInstant };
         }
+        double safeInstant = SLS_E_INSTANT_TRIP_A;
+        double safeTrip = Math.min(tripA, MAX_GRID_LIMIT_A);
+        double safeReduce = Math.min(Math.min(reduceA, MAX_REDUCE_THRESHOLD_A),
+            safeTrip - MIN_FAILBACK_GAP_A);
+        validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
+        return new double[] { safeReduce, safeTrip, safeInstant };
     }
 
     private static String thresholdValues(double reduceA, double tripA,
