@@ -29,6 +29,7 @@ public final class Integration {
     private final Ocpp15BridgeServer ocpp15Bridge;
     private final LoadManager loadManager;
     private final GridFailback failback;
+    private final KsemClient meter;
     private final EvcsdLagMonitor lagMonitor;
     private final RemoteStartAuthorizationFix remoteStartAuthorizationFix;
 
@@ -39,6 +40,7 @@ public final class Integration {
                         Ocpp15BridgeServer ocpp15Bridge,
                         LoadManager loadManager,
                         GridFailback failback,
+                        KsemClient meter,
                         EvcsdLagMonitor lagMonitor,
                         RemoteStartAuthorizationFix remoteStartAuthorizationFix) {
         this.limits = limits;
@@ -48,6 +50,7 @@ public final class Integration {
         this.ocpp15Bridge = ocpp15Bridge;
         this.loadManager = loadManager;
         this.failback = failback;
+        this.meter = meter;
         this.lagMonitor = lagMonitor;
         this.remoteStartAuthorizationFix = remoteStartAuthorizationFix;
     }
@@ -114,6 +117,7 @@ public final class Integration {
 
         LoadManager loadManager = null;
         GridFailback failback = null;
+        KsemClient meter = null;
         boolean safetyReady = true;
         try {
             boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
@@ -182,11 +186,18 @@ public final class Integration {
                 throw new IllegalArgumentException("ksem.currentScale must be 0.001 for KOSTAL KSEM current registers");
             }
 
-            if (failbackEnabled) {
-                KsemClient failbackMeter = new KsemClient(
+            if (failbackEnabled || loadManagerEnabled) {
+                // One serialized, persistent Modbus channel is shared by both
+                // safety consumers. Separate clients used to open competing
+                // TCP connections up to eleven times per second and could
+                // make the KSEM alternate between recovery and connect timeout.
+                meter = new KsemClient(
                     ksemHost, ksemPort, ksemUnit, ksemTimeoutMs, ksemScale, wordOrder);
+            }
+
+            if (failbackEnabled) {
                 failback = new GridFailback(
-                    station, failbackMeter, limits,
+                    station, meter, limits,
                     failbackReduceA, failbackReduceDelayMs,
                     failbackTripA, failbackTripDelayMs, failbackInstantTripA,
                     reduceDcKw, reduceAcKw, failbackIntervalMs,
@@ -221,10 +232,8 @@ public final class Integration {
                             > (long)MAX_RAMP_UP_KW_PER_SECOND * (long)intervalMs) {
                     throw new IllegalArgumentException("LoadManager must poll within 1000ms and ramp at no more than 2kW/s");
                 }
-                KsemClient loadMeter = new KsemClient(
-                    ksemHost, ksemPort, ksemUnit, ksemTimeoutMs, ksemScale, wordOrder);
                 loadManager = new LoadManager(
-                    station, loadMeter, limits,
+                    station, meter, limits,
                     targetA, commandCeilingA, hysteresisA,
                     minDcKw, maxDcKw, minAcKw, maxAcKw,
                     rampKw, intervalMs, demandStableMs, demandReserveKw);
@@ -239,6 +248,8 @@ public final class Integration {
             safetyReady = false;
             loadManager = null;
             failback = null;
+            if (meter != null) meter.close();
+            meter = null;
             enterDegradedSafety(limits, "safety configuration failed", e);
         }
 
@@ -322,7 +333,7 @@ public final class Integration {
 
         Integration integration = new Integration(
             limits, limitGuard, modbus, ocppBridge, ocpp15Bridge,
-            loadManager, failback, lagMonitor, authFix);
+            loadManager, failback, meter, lagMonitor, authFix);
         if (safetyReady) {
             System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
             System.out.println("[QC45] power requests DC=AUTO " + maxDcKw
@@ -340,7 +351,7 @@ public final class Integration {
                                         String message, Throwable error) {
         enterDegradedSafety(limits, message, error);
         return new Integration(limits, guard, null, null, null,
-            null, null, null, null);
+            null, null, null, null, null);
     }
 
     private static void enterDegradedSafety(ChargingLimitCoordinator limits,
@@ -430,6 +441,7 @@ public final class Integration {
 
         joinQuietly(loadManager, 2000L);
         joinQuietly(failback, 2000L);
+        try { if (meter != null) meter.close(); } catch (Throwable ignored) {}
         joinQuietly(lagMonitor, 2000L);
         joinQuietly(ocppBridge, 2000L);
         joinQuietly(modbus, 2000L);

@@ -177,6 +177,8 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
 - AC is projected conservatively as a possible single-phase 230 V load; delayed
   vehicle ramps and demand transfers are checked against the 34 A command ceiling.
 - KSEM currents use the complete 32-bit value, including readings above 65.535 A.
+- LoadManager and GridFailback share one serialized, persistent KSEM Modbus/TCP
+  connection. A failed exchange closes it before the next reconnect attempt.
 - At 34 A the failback applies its configured reduction; at 35 A it immediately
   blocks AC/DC and hard-trips after 250 ms continuous excess; 38 A trips immediately.
 - KSEM failure immediately blocks AC/DC at 0 kW while transactions remain alive.

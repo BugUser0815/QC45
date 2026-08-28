@@ -33,6 +33,9 @@ public final class KsemClient {
     private final double scale;
     private final WordOrder wordOrder;
     private int transactionId;
+    private Socket socket;
+    private InputStream input;
+    private OutputStream output;
 
     public KsemClient(String host, int port, int unitId, int timeoutMs,
                       double scale, String wordOrder) {
@@ -51,19 +54,53 @@ public final class KsemClient {
     }
 
     public synchronized Currents readCurrents() throws Exception {
-        Socket socket = new Socket();
         try {
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
-            socket.setSoTimeout(timeoutMs);
-            InputStream in = new BufferedInputStream(socket.getInputStream());
-            OutputStream out = new BufferedOutputStream(socket.getOutputStream());
-
-            double l1 = readCurrent(in, out, 60);
-            double l2 = readCurrent(in, out, 100);
-            double l3 = readCurrent(in, out, 140);
+            ensureConnected();
+            double l1 = readCurrent(input, output, 60);
+            double l2 = readCurrent(input, output, 100);
+            double l3 = readCurrent(input, output, 140);
             return new Currents(l1, l2, l3);
-        } finally {
-            try { socket.close(); } catch (Throwable ignored) {}
+        } catch (Exception e) {
+            // Never reuse a stream after a partial Modbus exchange. The next
+            // caller establishes a fresh connection while both safety users
+            // remain fail-closed for this failed reading.
+            closeConnection();
+            throw e;
+        } catch (Error e) {
+            closeConnection();
+            throw e;
+        }
+    }
+
+    public synchronized void close() {
+        closeConnection();
+    }
+
+    private void ensureConnected() throws Exception {
+        if (socket != null && socket.isConnected() && !socket.isClosed()) return;
+        Socket connected = new Socket();
+        try {
+            connected.connect(new InetSocketAddress(host, port), timeoutMs);
+            connected.setSoTimeout(timeoutMs);
+            input = new BufferedInputStream(connected.getInputStream());
+            output = new BufferedOutputStream(connected.getOutputStream());
+            socket = connected;
+        } catch (Exception e) {
+            try { connected.close(); } catch (Throwable ignored) {}
+            input = null;
+            output = null;
+            socket = null;
+            throw e;
+        }
+    }
+
+    private void closeConnection() {
+        Socket current = socket;
+        socket = null;
+        input = null;
+        output = null;
+        if (current != null) {
+            try { current.close(); } catch (Throwable ignored) {}
         }
     }
 
