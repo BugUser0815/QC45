@@ -19,6 +19,14 @@ public final class BootstrapListener implements ServletContextListener {
 
         try {
             integration = Integration.start();
+
+            // The stock configuration has AC.load.balance.enabled=false. In
+            // that mode EVCSD accepts maxPowerAC changes in Java but omits the
+            // actual max-power payload from normal AC MobiBus messages. Enable
+            // the firmware's own transport after Integration has established
+            // its fail-closed initial targets.
+            AcLoadBalanceMode.enableRequired();
+
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
                 CcsRawTracerV2.installFromDefaultConfig();
@@ -33,6 +41,14 @@ public final class BootstrapListener implements ServletContextListener {
                 traceError.printStackTrace();
             }
         } catch (Throwable e) {
+            Integration failed = integration;
+            integration = null;
+            if (failed != null) {
+                try { failed.stop(); }
+                catch (Throwable stopError) {
+                    System.err.println("[QC45] failed integration cleanup error: " + stopError);
+                }
+            }
             System.err.println("[QC45] native integration failed to start: " + e);
             e.printStackTrace();
         }
