@@ -15,10 +15,10 @@ proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
 - normaler Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
-- nach RFID-Erkennung während einer laufenden Ladung reduzierte Abbruchansicht mit `LADEVORGANG ABBRECHEN` oben links
+- RFID-gestartete Sessions bleiben dauerhaft auf der vollständigen Ladeübersicht
 - Beenden-Hinweis im normalen Ladebildschirm: `Zum Beenden Karte vorhalten oder App benutzen.`
-- RemoteStart-Sessions bleiben auf der vollständigen Ladeübersicht und zeigen
-  `Zum Beenden App benutzen.` statt der RFID-Abbruchansicht
+- RemoteStart-Sessions bleiben ebenfalls auf der vollständigen Ladeübersicht und zeigen
+  `Zum Beenden App benutzen.`
 
 ## Ersetzte Betriebsansichten
 
@@ -44,28 +44,25 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 | Einstellungen/Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
 | Diagnose | – | – | Zurück | – |
 | Bereitschaft | keine Funktion | keine Funktion | keine Funktion | keine Funktion |
-| Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
-| RFID während aktivem Ladevorgang | Ladevorgang abbrechen | – | – | – |
+| Aktiver Ladevorgang, auch RFID | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
 
 Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
 Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
 Während des normalen Ladebildschirms bleiben alle vier Gerätetasten ohne Stop-/
 Fortsetzen-Beschriftung; die Session wird entsprechend dem angezeigten Hinweis
-zunächst per Karte oder App angesprochen.
+per Karte oder App beendet.
 
-Wird während einer laufenden Session die Kartenansicht `WaitingForCardChargingTimer`
-direkt geöffnet, zeigt sie statt des vollständigen Lademonitors eine reduzierte
-Bestätigungsansicht. Oben links erscheint ein rotes Softkey-Feld
-`LADEVORGANG ABBRECHEN`, ausgerichtet auf die obere linke physische Gerätetaste.
-In der Mitte bleiben nur `KARTE ERKANNT`, die Beenden-Frage und eine kompakte
-Statuszeile aus Ladeleistung, Fahrzeug-SoC und Ladezeit sichtbar. Die normalen
-AC-/CCS-/CHAdeMO-Ladepanels sind Unterklassen von `WaitingForCardChargingTimer`
-und behalten deshalb unverändert die vollständige Ladeansicht.
+Auch wenn EVCSD während einer per RFID gestarteten laufenden Session die Klasse
+`WaitingForCardChargingTimer` direkt öffnet, rendert sie weiterhin den vollständigen
+AC/DC-Lademonitor. Die frühere dauerhafte Ansicht `KARTE ERKANNT` mit rotem
+`LADEVORGANG ABBRECHEN`-Softkey wird nicht mehr eingeblendet. Damit bleibt die
+Übersicht mit Ladeleistung, Freigabe, Fahrzeug-SoC, Energie, Ladezeit und
+Pufferbatterie während des gesamten Ladevorgangs sichtbar.
 
-Bei einer über OCPP gestarteten Session unterdrückt das RemoteStart-Flag aus dem
-nativen Telemetrieblock diese Kartenansicht. Auch wenn EVCSD dabei die Basisklasse
-öffnet, bleibt die vollständige AC/DC-Ladeübersicht sichtbar; der Vorgang wird
-über App beziehungsweise OCPP beendet.
+Bei einer über OCPP gestarteten Session bleibt dieselbe Ladeübersicht sichtbar.
+Das RemoteStart-Flag aus dem nativen Telemetrieblock beeinflusst nur den Hinweis
+in der Fußzeile: RemoteStart zeigt `Zum Beenden App benutzen.`, lokale bzw.
+RFID-gestartete Sessions zeigen `Zum Beenden Karte vorhalten oder App benutzen.`
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
 verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung der
