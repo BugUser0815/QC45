@@ -1,5 +1,8 @@
 package pt.efacec.es.evcsd.ui;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
 /** Immutable decoder for the native integration's versioned AC/DC UI block. */
 final class LoadBalancingTelemetry {
     static final int FIRST_REGISTER = 126;
@@ -54,7 +57,13 @@ final class LoadBalancingTelemetry {
         dcEnergyWh = words(value[10], value[11]);
         acSeconds = value[17];
         acEnergyWh = words(value[18], value[19]);
-        acActualKw = value[12] > 0 ? value[12] : averagePowerKw(acEnergyWh, acSeconds);
+
+        int nativeAcKw = value[12];
+        int directAcKw = nativeAcKw > 0 ? 0 : liveType2PowerKw();
+        acActualKw = nativeAcKw > 0 ? nativeAcKw
+            : directAcKw > 0 ? directAcKw
+            : averagePowerKw(acEnergyWh, acSeconds);
+
         acRequestedKw = value[13];
         acGridKw = value[14];
         acStageCapKw = value[15];
@@ -85,6 +94,120 @@ final class LoadBalancingTelemetry {
     int totalActualKw() { return dcActualKw + acActualKw; }
     int totalEffectiveKw() { return dcEffectiveKw + acEffectiveKw; }
     long totalEnergyWh() { return dcEnergyWh + acEnergyWh; }
+
+    /**
+     * Read the live Type2 satellite in the EVCSD JVM. Older QC45 firmware often
+     * leaves getCurrentPower() at zero for AC although phase telemetry is live.
+     * Prefer a direct power field and then derive power from phase V/A arrays.
+     */
+    private static int liveType2PowerKw() {
+        try {
+            Class<?> centralClass = Class.forName(
+                "pt.efacec.es.mobie.agent.statemachines.CentralModule");
+            Object central = centralClass.getMethod("getCurrentModule").invoke(null);
+            if (central == null) return 0;
+            Object value = centralClass.getMethod("getSatellites").invoke(central);
+            if (!(value instanceof Object[])) return 0;
+            Object[] satellites = (Object[])value;
+            Object ac = null;
+            for (int i = 0; i < satellites.length; i++) {
+                Object satellite = satellites[i];
+                if (satellite == null) continue;
+                Object id = satellite.getClass().getMethod("getSatelliteId").invoke(satellite);
+                if (id instanceof Number && ((Number)id).intValue() == 3) {
+                    ac = satellite;
+                    break;
+                }
+            }
+            if (ac == null) return 0;
+
+            try {
+                Object p = ac.getClass().getMethod("getCurrentPower").invoke(ac);
+                if (p instanceof Number && ((Number)p).intValue() > 0) {
+                    return ((Number)p).intValue();
+                }
+            } catch (Throwable ignored) {}
+
+            Field infoField = findField(ac.getClass(), "infoState");
+            if (infoField != null) {
+                infoField.setAccessible(true);
+                Object info = infoField.get(ac);
+                if (info != null) {
+                    int p = numericField(info, "power");
+                    if (p > 0) return p;
+                    int voltage = numericField(info, "voltage");
+                    int current = numericField(info, "electricCurrent");
+                    if (voltage > 0 && current > 0) {
+                        return roundedKw((long)voltage * (long)current);
+                    }
+                }
+            }
+
+            int[] volts = intArrayGetter(ac, "getCurrentVoltage");
+            String[] currentMethods = new String[] {
+                "getCurrentCurrent", "getCurrentElectricCurrent", "getCurrentAmperage"
+            };
+            for (int i = 0; i < currentMethods.length; i++) {
+                int[] amps = intArrayGetter(ac, currentMethods[i]);
+                int kw = phasePowerKw(volts, amps);
+                if (kw > 0) return kw;
+            }
+        } catch (Throwable ignored) {
+            // Keep the UI functional on firmware variants without these members.
+        }
+        return 0;
+    }
+
+    private static int[] intArrayGetter(Object owner, String methodName) {
+        if (owner == null) return null;
+        try {
+            Method method = owner.getClass().getMethod(methodName);
+            Object value = method.invoke(owner);
+            return value instanceof int[] ? (int[])value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static int phasePowerKw(int[] volts, int[] amps) {
+        if (volts == null || amps == null) return 0;
+        int count = Math.min(volts.length, amps.length);
+        if (count <= 0) return 0;
+        long watts = 0L;
+        for (int i = 0; i < count; i++) {
+            if (volts[i] > 0 && amps[i] > 0) {
+                watts += (long)volts[i] * (long)amps[i];
+            }
+        }
+        return roundedKw(watts);
+    }
+
+    private static int roundedKw(long watts) {
+        if (watts <= 0L) return 0;
+        long kw = (watts + 500L) / 1000L;
+        return (int)Math.min(65535L, kw);
+    }
+
+    private static int numericField(Object owner, String fieldName) {
+        try {
+            Field field = findField(owner.getClass(), fieldName);
+            if (field == null) return 0;
+            field.setAccessible(true);
+            Object value = field.get(owner);
+            return value instanceof Number ? ((Number)value).intValue() : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private static Field findField(Class<?> type, String name) {
+        Class<?> current = type;
+        while (current != null) {
+            try { return current.getDeclaredField(name); }
+            catch (NoSuchFieldException ignored) { current = current.getSuperclass(); }
+        }
+        return null;
+    }
 
     private static int averagePowerKw(long energyWh, int seconds) {
         if (energyWh <= 0L || seconds <= 0) return 0;
