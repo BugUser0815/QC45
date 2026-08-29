@@ -348,7 +348,8 @@ public final class Ocpp15BridgeServer {
 
     static String meterValuesJson(String xml) throws Exception {
         Document document = parseXml(xml);
-        Element request = findElement(document.getDocumentElement(), "meterValues");
+        Element request = findElement(document.getDocumentElement(), "meterValuesRequest");
+        if (request == null) request = findElement(document.getDocumentElement(), "meterValues");
         if (request == null) throw new IllegalArgumentException("MeterValues request element missing");
 
         int connector = parseInt(childText(request, "connectorId"), 0);
