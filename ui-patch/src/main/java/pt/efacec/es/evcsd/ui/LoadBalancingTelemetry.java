@@ -52,13 +52,13 @@ final class LoadBalancingTelemetry {
         dcSocPct = value[8];
         dcSeconds = value[9];
         dcEnergyWh = words(value[10], value[11]);
-        acActualKw = value[12];
+        acSeconds = value[17];
+        acEnergyWh = words(value[18], value[19]);
+        acActualKw = value[12] > 0 ? value[12] : averagePowerKw(acEnergyWh, acSeconds);
         acRequestedKw = value[13];
         acGridKw = value[14];
         acStageCapKw = value[15];
         acEffectiveKw = value[16];
-        acSeconds = value[17];
-        acEnergyWh = words(value[18], value[19]);
     }
 
     static LoadBalancingTelemetry decode(int[] value) {
@@ -85,6 +85,13 @@ final class LoadBalancingTelemetry {
     int totalActualKw() { return dcActualKw + acActualKw; }
     int totalEffectiveKw() { return dcEffectiveKw + acEffectiveKw; }
     long totalEnergyWh() { return dcEnergyWh + acEnergyWh; }
+
+    private static int averagePowerKw(long energyWh, int seconds) {
+        if (energyWh <= 0L || seconds <= 0) return 0;
+        long watts = (energyWh * 3600L + seconds / 2L) / seconds;
+        long kw = (watts + 500L) / 1000L;
+        return (int)Math.min(65535L, Math.max(0L, kw));
+    }
 
     private static long words(int high, int low) {
         return (((long)high & 0xffffL) << 16) | ((long)low & 0xffffL);
