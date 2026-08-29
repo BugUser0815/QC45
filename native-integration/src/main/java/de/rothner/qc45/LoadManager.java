@@ -3,11 +3,9 @@ package de.rothner.qc45;
 /**
  * Native load manager for one active DC connector plus Type2/AC.
  *
- * AC has priority and is not power-limited by the normal grid allocator. Its
- * real consumption is already contained in the KSEM phase currents. DC receives
- * only the residual grid headroom that remains after AC and all other site loads.
- * {@link ChargingLimitCoordinator} remains the sole hardware writer and combines
- * these targets with explicit evcc requests and independent failback protection.
+ * It calculates only grid-safe targets. {@link ChargingLimitCoordinator} is
+ * the sole hardware writer and combines these targets with persistent evcc
+ * requests and failback state.
  */
 public final class LoadManager extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
@@ -25,6 +23,9 @@ public final class LoadManager extends Thread {
     private final int maxAcKw;
     private final int rampUpKwPerLoop;
     private final int intervalMs;
+    private final int demandReserveKw;
+    private final DemandTracker dcDemand;
+    private final DemandTracker acDemand;
 
     private volatile boolean running = true;
     private boolean meterHealthy;
@@ -32,7 +33,9 @@ public final class LoadManager extends Thread {
     private int previousDcConnector;
     private boolean previousAcActive;
     private int previousActualDcKw;
+    private int previousActualAcKw;
     private long dcSettleUntilMs;
+    private long acSettleUntilMs;
     private int lastPrearmDcKw = -1;
     private int lastPrearmAcKw = -1;
     private long lastErrorLog;
@@ -64,9 +67,9 @@ public final class LoadManager extends Thread {
         this.maxAcKw = maxAcKw;
         this.rampUpKwPerLoop = rampUpKwPerLoop;
         this.intervalMs = intervalMs;
-        // demandStableMs/demandReserveKw are retained in the constructor for
-        // configuration compatibility. AC/DC entitlement transfer is no longer
-        // used because AC now has unconditional normal-operation priority.
+        this.demandReserveKw = Math.max(1, demandReserveKw);
+        this.dcDemand = new DemandTracker(Math.max(0L, demandStableMs), this.demandReserveKw);
+        this.acDemand = new DemandTracker(Math.max(0L, demandStableMs), this.demandReserveKw);
     }
 
     public void shutdown() {
@@ -75,8 +78,8 @@ public final class LoadManager extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] LoadManager started AC-priority/DC-residual target=" + one(targetA)
-            + "A ceiling=" + one(commandCeilingA) + "A ramp="
+        System.out.println("[QC45] LoadManager started AC+DC target=" + one(targetA)
+            + "A ceiling=" + one(commandCeilingA) + "A priority=equal ramp="
             + rampUpKwPerLoop + "kW/loop startup/recovery="
             + HEALTHY_READS_TO_RESUME + " valid KSEM reads");
         safeBlockMeter();
@@ -89,7 +92,7 @@ public final class LoadManager extends Thread {
                 Active active = detectActive();
 
                 // Close writes made by legacy EVCSD code before calculating a
-                // possible DC increase.
+                // possible increase.
                 limits.reconcile();
 
                 int requestedDcMax = Math.min(maxDcKw, limits.requestedDcKw());
@@ -98,15 +101,12 @@ public final class LoadManager extends Thread {
                     && (active.dcConnector != 2 || limits.isCcsAvailable())
                     && requestedDcMax >= minDcKw;
                 boolean acEligible = active.ac && requestedAcMax >= minAcKw;
-                boolean acMayStart = requestedAcMax >= minAcKw;
-                int unrestrictedAcKw = acEligible ? requestedAcMax : 0;
-                int unrestrictedAcPrearmKw = !active.ac && acMayStart ? requestedAcMax : 0;
 
                 boolean externalBlock = limits.hasBlockerOtherThan(
                     ChargingLimitCoordinator.STARTUP,
                     ChargingLimitCoordinator.LOAD_METER);
                 if (!meterHealthy || externalBlock) {
-                    resetTracking();
+                    resetDemandTracking();
                     limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
                         0, 0, 0, 0, false);
                     if (meterHealthy) releasePreparedMeterBlocks();
@@ -117,31 +117,35 @@ public final class LoadManager extends Thread {
 
                 double criticalA = currents.max();
                 if (criticalA >= commandCeilingA) {
-                    resetTracking();
+                    resetDemandTracking();
                     limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                        0, unrestrictedAcKw, 0, unrestrictedAcPrearmKw, false);
+                        0, 0, 0, 0, false);
                     releasePreparedMeterBlocks();
                     rememberActive(active);
                     System.err.println("[QC45] LoadManager GUARD grid=" + one(criticalA)
-                        + "A -> DC=0kW AC=unrestricted; GridFailback remains authoritative");
+                        + "A -> AC/DC=0kW");
                     sleepLoop();
                     continue;
                 }
 
                 if (active.dcConnector != previousDcConnector) {
+                    dcDemand.reset();
                     previousActualDcKw = 0;
+                }
+                if (active.ac != previousAcActive) {
+                    acDemand.reset();
+                    previousActualAcKw = 0;
                 }
 
                 if (active.dcConnector == 0 && !active.ac) {
-                    resetTracking();
+                    resetDemandTracking();
                     dcSettleUntilMs = 0L;
-                    LoadAllocator.Targets dcPrearm = LoadAllocator.safePrearm(
+                    acSettleUntilMs = 0L;
+                    LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
                         false, false, 0, 0, 0, 0,
                         requestedDcMax >= minDcKw,
                         false,
                         minDcKw, minAcKw, criticalA, commandCeilingA);
-                    LoadAllocator.Targets prearm = new LoadAllocator.Targets(
-                        dcPrearm.dcKw, unrestrictedAcPrearmKw);
                     limits.setGridTargetsAndPrearm(0, false, 0, 0,
                         prearm.dcKw, prearm.acKw, false);
                     releasePreparedMeterBlocks();
@@ -154,22 +158,33 @@ public final class LoadManager extends Thread {
                 int actualDcKw = active.dcConnector > 0 ? station.powerKw(active.dcConnector) : 0;
                 int actualAcKw = active.ac ? station.powerKw(3) : 0;
                 int safetyCreditedDcKw = Math.min(actualDcKw, previousActualDcKw);
+                int safetyCreditedAcKw = Math.min(actualAcKw, previousActualAcKw);
                 int commandedDcKw = limits.effectiveDcKw();
                 int commandedAcKw = limits.effectiveAcKw();
 
-                // criticalA already contains the actual AC load and every other
-                // site load. Plan DC as the only controllable consumer, so AC is
-                // never assigned a share or reduced by the normal load manager.
-                LoadAllocator.Targets dcPlan = LoadAllocator.plan(
-                    dcEligible, false,
-                    safetyCreditedDcKw, 0,
-                    commandedDcKw, 0,
+                LoadAllocator.Targets fair = LoadAllocator.plan(
+                    dcEligible, acEligible,
+                    safetyCreditedDcKw, safetyCreditedAcKw,
+                    commandedDcKw, commandedAcKw,
                     criticalA, targetA, commandCeilingA, hysteresisA,
                     minDcKw, requestedDcMax,
-                    minAcKw, maxAcKw,
+                    minAcKw, requestedAcMax,
                     rampUpKwPerLoop);
-                LoadAllocator.Targets target = new LoadAllocator.Targets(
-                    dcPlan.dcKw, unrestrictedAcKw);
+
+                dcDemand.update(now, dcEligible, actualDcKw, commandedDcKw,
+                    fair.dcKw, minDcKw);
+                acDemand.update(now, acEligible, actualAcKw, commandedAcKw,
+                    fair.acKw, minAcKw);
+
+                LoadAllocator.Targets target = LoadAllocator.redistributeForDemand(
+                    fair, actualDcKw, actualAcKw,
+                    commandedDcKw, commandedAcKw,
+                    dcDemand.isDemandLimited(), acDemand.isDemandLimited(),
+                    minDcKw, requestedDcMax, minAcKw, requestedAcMax,
+                    demandReserveKw, rampUpKwPerLoop);
+                target = LoadAllocator.constrainDemandTransfer(
+                    fair, target, criticalA, safetyCreditedDcKw,
+                    safetyCreditedAcKw, commandCeilingA);
 
                 if (active.dcConnector > 0 && commandedDcKw == 0
                         && target.dcKw > 0 && dcSettleUntilMs <= now) {
@@ -178,31 +193,36 @@ public final class LoadManager extends Thread {
                         + active.dcConnector + " limit=" + minDcKw
                         + "kW until=" + dcSettleUntilMs);
                 }
+                if (active.ac && commandedAcKw == 0
+                        && target.acKw > 0 && acSettleUntilMs <= now) {
+                    acSettleUntilMs = now + START_SETTLE_MS;
+                    System.out.println("[QC45] AC-SETTLE armed connector=3 limit="
+                        + minAcKw + "kW until=" + acSettleUntilMs);
+                }
                 if (active.dcConnector == 0) dcSettleUntilMs = 0L;
+                if (!active.ac) acSettleUntilMs = 0L;
                 boolean dcSettling = active.dcConnector > 0 && now < dcSettleUntilMs;
+                boolean acSettling = active.ac && now < acSettleUntilMs;
                 target = LoadAllocator.constrainStartupSettling(target,
-                    dcSettling, false,
+                    dcSettling, acSettling,
                     minDcKw, minAcKw);
 
-                // Only DC pre-arm is grid-projected. AC pre-arm intentionally
-                // stays at its configured/explicit cap and actual AC draw will
-                // immediately consume headroom in the next KSEM observation.
-                LoadAllocator.Targets dcPrearm = LoadAllocator.safePrearm(
-                    active.dcConnector > 0, false,
-                    target.dcKw, 0,
-                    actualDcKw, 0,
+                boolean demandTransfer = !dcSettling && !acSettling
+                    && (target.dcKw != fair.dcKw || target.acKw != fair.acKw);
+                LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
+                    active.dcConnector > 0, active.ac,
+                    target.dcKw, target.acKw,
+                    actualDcKw, actualAcKw,
                     requestedDcMax >= minDcKw,
-                    false,
+                    requestedAcMax >= minAcKw,
                     minDcKw, minAcKw, criticalA, commandCeilingA);
-                LoadAllocator.Targets prearm = new LoadAllocator.Targets(
-                    dcPrearm.dcKw, unrestrictedAcPrearmKw);
-
                 limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
                     target.dcKw, target.acKw,
-                    prearm.dcKw, prearm.acKw, false);
+                    prearm.dcKw, prearm.acKw, demandTransfer);
                 releasePreparedMeterBlocks();
                 logPrearm(prearm, criticalA);
                 previousActualDcKw = actualDcKw;
+                previousActualAcKw = actualAcKw;
                 rememberActive(active);
 
                 if (target.dcKw != commandedDcKw || target.acKw != commandedAcKw) {
@@ -210,7 +230,8 @@ public final class LoadManager extends Thread {
                         + "A DC=" + target.dcKw + "kW AC=" + target.acKw
                         + "kW actualDC=" + actualDcKw + "kW actualAC=" + actualAcKw
                         + "kW evccCapDC=" + requestedDcMax + "kW evccCapAC="
-                        + requestedAcMax + "kW priority=AC-first/DC-residual");
+                        + requestedAcMax + "kW priority=equal demandTransfer="
+                        + demandTransfer);
                 }
             } catch (Throwable e) {
                 markMeterOrControlFailure(now, e);
@@ -227,7 +248,7 @@ public final class LoadManager extends Thread {
         if (healthyReads < HEALTHY_READS_TO_RESUME) healthyReads++;
         if (!meterHealthy && healthyReads >= HEALTHY_READS_TO_RESUME) {
             meterHealthy = true;
-            System.out.println("[QC45] LoadManager KSEM qualified: preparing a fresh grid-safe DC target");
+            System.out.println("[QC45] LoadManager KSEM qualified: preparing a fresh grid-safe target");
         }
     }
 
@@ -249,10 +270,11 @@ public final class LoadManager extends Thread {
         meterHealthy = false;
         healthyReads = 0;
         previousActualDcKw = 0;
-        resetTracking();
+        previousActualAcKw = 0;
+        resetDemandTracking();
         safeBlockMeter();
         if (now - lastErrorLog >= 5000L) {
-            System.err.println("[QC45] LoadManager failure -> safety block: " + error);
+            System.err.println("[QC45] LoadManager failure -> AC/DC=0kW: " + error);
             lastErrorLog = now;
         }
     }
@@ -278,15 +300,18 @@ public final class LoadManager extends Thread {
         previousAcActive = active.ac;
     }
 
-    private void resetTracking() {
+    private void resetDemandTracking() {
+        dcDemand.reset();
+        acDemand.reset();
         previousActualDcKw = 0;
+        previousActualAcKw = 0;
     }
 
     private void logPrearm(LoadAllocator.Targets prearm, double criticalA) {
         if (prearm.dcKw == lastPrearmDcKw && prearm.acKw == lastPrearmAcKw) return;
         System.out.println("[QC45] LoadManager start pre-arm grid=" + one(criticalA)
             + "A DC=" + prearm.dcKw + "kW AC=" + prearm.acKw
-            + "kW AC-unrestricted=true DC-settle=" + START_SETTLE_MS + "ms");
+            + "kW non-authorizing=true settle=" + START_SETTLE_MS + "ms");
         lastPrearmDcKw = prearm.dcKw;
         lastPrearmAcKw = prearm.acKw;
     }
