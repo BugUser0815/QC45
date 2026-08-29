@@ -1,6 +1,10 @@
 # LoadManager
 
-Der native LoadManager regelt **den aktiven DC-Ausgang und Type2/AC gemeinsam** anhand der höchsten KSEM-Phasenstrombelastung. CHAdeMO und CCS bleiben untereinander alternativ; parallel vorgesehen ist ein DC-Fahrzeug plus ein AC-Fahrzeug.
+Der native LoadManager arbeitet seit dem AC-Prioritäts-Umbau nach einem einfachen Prinzip:
+
+> **AC wird im normalen LoadManager nicht nach Netzleistung gedrosselt. DC erhält nur die Leistung, die am Netzanschlusspunkt noch übrig ist.**
+
+CHAdeMO und CCS bleiben untereinander alternativ; parallel vorgesehen ist ein DC-Fahrzeug plus ein Type2/AC-Fahrzeug.
 
 ## Standardwerte
 
@@ -11,110 +15,147 @@ Der native LoadManager regelt **den aktiven DC-Ausgang und Type2/AC gemeinsam** 
 | wirksame Freigabegrenze mit Failback | `34.0 A` |
 | Hysterese | `0.8 A` |
 | DC Minimum / Maximum | `5 / 50 kW` |
-| AC Minimum / Maximum | `5 / 43 kW` |
-| Ramp-up | `2 kW / Regelzyklus` |
+| AC konfiguriertes Maximum | `43 kW` |
+| DC Ramp-up | `2 kW / Regelzyklus` |
 | Regelintervall | `1000 ms` |
-| stabile Bedarfserkennung | `5000 ms` |
-| Aufwachreserve | `2 kW` |
+| KSEM-Reads bis Freigabe | `5` |
 
-Die wirksame Freigabegrenze ist das Minimum aus `loadmanager.gridLimitA` und `failback.reduceA`. Dadurch bleibt vor dem 35-A-Netzlimit eine zusätzliche Reserve.
+Die wirksame Freigabegrenze ist das Minimum aus `loadmanager.gridLimitA` und `failback.reduceA`. Dadurch bleibt vor dem 35-A-Netzlimit eine zusätzliche Reserve für den geregelten DC-Pfad.
 
-## Gemeinsames Budget und gleiche Priorität
+## AC hat Vorrang
 
-Aus Istleistung und Strom-Headroom wird zuerst **ein Gesamtbudget** ermittelt. Sind DC und AC aktiv, wird dieses Budget bis zum AC-Maximum 50/50 geteilt.
+Der KSEM misst am Netzanschlusspunkt bereits die Summe aus:
 
-| Gesamtbudget | DC | AC |
-|---:|---:|---:|
-| 10 kW | 5 kW | 5 kW |
-| 20 kW | 10 kW | 10 kW |
-| 21 kW | 10 kW | 10 kW + 1 kW Reserve |
-| 44 kW | 22 kW | 22 kW |
-| 50 kW | 25 kW | 25 kW |
-| 86 kW | 43 kW | 43 kW |
-| 93 kW | 50 kW | 43 kW |
+- Gebäudelast,
+- AC-Ladevorgang,
+- DC-Ladevorgang,
+- sonstigen Verbrauchern.
 
-Ein ungerades Kilowatt bleibt als neutrale Reserve, solange beide Ausgänge noch gleich hoch begrenzt werden können. Erst wenn AC sein Hardwaremaximum von 43 kW erreicht, erhält DC den verbleibenden Anteil. Reicht das Budget nicht für beide technischen Mindestwerte, werden **beide** Ausgänge auf 0 kW pausiert; keiner erhält stillschweigend Vorrang.
+Deshalb muss der LoadManager AC nicht noch einmal als eigenes Teilbudget behandeln. Die höchste der drei gemessenen Phasen ist direkt die Grundlage für die DC-Freigabe.
 
-## Bedarfsgerechte Umverteilung
+AC erhält im normalen Betrieb seine konfigurierte Obergrenze beziehungsweise eine ausdrücklich von evcc gesetzte AC-Obergrenze. Der LoadManager teilt kein gemeinsames AC/DC-Budget mehr auf und führt keine 50/50-Verteilung oder bedarfsgerechte Umverteilung mehr durch.
 
-50/50 bleibt der faire Anspruch beider Fahrzeuge. Ein Anteil wird erst umverteilt, wenn er mindestens `demandStableMs` lang deutlich nicht abgerufen wird und das andere Fahrzeug seinen fairen Anteil tatsächlich nutzt.
+Beispiel:
 
-Beispiel bei 30 kW Gesamtbudget:
+```text
+Netzziel:           32 A
+KSEM höchste Phase: 20 A   <- enthält AC + Gebäude + aktuellen DC-Anteil
+Rest:               12 A
+```
 
-| Zustand | DC | AC |
-|---|---:|---:|
-| fairer Anspruch | 15 kW | 15 kW |
-| gemessen | 15 kW | 11 kW |
-| nach 5 s stabil | 17 kW | 13 kW |
+Aus diesem Rest wird ausschließlich der nächste DC-Sollwert berechnet. Steigt die AC-Leistung, steigt der vom KSEM gemessene Phasenstrom und der DC-Sollwert sinkt im nächsten Regelzyklus automatisch. Fällt AC-Leistung weg, kann DC wieder hochrampen.
 
-Die 13-kW-AC-Freigabe besteht dabei aus 11 kW gemessenem Bedarf plus 2 kW Aufwachreserve.
+## DC-Residualregelung
 
-Das Gesamtbudget bleibt unverändert bei 30 kW. Nimmt das AC-Fahrzeug anschließend mindestens einen Teil seiner Aufwachreserve auf, wird zuerst DC wieder auf 15 kW reduziert und danach AC auf 15 kW freigegeben. Dasselbe Verfahren funktioniert spiegelbildlich für ungenutzten DC-Anteil zugunsten von AC. Sind beide Fahrzeuge bedarfsgedeckelt oder nutzt der Empfänger seinen fairen Anteil noch nicht, findet keine Umverteilung statt.
-
-Der lokale Lademonitor zeigt diesen Zustand direkt an. Für AC und DC sind
-jeweils Istleistung, evcc-Obergrenze, LoadManager-Zuteilung und wirksame
-Freigabe sichtbar; eine aktive Umverteilung wird ausdrücklich als
-`BEDARFSGERECHT` gekennzeichnet.
-
-## Regel- und Schutzprinzip
-
-1. KSEM liefert L1/L2/L3; maßgeblich ist die höchste Phase.
-2. `targetA - maxPhaseA` bestimmt den Headroom.
-3. Erhöhungen sind auf `rampUpKwPerLoop` begrenzt und werden nicht gestapelt: Die nächste Stufe wird erst freigegeben, wenn die vorherige Freigabe in zwei aufeinanderfolgenden Istwerten bis auf 1 kW erreicht wurde. Reduktionen erfolgen ohne Rampe.
-4. Bereits freigegebene, vom Fahrzeug aber noch nicht abgerufene Leistung wird als mögliche Zusatzlast mitgerechnet.
-5. Neu gemessene Fahrzeugleistung wird erst nach einem weiteren Zyklus als bereits im KSEM-Messwert enthalten gutgeschrieben. Das schließt den Zeitversatz zwischen Stations- und Netz-Messwert.
-6. Bedarfstransfer verändert zwar nicht die kW-Summe, wird aber erneut auf den Phasenstrom geprüft, weil eine Verschiebung von DC zu einphasigem AC mehr kritischen Phasenstrom erzeugen kann.
-7. Beim Umschichten wird immer zuerst der bisher höher begrenzte Ausgang reduziert und erst danach der andere erhöht.
-8. Ab der wirksamen Freigabegrenze werden alle aktiven Budgets sofort 0 kW.
-
-Für das zunächst ermittelte Gesamtbudget gilt die dreiphasige Näherung:
+Für DC gilt weiterhin die dreiphasige Näherung zur Bestimmung des grundsätzlich verfügbaren Headrooms:
 
 ```text
 1 A ≈ √3 × 400 V / 1000 = 0,69282 kW
 ```
 
-Die abschließende Sicherheitsprojektion rechnet DC konservativ mit
-`0,60 kW/A`. Type2 wird als möglicherweise **einphasige** Last mit nur
-`0,20 kW/A` behandelt. Damit werden auch 207 V und ein nicht idealer
-Leistungsfaktor berücksichtigt.
-
-## Startabsicherung für AC und DC
-
-Die Schutzlogik gegen einen EVCSD-internen Sprung auf ein höheres Limit gilt
-für beide Ladearten:
-
-- beim JVM-/Webapp-Start werden alle drei Ausgänge zuerst aktiv auf 0 kW gesetzt;
-- erst fünf gültige KSEM-Reads dürfen die Start-Sperre lösen;
-- danach wird der inaktive DC-Satellit nur bei ausreichendem Headroom mit einem nicht autorisierenden 5-kW-Startwert vorgerüstet; globale Konfigurationswerte bleiben dabei unangetastet und es wird kein Startbefehl gesendet;
-- beim ersten erkannten Vorgang wird der 5-kW-Wert über den vollständigen, autorisierten CCS-Pfad erneut übertragen und drei Sekunden gehalten;
-- meldet EVCSD bei AC oder DC mehr als zentral freigegeben, stellt der 250-ms-Guard den niedrigeren Wert wieder her; eine anhaltende positive Sollwertverletzung beendet den Vorgang hart;
-- ein neu hinzukommender AC- oder DC-Ladevorgang wird in die faire Gesamtverteilung aufgenommen, ohne eine unberechnete Vorbelegung.
-
-## evcc-Wunschwerte
-
-Register 110 und 111 sind dauerhafte Obergrenzen. Der LoadManager regelt daher
-nicht mehr auf denselben veränderlichen EVCSD-Wert, sondern auf:
+Die abschließende Sicherheitsprojektion rechnet DC konservativer mit:
 
 ```text
-P_freigegeben = min(P_evcc-Wunsch, P_sicheres Netzbudget)
+0,60 kW/A
 ```
 
-`0 kW` bleibt 0 kW. Werte unter dem technischen Minimum werden ebenfalls als
-Pause normalisiert. Nach einer Absenkung wird eine alte höhere Grid-Freigabe
-verworfen; eine spätere evcc-Erhöhung muss erneut mit maximal 2 kW pro Zyklus
-vom LoadManager freigegeben werden.
+Damit werden Verluste, Spannungsabweichungen und verzögerte Fahrzeugreaktionen berücksichtigt.
 
-Nach einem JVM-/Webapp-Start arbeitet jeder Ausgang zunächst autonom mit seinem
-konfigurierten Maximum als Wunschobergrenze. Die Start-, KSEM- und
-Failback-Sperren halten die Hardware trotzdem so lange auf 0 kW, bis ein frisches
-netzsicheres Ziel berechnet wurde. Der erste Modbus-Schreibzugriff übernimmt nur
-den beschriebenen Ausgang für evcc; ein ausdrücklich geschriebenes `0 kW`
-bleibt anschließend eine dauerhafte Pause.
+Die DC-Regelung arbeitet dabei so:
+
+1. KSEM liefert L1/L2/L3; maßgeblich ist die höchste Phase.
+2. `targetA - maxPhaseA` bestimmt den noch verfügbaren Headroom.
+3. Nur DC wird aus diesem Headroom neu berechnet.
+4. DC-Erhöhungen sind auf `rampUpKwPerLoop` begrenzt.
+5. Die nächste Erhöhung wird erst freigegeben, wenn das Fahrzeug die vorherige Freigabe nahezu erreicht hat.
+6. Reduktionen erfolgen sofort.
+7. Bereits freigegebene, aber vom Fahrzeug noch nicht abgerufene DC-Leistung wird konservativ als mögliche Zusatzlast berücksichtigt.
+8. Neu gemessene DC-Leistung wird erst nach einem weiteren Zyklus vollständig als im KSEM-Messwert enthalten gutgeschrieben.
+
+Dadurch kann ein träge reagierendes CCS-Fahrzeug nicht mehrere Erhöhungen ansammeln und später schlagartig oberhalb des sicheren Netzbudgets landen.
+
+## Verhalten von AC
+
+Der normale LoadManager schreibt für AC keine aus dem Netz-Headroom abgeleitete Leistungsgrenze mehr.
+
+Es gelten weiterhin zwei andere Obergrenzen:
+
+- das konfigurierte AC-Maximum der Station, standardmäßig `43 kW`;
+- eine ausdrücklich von evcc gesetzte AC-Obergrenze.
+
+Ein evcc-Wert von `0 kW` bleibt damit weiterhin eine bewusste Pause. Ohne einen solchen expliziten Eingriff arbeitet AC mit seinem konfigurierten Maximum.
+
+Auch ein inaktiver AC-Ausgang wird nicht mehr mit einem kleinen, vom Netzbudget berechneten Startwert vorgerüstet. Der nicht autorisierende Pre-Arm verwendet die normale AC-Obergrenze, damit ein neu gestarteter AC-Vorgang nicht zunächst künstlich gedrosselt wird.
+
+## Startabsicherung für DC
+
+Die Startabsicherung bleibt für den geregelten DC-Pfad bestehen:
+
+- beim JVM-/Webapp-Start blockiert die Sicherheitslogik zunächst die Ladefreigabe;
+- fünf gültige KSEM-Reads sind erforderlich, bevor die Start-Sperre gelöst wird;
+- ein inaktiver DC-Satellit wird nur bei ausreichendem Headroom nicht autorisierend mit dem technischen Mindestwert vorgerüstet;
+- beim ersten erkannten DC-Vorgang wird dieser Mindestwert über den vollständigen autorisierten Pfad erneut übertragen und drei Sekunden gehalten;
+- danach beginnt das kontrollierte DC-Ramp-up.
+
+Die globale Start- und Fehlerabsicherung bleibt bewusst erhalten. „AC unbeschränkt“ bedeutet ausschließlich, dass der **normale Netz-Allocator** AC nicht dynamisch herunterregelt.
+
+## Oberhalb der normalen DC-Freigabegrenze
+
+Erreicht die höchste KSEM-Phase die `commandCeilingA`, setzt der normale LoadManager DC sofort auf `0 kW`. AC bleibt auf seiner normalen Obergrenze.
+
+Das ist absichtlich so: AC besitzt Priorität, DC ist die nachgeordnete variable Last.
+
+Eine echte Überlast des Netzanschlusspunktes wird weiterhin vom separaten **GridFailback** behandelt. Dadurch bleiben zwei Aufgaben sauber getrennt:
+
+```text
+LoadManager:  AC frei, DC = Restleistung
+GridFailback: unabhängiger Schutz des SLS bei Überlast/Fehler
+```
 
 ## Zusammenspiel mit GridFailback
 
-Der GridFailback startet vor dem LoadManager. Während Überstrom-, Trip- oder KSEM-Ausfallzuständen blockiert er jede Erhöhung. Der LoadManager setzt dann AC und DC ebenfalls wiederholt auf 0 kW. Erst nach der jeweiligen stabilen Freigabebedingung beginnt das gemeinsame Hochrampen erneut.
+Der GridFailback bleibt unverändert die letzte Schutzinstanz und darf AC und DC gemeinsam begrenzen oder stoppen. Das betrifft insbesondere:
 
-Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/LoadManager.java`
+- KSEM-Ausfall,
+- länger anstehende Überlast,
+- die SLS-E-Zeit/Strom-Kennlinie,
+- Hard-Trip-Zustände,
+- sicherheitskritische Kontrollfehler.
+
+Damit kann AC im normalen Betrieb Vorrang haben, ohne die unabhängige Schutzfunktion für den 35-A-SLS zu verlieren.
+
+## evcc-Wunschwerte
+
+DC:
+
+```text
+P_DC = min(P_evcc-DC, P_DC-aus-Netzrest, P_Failback)
+```
+
+AC:
+
+```text
+P_AC = min(P_evcc-AC, P_AC-Konfiguration, P_Failback)
+```
+
+Wenn evcc für einen Ausgang noch nie einen Wert geschrieben hat, verwendet die native Integration dessen konfiguriertes Maximum. Ein ausdrücklich geschriebenes `0 kW` bleibt anschließend eine dauerhafte Pause, bis evcc wieder einen anderen Wert setzt.
+
+## Erwartete Logs
+
+Im neuen Betriebsschema erscheinen LoadManager-Meldungen mit:
+
+```text
+priority=AC-first/DC-residual
+```
+
+Bei Erreichen der normalen Freigabegrenze:
+
+```text
+LoadManager GUARD ... -> DC=0kW AC=unrestricted; GridFailback remains authoritative
+```
+
+Damit ist im Log eindeutig erkennbar, dass eine DC-Abregelung nicht mehr gleichzeitig eine normale AC-Abregelung auslöst.
+
+Quellcode: `native-integration/src/main/java/de/rothner/qc45/LoadManager.java`
 
 Siehe auch: [Grid-Failback](Grid-Failback), [KSEM-Anbindung](KSEM-Anbindung).
