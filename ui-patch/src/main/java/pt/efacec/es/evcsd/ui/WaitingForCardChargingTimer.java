@@ -197,7 +197,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
             if (!isChargingSession()) return renderIdlePage();
-            if (showStopConfirmation()) return renderStopConfirmationPage();
             refreshBufferSoc(now);
 
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
