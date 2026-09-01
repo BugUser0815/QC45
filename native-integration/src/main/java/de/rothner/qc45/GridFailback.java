@@ -3,6 +3,7 @@ package de.rothner.qc45;
 /** Independent, KSEM-backed last-resort protection for AC and DC. */
 public final class GridFailback extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
+    static final long MIN_HARD_TRIP_RESET_DELAY_MS = 60000L;
     static final double SLS_NOMINAL_A = 35.0d;
     // Use the lower current boundary of the magnetic E-characteristic. This
     // deliberately assumes a preloaded SLS instead of a cold upper tolerance.
@@ -20,7 +21,6 @@ public final class GridFailback extends Thread {
     private final int reduceDcKw;
     private final int reduceAcKw;
     private final int intervalMs;
-    private final boolean autoResetHardTrip;
     private final long resetDelayMs;
 
     private volatile boolean running = true;
@@ -39,8 +39,6 @@ public final class GridFailback extends Thread {
     private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
     private int goodMeterReads;
     private int goodOverLimitReads;
-    private int goodEStopReleaseReads;
-    private boolean sawEStopPressed;
     private boolean stageReduced;
 
     public GridFailback(ReflectionQC45 station, KsemClient meter,
@@ -48,14 +46,14 @@ public final class GridFailback extends Thread {
                         double reduceA, long reduceDelayMs,
                         double tripA, long tripDelayMs, double instantTripA,
                         int reduceDcKw, int reduceAcKw, int intervalMs,
-                        boolean autoResetHardTrip, long resetDelayMs) {
+                        long resetDelayMs) {
         super("QC45-Grid-Failback");
         setDaemon(true);
         if (station == null || meter == null || limits == null) throw new IllegalArgumentException("station, meter and limits are required");
         if (reduceA <= 0.0d || reduceA >= tripA || tripA >= instantTripA
                 || reduceDelayMs < 0L || tripDelayMs < 0L || intervalMs <= 0
-                || reduceDcKw < 0 || reduceAcKw < 0 || resetDelayMs < 0L
-                || (autoResetHardTrip && resetDelayMs == 0L)) {
+                || reduceDcKw < 0 || reduceAcKw < 0
+                || resetDelayMs < MIN_HARD_TRIP_RESET_DELAY_MS) {
             throw new IllegalArgumentException("invalid failback thresholds or timing");
         }
         this.station = station;
@@ -69,7 +67,6 @@ public final class GridFailback extends Thread {
         this.reduceDcKw = reduceDcKw;
         this.reduceAcKw = reduceAcKw;
         this.intervalMs = intervalMs;
-        this.autoResetHardTrip = autoResetHardTrip;
         this.resetDelayMs = resetDelayMs;
     }
 
@@ -86,7 +83,7 @@ public final class GridFailback extends Thread {
     public void run() {
         safeSetBlocked(true);
         System.out.println("[QC45] GridFailback started AC+DC hard-trip-reset="
-            + (autoResetHardTrip ? "timed(" + resetDelayMs + "ms)" : "E-STOP press+release")
+            + "timed(" + resetDelayMs + "ms)"
             + " stable-below=" + one(reduceA) + "A SLS=E35 instant="
             + one(instantTripA) + "A");
 
@@ -256,42 +253,22 @@ public final class GridFailback extends Thread {
         meterPaused = false;
         overLimitPaused = false;
         resetSince = 0L;
-        goodEStopReleaseReads = 0;
-        sawEStopPressed = false;
         safeSetBlocked(true);
         System.err.println("[QC45] GRID FAILBACK HARD TRIP: " + reason
-            + " [latched; reset=" + (autoResetHardTrip ? "timed" : "E-STOP press+release") + "]");
+            + " [latched; automatic reset after " + resetDelayMs
+            + "ms continuously below " + one(reduceA) + "A]");
     }
 
     private void evaluateHardTripReset(long now, double max) throws Exception {
-        if (max >= tripA) {
+        if (max >= reduceA) {
             resetSince = 0L;
-            goodEStopReleaseReads = 0;
             return;
         }
 
-        if (autoResetHardTrip) {
-            if (max >= reduceA) {
-                resetSince = 0L;
-            } else if (resetSince == 0L) {
-                resetSince = now;
-            } else if (now - resetSince >= resetDelayMs) {
-                clearHardTrip("grid stable for " + (now - resetSince) + "ms");
-            }
-            return;
-        }
-
-        boolean pressed = station.emergencyStopPressed();
-        if (pressed) {
-            sawEStopPressed = true;
-            goodEStopReleaseReads = 0;
-        } else if (sawEStopPressed && max < reduceA) {
-            goodEStopReleaseReads++;
-            if (goodEStopReleaseReads >= HEALTHY_READS_TO_RESUME) {
-                clearHardTrip("E-STOP press+release and five safe KSEM reads");
-            }
-        } else {
-            goodEStopReleaseReads = 0;
+        if (resetSince == 0L) {
+            resetSince = now;
+        } else if (now - resetSince >= resetDelayMs) {
+            clearHardTrip("grid stable for " + (now - resetSince) + "ms");
         }
     }
 
@@ -313,8 +290,6 @@ public final class GridFailback extends Thread {
         tripSince = 0L;
         currentTripDelayMs = Long.MAX_VALUE;
         resetSince = 0L;
-        sawEStopPressed = false;
-        goodEStopReleaseReads = 0;
         stageReduced = false;
         System.out.println("[QC45] GRID FAILBACK RESET: " + reason);
     }

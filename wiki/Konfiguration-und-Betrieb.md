@@ -113,7 +113,6 @@ failback.tripA=35.0
 failback.tripDelayMs=250
 failback.instantTripA=175.0
 failback.intervalMs=100
-failback.autoResetHardTrip=false
 failback.resetDelayMs=60000
 ```
 
@@ -136,10 +135,11 @@ Latch, bei 38,6 A erst nach 60 Minuten kontinuierlicher Belastung. Mit höherem
 Strom sinkt die Zeit stufenweise bis auf eine Sekunde; ab 175 A erfolgt der
 Instant Trip.
 
-Ein KSEM-Fehler pausiert sofort. Standardmäßig wird der Hard Trip nur über eine
-E-STOP-Betätigung mit anschließendem Loslassen und fünf sicheren Reads
-entriegelt. Der zeitgesteuerte Reset wird nur mit
-`autoResetHardTrip=true` aktiviert.
+Ein KSEM-Fehler pausiert sofort und setzt die Reset-Wartezeit zurück. Der Hard
+Trip entriegelt automatisch nach `resetDelayMs` durchgehend sicheren Messwerten
+unter `reduceA`; Standard und Minimum sind 60 Sekunden. Der frühere Schalter
+`autoResetHardTrip` ist obsolet und kann den zeitgesteuerten Reset nicht mehr
+deaktivieren.
 
 ## Validierung und Safe Mode
 

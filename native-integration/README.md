@@ -199,9 +199,10 @@ after a JVM/webapp restart. Fragmented backend WebSocket messages are reassemble
   keeps drawing more than 3 kW above its released limit for one second.
 - A positive CCS target uses the connector's active transaction as its control
   authorization; a 0 kW target always sends the CCS control flag as false.
-- A hard trip retries RemoteStop until sessions end and is latched by default.
-  Reset requires an E-STOP press/release plus five safe KSEM readings unless the
-  explicitly opt-in timed reset is configured.
+- A hard trip retries RemoteStop until sessions end and remains latched while the
+  grid is unsafe. It resets automatically after at least 60 seconds continuously
+  below `reduceA`; a current at/above that threshold or a failed KSEM read restarts
+  the timer.
 
 Connector mapping:
 

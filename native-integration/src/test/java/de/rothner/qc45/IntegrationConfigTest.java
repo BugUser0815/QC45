@@ -1,5 +1,7 @@
 package de.rothner.qc45;
 
+import java.util.Properties;
+
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -65,5 +67,30 @@ public final class IntegrationConfigTest {
         assertEquals(500L, value[0]);
         assertEquals(250L, value[1]);
         assertEquals(100L, value[2]);
+    }
+
+    @Test
+    public void hardTripAutoResetDefaultsToOneMinute() {
+        assertEquals(60000L, Integration.hardTripResetDelay(new Properties()));
+    }
+
+    @Test
+    public void legacyManualResetFlagCannotDisableTimedReset() {
+        Properties p = new Properties();
+        p.setProperty("failback.autoResetHardTrip", "false");
+        p.setProperty("failback.resetDelayMs", "60000");
+        assertEquals(60000L, Integration.hardTripResetDelay(p));
+    }
+
+    @Test
+    public void rejectsHardTripResetBeforeOneMinute() {
+        Properties p = new Properties();
+        p.setProperty("failback.resetDelayMs", "59999");
+        try {
+            Integration.hardTripResetDelay(p);
+            fail("expected minimum reset delay validation");
+        } catch (IllegalArgumentException e) {
+            assertTrue(e.getMessage().contains("at least 60000ms"));
+        }
     }
 }

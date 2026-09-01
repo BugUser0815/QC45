@@ -161,12 +161,7 @@ public final class Integration {
             }
             int reduceDcKw = nonNegativeInt(p, "failback.reduceDcKw", minDcKw);
             int reduceAcKw = nonNegativeInt(p, "failback.reduceAcKw", minAcKw);
-            boolean autoResetHardTrip = bool(p, "failback.autoResetHardTrip", false);
-            long resetDelayMs = nonNegativeInt(p, "failback.resetDelayMs", 60000);
-
-            if (autoResetHardTrip && resetDelayMs < 60000L) {
-                throw new IllegalArgumentException("timed hard-trip reset must wait at least 60000ms");
-            }
+            long resetDelayMs = hardTripResetDelay(p);
             validateReductionLimit("failback.reduceDcKw", reduceDcKw, minDcKw);
             validateReductionLimit("failback.reduceAcKw", reduceAcKw, minAcKw);
 
@@ -202,7 +197,7 @@ public final class Integration {
                     failbackReduceA, failbackReduceDelayMs,
                     failbackTripA, failbackTripDelayMs, failbackInstantTripA,
                     reduceDcKw, reduceAcKw, failbackIntervalMs,
-                    autoResetHardTrip, resetDelayMs);
+                    resetDelayMs);
                 // Close the scheduling gap before the failback thread performs
                 // its first read and establishes its own startup pause.
                 limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
@@ -424,6 +419,20 @@ public final class Integration {
             Math.min(tripDelayMs, 250L),
             Math.min(intervalMs, MAX_FAILBACK_INTERVAL_MS)
         };
+    }
+
+    static long hardTripResetDelay(Properties p) {
+        if (p.getProperty("failback.autoResetHardTrip") != null) {
+            System.err.println("[QC45] failback.autoResetHardTrip is obsolete and ignored; "
+                + "automatic hard-trip reset is always enabled");
+        }
+        long resetDelayMs = nonNegativeInt(p, "failback.resetDelayMs",
+            (int)GridFailback.MIN_HARD_TRIP_RESET_DELAY_MS);
+        if (resetDelayMs < GridFailback.MIN_HARD_TRIP_RESET_DELAY_MS) {
+            throw new IllegalArgumentException("timed hard-trip reset must wait at least "
+                + GridFailback.MIN_HARD_TRIP_RESET_DELAY_MS + "ms");
+        }
+        return resetDelayMs;
     }
 
     private static String timingValues(long reduceDelayMs, long tripDelayMs,

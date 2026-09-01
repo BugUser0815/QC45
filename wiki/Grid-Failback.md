@@ -57,15 +57,18 @@ Beim Hard Trip:
 4. fehlgeschlagene `remoteStop()`-Aufrufe werden alle zwei Sekunden erneut versucht,
 5. die 0-kW-Limits werden bis zur Freigabe regelmäßig erneut durchgesetzt.
 
-## Gelatchter Reset
+## Gelatchter Auto-Reset
 
-Standardmäßig gibt es **keinen automatischen Reset nach Zeit**. Der Latch wird
-erst nach einer erkannten E-STOP-Betätigung, anschließendem Loslassen und fünf
-gültigen KSEM-Reads unter `reduceA` gelöscht. So kann eine fortbestehende
-Fehlerursache nicht nach 60 Sekunden selbsttätig wieder freigeben.
+Der Latch wird nach `failback.resetDelayMs` automatisch gelöscht, sobald alle
+Phasen für die gesamte Wartezeit unter `reduceA` geblieben sind. Standard und
+Minimum sind 60 Sekunden. Jeder KSEM-Lesefehler und jeder Messwert ab `reduceA`
+setzt die Wartezeit wieder auf null. Solange noch eine Ladesitzung aktiv ist,
+bleibt die Freigabe zusätzlich zurückgestellt; die wiederholten `remoteStop()`-
+Versuche laufen in dieser Zeit weiter.
 
-Ein zeitgesteuerter Reset ist nur als ausdrückliches Opt-in mit
-`failback.autoResetHardTrip=true` und `failback.resetDelayMs` verfügbar.
+Der frühere Schalter `failback.autoResetHardTrip` ist obsolet und wird ignoriert.
+Damit entsperrt auch eine vorhandene Konfiguration mit dem alten Wert `false`
+nach der stabilen Wartezeit automatisch.
 
 ## KSEM-Ausfall
 

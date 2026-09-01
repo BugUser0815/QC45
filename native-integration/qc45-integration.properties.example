@@ -113,9 +113,9 @@ failback.tripDelayMs=250
 # Historical 38A and 218.75A values are migrated automatically.
 failback.instantTripA=175.0
 failback.intervalMs=100
-# false (default): hard trip resets only after E-STOP press+release and five safe KSEM reads.
-# true: allow a timed reset after resetDelayMs continuously below reduceA.
-failback.autoResetHardTrip=false
+# A hard trip resets automatically after this many ms continuously below reduceA.
+# Every current at/above reduceA and every failed KSEM read restarts the timer.
+# The minimum and default are 60000 ms.
 failback.resetDelayMs=60000
 # Any KSEM communication/read failure pauses AC and DC immediately at 0 kW
 # while the OCPP transactions remain active.
