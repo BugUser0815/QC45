@@ -165,9 +165,13 @@ Implemented:
 - Basic authentication
 - `ocpp1.6` WebSocket subprotocol
 
-All OCPP 1.5 meter groups and sampled values are forwarded. Active transaction
-to connector mappings are persisted so `RemoteStopTransaction` still resolves
-after a JVM/webapp restart. Fragmented backend WebSocket messages are reassembled.
+All OCPP 1.5 meter groups and sampled values are forwarded. Bare periodic values
+from the legacy QC45 client are identified as `Power.Active.Import` in `kW`, so
+OCPP 1.6 backends do not mistake charging power for a Wh energy register. Explicit
+energy samples and the transaction start/stop meters remain unchanged. Active
+transaction to connector mappings are persisted so `RemoteStopTransaction` still
+resolves after a JVM/webapp restart. Fragmented backend WebSocket messages are
+reassembled.
 
 ## Grid and charging safety
 

@@ -49,6 +49,13 @@ Bei `MeterValues` werden sämtliche Zeitgruppen und sämtliche enthaltenen
 Messwerte übernommen – einschließlich Measurand, Phase, Kontext, Format,
 Position und Einheit. Die frühere Beschränkung auf den ersten Wert ist entfernt.
 
+Periodische Messwerte, die das alte QC45-EVCSD ohne `measurand` und `unit`
+liefert, werden als `Power.Active.Import` in `kW` mit dem Kontext
+`Sample.Periodic` ergänzt. Das verhindert, dass OCPP-1.6-Backends die
+momentane Ladeleistung standardmäßig als Energiezähler in `Wh` interpretieren.
+Explizit gekennzeichnete Energiezähler sowie `meterStart` und `meterStop`
+bleiben unverändert.
+
 ## Statuskorrektur
 
 Das alte EVCSD meldet Zustände nicht immer passend zur OCPP-1.6-Semantik. Die Bridge leitet deshalb Status aus Livezuständen ab:

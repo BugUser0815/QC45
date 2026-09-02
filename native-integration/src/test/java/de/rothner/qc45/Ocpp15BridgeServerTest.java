@@ -39,6 +39,47 @@ public final class Ocpp15BridgeServerTest {
             Ocpp15BridgeServer.meterValuesJson(xml));
     }
 
+    @Test
+    public void identifiesBareQc45PeriodicValueAsPowerInKw() throws Exception {
+        String xml = "<meterValuesRequest><connectorId>1</connectorId><transactionId>91</transactionId>"
+            + "<values><timestamp>2026-09-02T09:56:05Z</timestamp><values>"
+            + "<value>3</value></values></values></meterValuesRequest>";
+
+        assertEquals(
+            "{\"connectorId\":1,\"transactionId\":91,\"meterValue\":[{"
+            + "\"timestamp\":\"2026-09-02T09:56:05Z\",\"sampledValue\":[{"
+            + "\"value\":\"3\",\"context\":\"Sample.Periodic\","
+            + "\"measurand\":\"Power.Active.Import\",\"unit\":\"kW\"}]}]}",
+            Ocpp15BridgeServer.meterValuesJson(xml));
+    }
+
+    @Test
+    public void preservesExplicitEnergyRegisterSample() throws Exception {
+        String xml = "<meterValuesRequest><connectorId>2</connectorId><values>"
+            + "<timestamp>2026-09-02T09:56:05Z</timestamp><values>"
+            + "<value>13790</value><measurand>Energy.Active.Import.Register</measurand>"
+            + "<unit>Wh</unit></values></values></meterValuesRequest>";
+
+        assertEquals(
+            "{\"connectorId\":2,\"meterValue\":[{\"timestamp\":\"2026-09-02T09:56:05Z\","
+            + "\"sampledValue\":[{\"value\":\"13790\","
+            + "\"measurand\":\"Energy.Active.Import.Register\",\"unit\":\"Wh\"}]}]}",
+            Ocpp15BridgeServer.meterValuesJson(xml));
+    }
+
+    @Test
+    public void completesPowerSampleThatAlreadyCarriesKwUnit() throws Exception {
+        String xml = "<meterValuesRequest><connectorId>3</connectorId><values>"
+            + "<timestamp>2026-09-02T09:56:05Z</timestamp><values>"
+            + "<value>27</value><unit>kW</unit></values></values></meterValuesRequest>";
+
+        assertEquals(
+            "{\"connectorId\":3,\"meterValue\":[{\"timestamp\":\"2026-09-02T09:56:05Z\","
+            + "\"sampledValue\":[{\"value\":\"27\",\"context\":\"Sample.Periodic\","
+            + "\"measurand\":\"Power.Active.Import\",\"unit\":\"kW\"}]}]}",
+            Ocpp15BridgeServer.meterValuesJson(xml));
+    }
+
     @Test(expected = Exception.class)
     public void externalEntitiesAreRejected() throws Exception {
         Ocpp15BridgeServer.meterValuesJson(
