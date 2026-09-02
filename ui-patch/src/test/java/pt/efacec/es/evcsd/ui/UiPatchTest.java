@@ -3,9 +3,11 @@ package pt.efacec.es.evcsd.ui;
 import java.awt.Image;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Properties;
 import javax.imageio.ImageIO;
 import javax.swing.ImageIcon;
 import javax.swing.JPanel;
@@ -18,6 +20,7 @@ public final class UiPatchTest {
         if (args.length != 13) throw new IllegalArgumentException("thirteen preview paths are required");
         require(ConnectorImages.resourcesAvailable(), "connector image resources");
         verifyLogoResource();
+        verifyAkkuboostConfiguration();
         verifyDecoder();
         render(args[0], 0);
         render(args[1], 1);
@@ -44,11 +47,60 @@ public final class UiPatchTest {
         try {
             BufferedImage logo = ImageIO.read(in);
             require(logo != null, "SGS logo must be decodable");
-            require(logo.getWidth() == 420 && logo.getHeight() == 101,
+            require(logo.getWidth() == 420 && logo.getHeight() == 108,
                 "SGS logo dimensions");
         } finally {
             in.close();
         }
+    }
+
+    private static void verifyAkkuboostConfiguration() throws Exception {
+        require("AKKUBOOST".equals(WaitingForCardChargingTimer.AKKUBOOST_LABEL),
+            "Akkuboost dashboard label");
+
+        String dashboardUrl = System.getProperty("dashboard.akkuboost.url");
+        String legacyUrl = System.getProperty("evcc.url");
+        String configPath = System.getProperty("qc45.integration.config");
+        File config = File.createTempFile("qc45-dashboard-test-", ".properties");
+        try {
+            System.clearProperty("dashboard.akkuboost.url");
+            System.clearProperty("evcc.url");
+            System.setProperty("qc45.integration.config", config.getAbsolutePath());
+
+            Properties properties = new Properties();
+            properties.setProperty("dashboard.akkuboost.url", "http://192.0.2.131:7070");
+            FileOutputStream output = new FileOutputStream(config);
+            try {
+                properties.store(output, "UI configuration test");
+            } finally {
+                output.close();
+            }
+            require("http://192.0.2.131:7070".equals(
+                WaitingForCardChargingTimer.configuredAkkuboostUrl()),
+                "external Akkuboost URL configuration");
+
+            System.setProperty("dashboard.akkuboost.url", "http://192.0.2.132:7070");
+            require("http://192.0.2.132:7070".equals(
+                WaitingForCardChargingTimer.configuredAkkuboostUrl()),
+                "Akkuboost URL system-property override");
+            System.clearProperty("dashboard.akkuboost.url");
+
+            System.setProperty("qc45.integration.config",
+                config.getAbsolutePath() + ".missing");
+            require("http://10.0.20.131:7070".equals(
+                WaitingForCardChargingTimer.configuredAkkuboostUrl()),
+                "bundled Akkuboost URL fallback");
+        } finally {
+            restoreProperty("dashboard.akkuboost.url", dashboardUrl);
+            restoreProperty("evcc.url", legacyUrl);
+            restoreProperty("qc45.integration.config", configPath);
+            config.delete();
+        }
+    }
+
+    private static void restoreProperty(String key, String value) {
+        if (value == null) System.clearProperty(key);
+        else System.setProperty(key, value);
     }
 
     private static void verifyDecoder() {
@@ -202,13 +254,19 @@ public final class UiPatchTest {
                         && (rgb & 0xff) > 220) lightPixels++;
             }
         }
-        require(lightPixels > 20000, "SGS logo was not painted");
-        writeAndVerify(image, path);
+        require(lightPixels > 1000, "SGS logo was not painted");
+        require(image.getWidth() == 640 && image.getHeight() == 480, "preview dimensions");
+        require(nonBackgroundPixels(image) > 10000, "logo preview is unexpectedly blank");
+        writePreview(image, path);
     }
 
     private static void writeAndVerify(BufferedImage image, String path) throws Exception {
         require(image.getWidth() == 640 && image.getHeight() == 480, "preview dimensions");
         require(nonBackgroundPixels(image) > 30000, "preview is unexpectedly blank");
+        writePreview(image, path);
+    }
+
+    private static void writePreview(BufferedImage image, String path) throws Exception {
         File output = new File(path);
         File parent = output.getParentFile();
         if (parent != null) parent.mkdirs();

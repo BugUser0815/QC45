@@ -10,6 +10,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.EOFException;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -24,6 +25,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -41,8 +43,8 @@ import pt.efacec.es.evcsd.ui.info.ChargeInfo;
  * The active-session page uses the same reduced dark design language as the
  * other patched operator pages. Charging values are read exclusively from the
  * native integration's versioned AC/DC Modbus block 126-145, with a compatible
- * fallback to the legacy DC block 120-125. The buffer-battery SoC remains an
- * evcc value because it is not part of the QC45/EVCSD state.
+ * fallback to the legacy DC block 120-125. The Akkuboost SoC remains an evcc
+ * value because it is not part of the QC45/EVCSD state.
  */
 public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<ChargeInfo> {
     private static final Logger LOGGER = Logger.getLogger(WaitingForCardChargingTimer.class.getName());
@@ -51,6 +53,14 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final int HEIGHT = 480;
     private static final int MODBUS_FIRST_REGISTER = 120;
     private static final int MODBUS_REGISTER_COUNT = 6;
+    static final String AKKUBOOST_LABEL = "AKKUBOOST";
+    private static final String AKKUBOOST_URL_PROPERTY = "dashboard.akkuboost.url";
+    private static final String LEGACY_EVCC_URL_PROPERTY = "evcc.url";
+    private static final String INTEGRATION_CONFIG_PROPERTY = "qc45.integration.config";
+    private static final String INTEGRATION_CONFIG_PATH =
+        "/home/mobie/evcsd/qc45-integration.properties";
+    private static final String DASHBOARD_CONFIG_RESOURCE =
+        "/pt/efacec/es/evcsd/ui/qc45-dashboard.properties";
 
     private static final Color BACKGROUND = new Color(13, 15, 15);
     private static final Color PANEL = new Color(29, 31, 31);
@@ -551,7 +561,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             formatEnergy(data.totalEnergyWh()), "SEIT LADEBEGINN");
         drawCompactMetricPanel(g, 328, timeLabel,
             formatDuration(primarySeconds(data)), "STUNDEN : MIN : SEK");
-        drawCompactMetricPanel(g, 483, "PUFFERBATTERIE",
+        drawCompactMetricPanel(g, 483, AKKUBOOST_LABEL,
             lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", "STATION");
     }
 
@@ -680,7 +690,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             energyWh < 0L ? "-- kWh" : formatEnergy(energyWh), "SEIT LADEBEGINN");
         drawMetricPanel(g, 225, 264, 190, "LADEZEIT",
             seconds < 0 ? "--:--:--" : formatDuration(seconds), "STUNDEN : MIN : SEK");
-        drawMetricPanel(g, 432, 264, 190, "PUFFERBATTERIE",
+        drawMetricPanel(g, 432, 264, 190, AKKUBOOST_LABEL,
             lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", "STATION");
 
         if (lastBatterySoc != null) {
@@ -846,7 +856,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private Double evccNumber(String jq) throws Exception {
-        String base = System.getProperty("evcc.url", "http://10.0.0.179:7070");
+        String base = configuredAkkuboostUrl();
+        if (base == null) throw new IllegalStateException(
+            "Missing configuration property " + AKKUBOOST_URL_PROPERTY);
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         URL url = new URL(base + "/api/state?jq=" + URLEncoder.encode(jq, "UTF-8"));
         HttpURLConnection connection = (HttpURLConnection)url.openConnection();
@@ -863,6 +875,49 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             reader.close();
             connection.disconnect();
         }
+    }
+
+    static String configuredAkkuboostUrl() {
+        String value = nonBlank(System.getProperty(AKKUBOOST_URL_PROPERTY));
+        if (value != null) return value;
+
+        value = nonBlank(System.getProperty(LEGACY_EVCC_URL_PROPERTY));
+        if (value != null) return value;
+
+        String configPath = nonBlank(System.getProperty(INTEGRATION_CONFIG_PROPERTY));
+        if (configPath == null) configPath = INTEGRATION_CONFIG_PATH;
+        InputStream input = null;
+        try {
+            input = new FileInputStream(configPath);
+            value = property(input, AKKUBOOST_URL_PROPERTY);
+            if (value != null) return value;
+        } catch (Throwable ignored) {
+            // The bundled dashboard configuration remains a safe default.
+        } finally {
+            if (input != null) try { input.close(); } catch (Throwable ignored) {}
+        }
+
+        input = WaitingForCardChargingTimer.class.getResourceAsStream(DASHBOARD_CONFIG_RESOURCE);
+        if (input == null) return null;
+        try {
+            return property(input, AKKUBOOST_URL_PROPERTY);
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            try { input.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static String property(InputStream input, String key) throws Exception {
+        Properties properties = new Properties();
+        properties.load(input);
+        return nonBlank(properties.getProperty(key));
+    }
+
+    private static String nonBlank(String value) {
+        if (value == null) return null;
+        value = value.trim();
+        return value.length() == 0 ? null : value;
     }
 
     private static String formatEnergy(long wh) {

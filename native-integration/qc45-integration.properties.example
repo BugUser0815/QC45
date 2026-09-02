@@ -18,6 +18,9 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
+# Dashboard / Akkuboost
+dashboard.akkuboost.url=http://10.0.20.131:7070
+
 # evcc / local load management
 # Both channels start in autonomous mode. The first evcc write takes control of
 # only the addressed channel; an explicit 0 kW remains a persistent pause.

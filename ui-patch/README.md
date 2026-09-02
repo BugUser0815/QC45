@@ -57,7 +57,7 @@ Auch wenn EVCSD während einer per RFID gestarteten laufenden Session die Klasse
 AC/DC-Lademonitor. Die frühere dauerhafte Ansicht `KARTE ERKANNT` mit rotem
 `LADEVORGANG ABBRECHEN`-Softkey wird nicht mehr eingeblendet. Damit bleibt die
 Übersicht mit Ladeleistung, Freigabe, Fahrzeug-SoC, Energie, Ladezeit und
-Pufferbatterie während des gesamten Ladevorgangs sichtbar.
+Akkuboost während des gesamten Ladevorgangs sichtbar.
 
 Bei einer über OCPP gestarteten Session bleibt dieselbe Ladeübersicht sichtbar.
 Das RemoteStart-Flag aus dem nativen Telemetrieblock beeinflusst nur den Hinweis
@@ -96,16 +96,28 @@ Ladeleistung und nicht nur dem EVCSD-Sitzungszustand. Sie unterscheidet
 `AC LÄDT`, `DC LÄDT`, `AC + DC LÄDT`, `LADEBEREIT`, `KSEM WARTET`,
 `NETZSCHUTZ`, `KONFIGURATION` und `SICHERER START`.
 
-Nur der Pufferbatterie-SoC kommt weiterhin aus evcc. Standardmäßig wird
-`http://10.0.0.179:7070/api/state?jq=.battery.soc` verwendet.
+Nur der Akkuboost-SoC kommt weiterhin aus evcc. Der Endpunkt wird über die
+gemeinsam genutzte Datei `/home/mobie/evcsd/qc45-integration.properties`
+konfiguriert:
+
+```properties
+dashboard.akkuboost.url=http://10.0.20.131:7070
+```
+
+Die UI-JAR enthält denselben Wert als Auslieferungsstandard. Dadurch greift die
+neue Adresse auch dann, wenn die produktive Datei den Schlüssel noch nicht
+enthält. Ein dort gesetzter Wert hat Vorrang.
 
 Optionale Java-Systemparameter:
 
 ```text
 -Dqc45.modbus.host=127.0.0.1
 -Dqc45.modbus.port=1502
--Devcc.url=http://10.0.0.179:7070
+-Ddashboard.akkuboost.url=http://10.0.20.131:7070
+-Dqc45.integration.config=/home/mobie/evcsd/qc45-integration.properties
 ```
+
+Der bisherige Parameter `-Devcc.url` bleibt als kompatibler Override erhalten.
 
 ## Build
 

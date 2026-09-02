@@ -31,6 +31,18 @@ ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 ```
 
+## Dashboard / Akkuboost
+
+```properties
+dashboard.akkuboost.url=http://10.0.20.131:7070
+```
+
+Die UI liest den Akkuboost-SoC über `api/state?jq=.battery.soc`. Der Wert aus
+der produktiven Konfigurationsdatei überschreibt den in der UI-JAR enthaltenen
+Auslieferungsstandard. Alternativ kann die URL beim UI-Start mit
+`-Ddashboard.akkuboost.url=...` überschrieben werden; `-Devcc.url=...` bleibt
+für bestehende Installationen kompatibel.
+
 ## Modbus
 
 ```properties

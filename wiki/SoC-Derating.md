@@ -1,4 +1,4 @@
-# SoC-Derating der Pufferbatterie
+# SoC-Derating des Akkuboosts
 
 Der Sunny-Island-Cluster schaltet bei sehr niedrigem SoC hart ab. Um diesen Sprung zu vermeiden, begrenzt der `lean`-PeakShaving-Prozess die **maximal angeforderte Entladeleistung** bereits vorher sanft.
 
@@ -61,6 +61,6 @@ Der Fake-Export – also die Ladeanforderung an den Speicher – bleibt unverän
 ## Abgrenzung
 
 > [!IMPORTANT]
-> Dieses SoC-Derating sitzt **nicht im QC45 LoadManager**. Es schützt die Sunny-Island-Pufferbatterie auf der vorgelagerten Peak-Shaving-Ebene.
+> Dieses SoC-Derating sitzt **nicht im QC45 LoadManager**. Es schützt den Akkuboost auf der vorgelagerten Peak-Shaving-Ebene.
 
 Quellcode: `https://github.com/BugUser0815/PeakShaving/blob/lean/src/main.cpp`

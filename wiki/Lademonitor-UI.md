@@ -55,7 +55,7 @@ nebeneinander dar. Für beide Ladearten werden angezeigt:
 | `FREIGABE` | tatsächlich wirksames Minimum einschließlich Failback |
 
 Zusätzlich bleiben DC-Fahrzeug-SoC, AC/DC-Gesamtleistung, gemeinsame
-Sessionenergie, ladeartspezifische Zeit und Pufferbatterie-SoC sichtbar. Die
+Sessionenergie, ladeartspezifische Zeit und Akkuboost-SoC sichtbar. Die
 Fußzeile unterscheidet faire gemeinsame Zuteilung, bedarfsgerechte Umverteilung
 und Sicherheitszustände. Der rote Bereich ist kein lokaler Stop-Taster, sondern
 trägt ausschließlich den Hinweis `Zum Beenden Karte vorhalten oder App benutzen.`
@@ -82,8 +82,16 @@ verwendet die Oberfläche weiterhin den kompatiblen DC-Block `120–125`, bis di
 neue Integrations-JAR installiert wurde.
 
 Bei Kommunikationsfehlern werden gültige Werte höchstens fünf Sekunden
-gehalten. Der Pufferbatterie-SoC wird nachgeordnet über evcc gelesen und
-höchstens alle fünf Sekunden aktualisiert.
+gehalten. Der Akkuboost-SoC wird nachgeordnet über evcc gelesen und höchstens
+alle fünf Sekunden aktualisiert. Seine Adresse steht in der gemeinsamen
+Konfigurationsdatei:
+
+```properties
+dashboard.akkuboost.url=http://10.0.20.131:7070
+```
+
+Die UI verwendet den eingebetteten Auslieferungswert, solange der Schlüssel in
+`/home/mobie/evcsd/qc45-integration.properties` noch fehlt.
 
 ## Reproduzierbarer Patch
 

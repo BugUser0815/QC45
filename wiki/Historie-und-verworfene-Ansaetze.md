@@ -60,7 +60,7 @@ Zwischenzeitlich getestet, anschließend zurückgenommen. In Sonderfällen führ
 
 ### ⛔ Fake Export bei fehlender Last auf 0 setzen
 
-Falsch für das gewünschte Systemverhalten. Fake Export wird benötigt, um die Pufferbatterie zu beladen. Der richtige Sonderfall ist, **reale Einspeisung/keine Last nicht als Entladebedarf zu interpretieren**, während Fake Export bestehen bleibt.
+Falsch für das gewünschte Systemverhalten. Fake Export wird benötigt, um den Akkuboost zu beladen. Der richtige Sonderfall ist, **reale Einspeisung/keine Last nicht als Entladebedarf zu interpretieren**, während Fake Export bestehen bleibt.
 
 ## OCPP
 
