@@ -45,16 +45,15 @@ Fehlt ein gespeicherter Eintrag, versucht die Bridge die ID aus der laufenden
 EVCSD-Transaktion zu lesen; nur bei genau einer aktiven Session ist zusätzlich
 ein eindeutiger Fallback zulässig.
 
-Bei `MeterValues` werden sämtliche Zeitgruppen und sämtliche enthaltenen
-Messwerte übernommen – einschließlich Measurand, Phase, Kontext, Format,
-Position und Einheit. Die frühere Beschränkung auf den ersten Wert ist entfernt.
+Bei `MeterValues` verwendet die Bridge wieder das am 22. August bewährte
+QC45-Verhalten: Aus einer Meldung wird ausschließlich die erste periodische
+Energieprobe übernommen. Ihr vorhandener Measurand und ihre Einheit werden
+unverändert weitergegeben. Nachfolgende Strom- oder Leistungsproben gelangen
+nicht in die kWh-Verbrauchsreihe des Backends.
 
-Periodische Messwerte, die das alte QC45-EVCSD ohne `measurand` und `unit`
-liefert, werden als `Power.Active.Import` in `kW` mit dem Kontext
-`Sample.Periodic` ergänzt. Das verhindert, dass OCPP-1.6-Backends die
-momentane Ladeleistung standardmäßig als Energiezähler in `Wh` interpretieren.
-Explizit gekennzeichnete Energiezähler sowie `meterStart` und `meterStop`
-bleiben unverändert.
+Insbesondere ergänzt die Bridge bei einem nackten Wert nicht mehr künstlich
+`Power.Active.Import`, `kW` oder `Sample.Periodic`. `meterStart` und `meterStop`
+bleiben davon vollständig unberührt.
 
 ## Statuskorrektur
 

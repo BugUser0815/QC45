@@ -358,59 +358,35 @@ public final class Ocpp15BridgeServer {
         groups = expandMeterGroups(groups);
         if (groups.isEmpty()) throw new IllegalArgumentException("MeterValues request has no meter groups");
 
-        StringBuilder out = new StringBuilder("{\"connectorId\":").append(connector);
-        if (tx >= 0) out.append(",\"transactionId\":").append(tx);
-        out.append(",\"meterValue\":[");
-
-        int writtenGroups = 0;
+        Element selectedGroup = null;
+        Element selectedSample = null;
         for (int i = 0; i < groups.size(); i++) {
             Element group = groups.get(i);
             List<Element> samples = directChildren(group, "values", "sampledValue", "value");
             samples = retainSampleElements(samples);
             if (samples.isEmpty()) continue;
-            if (writtenGroups++ > 0) out.append(',');
-            String timestamp = childText(group, "timestamp");
-            if (timestamp.length() == 0) timestamp = utcNow();
-            out.append("{\"timestamp\":\"").append(json(timestamp))
-                .append("\",\"sampledValue\":[");
-
-            for (int j = 0; j < samples.size(); j++) {
-                if (j > 0) out.append(',');
-                Element sample = samples.get(j);
-                String value = sampleValue(sample);
-                String context = childText(sample, "context");
-                String measurand = childText(sample, "measurand");
-                String unit = childText(sample, "unit");
-                boolean inferredPower = false;
-
-                // The QC45's legacy OCPP 1.5 client sends periodic charging power in kW
-                // as a bare value. In OCPP 1.6 a missing measurand/unit defaults to an
-                // energy register in Wh, which makes backends plot 27 kW as 0.027 kWh.
-                // Preserve explicit energy samples, but repair the vendor-specific bare
-                // power sample (and incomplete samples that already carry a power hint).
-                if (measurand.length() == 0 && (unit.length() == 0 || isPowerUnit(unit))) {
-                    measurand = "Power.Active.Import";
-                    inferredPower = true;
-                }
-                if (unit.length() == 0 && "Power.Active.Import".equalsIgnoreCase(measurand)) {
-                    unit = "kW";
-                    inferredPower = true;
-                }
-                if (context.length() == 0 && inferredPower) context = "Sample.Periodic";
-
-                out.append("{\"value\":\"").append(json(value)).append('"');
-                appendOptionalJson(out, "context", context);
-                appendOptionalJson(out, sample, "format");
-                appendOptionalJson(out, "measurand", measurand);
-                appendOptionalJson(out, sample, "phase");
-                appendOptionalJson(out, sample, "location");
-                appendOptionalJson(out, "unit", unit);
-                out.append('}');
-            }
-            out.append("]}");
+            selectedGroup = group;
+            selectedSample = samples.get(0);
+            break;
         }
-        if (writtenGroups == 0) throw new IllegalArgumentException("MeterValues request has no sampled values");
-        return out.append("]}").toString();
+        if (selectedSample == null) {
+            throw new IllegalArgumentException("MeterValues request has no sampled values");
+        }
+
+        // Match the proven QC45 bridge behavior from 22 August: the first meter
+        // sample is the periodic energy value expected by the backend. Do not
+        // relabel a bare sample as Power.Active.Import/kW and do not mix later
+        // current or power samples into the backend's consumption series.
+        String timestamp = childText(selectedGroup, "timestamp");
+        if (timestamp.length() == 0) timestamp = utcNow();
+        StringBuilder out = new StringBuilder("{\"connectorId\":").append(connector);
+        if (tx >= 0) out.append(",\"transactionId\":").append(tx);
+        out.append(",\"meterValue\":[{\"timestamp\":\"").append(json(timestamp))
+            .append("\",\"sampledValue\":[{\"value\":\"")
+            .append(json(sampleValue(selectedSample))).append('"');
+        appendOptionalJson(out, selectedSample, "measurand");
+        appendOptionalJson(out, selectedSample, "unit");
+        return out.append("}]}]}").toString();
     }
 
     private static List<Element> expandMeterGroups(List<Element> candidates) {
@@ -453,16 +429,9 @@ public final class Ocpp15BridgeServer {
     }
 
     private static void appendOptionalJson(StringBuilder out, Element sample, String name) {
-        appendOptionalJson(out, name, childText(sample, name));
-    }
-
-    private static void appendOptionalJson(StringBuilder out, String name, String value) {
+        String value = childText(sample, name);
         if (value.length() > 0) out.append(",\"").append(json(name)).append("\":\"")
             .append(json(value)).append('"');
-    }
-
-    private static boolean isPowerUnit(String unit) {
-        return "W".equalsIgnoreCase(unit) || "kW".equalsIgnoreCase(unit);
     }
 
     private static Document parseXml(String xml) throws Exception {
