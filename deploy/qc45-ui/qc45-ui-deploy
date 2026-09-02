@@ -13,7 +13,7 @@ fi
 # shellcheck source=/dev/null
 source "$config_file"
 
-: "${QC45_SSH_TARGET:=root@10.0.0.156}"
+: "${QC45_SSH_TARGET:=root@10.0.20.108}"
 : "${QC45_SSH_PORT:=22}"
 : "${QC45_REMOTE_JAR:=/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar}"
 : "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
