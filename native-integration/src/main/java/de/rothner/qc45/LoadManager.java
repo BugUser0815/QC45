@@ -1,5 +1,8 @@
 package de.rothner.qc45;
 
+import java.util.Calendar;
+import java.util.TimeZone;
+
 /**
  * Native load manager for one active DC connector plus Type2/AC.
  *
@@ -10,6 +13,12 @@ package de.rothner.qc45;
 public final class LoadManager extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
     private static final long START_SETTLE_MS = 3000L;
+    private static final double BUSINESS_TARGET_A = 27.0d;
+    private static final double OFF_HOURS_CEILING_MARGIN_A = 0.1d;
+    private static final String BUSINESS_TIME_ZONE = "Europe/Berlin";
+    private static final int BUSINESS_OPEN_MINUTE = 7 * 60;
+    private static final int BUSINESS_CLOSE_MON_THU_MINUTE = 15 * 60;
+    private static final int BUSINESS_CLOSE_FRI_MINUTE = 13 * 60;
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
@@ -39,6 +48,8 @@ public final class LoadManager extends Thread {
     private int lastPrearmDcKw = -1;
     private int lastPrearmAcKw = -1;
     private long lastErrorLog;
+    private boolean operatingProfileKnown;
+    private boolean lastBusinessHours;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
                        ChargingLimitCoordinator limits,
@@ -78,14 +89,18 @@ public final class LoadManager extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] LoadManager started AC+DC target=" + one(targetA)
+        System.out.println("[QC45] LoadManager started AC+DC configuredTarget=" + one(targetA)
             + "A ceiling=" + one(commandCeilingA) + "A priority=equal ramp="
             + rampUpKwPerLoop + "kW/loop startup/recovery="
-            + HEALTHY_READS_TO_RESUME + " valid KSEM reads");
+            + HEALTHY_READS_TO_RESUME + " valid KSEM reads; business=27.0A "
+            + "Mo-Do 07:00-15:00 Fr 07:00-13:00 Europe/Berlin, "
+            + "off-hours=technical-safe-max");
         safeBlockMeter();
 
         while (running) {
             long now = System.currentTimeMillis();
+            double activeTargetA = operatingTargetA(now, targetA, commandCeilingA, hysteresisA);
+            logOperatingProfile(now, activeTargetA);
             try {
                 KsemClient.Currents currents = meter.readCurrents();
                 markMeterReadHealthy();
@@ -166,7 +181,7 @@ public final class LoadManager extends Thread {
                     dcEligible, acEligible,
                     safetyCreditedDcKw, safetyCreditedAcKw,
                     commandedDcKw, commandedAcKw,
-                    criticalA, targetA, commandCeilingA, hysteresisA,
+                    criticalA, activeTargetA, commandCeilingA, hysteresisA,
                     minDcKw, requestedDcMax,
                     minAcKw, requestedAcMax,
                     rampUpKwPerLoop);
@@ -227,6 +242,7 @@ public final class LoadManager extends Thread {
 
                 if (target.dcKw != commandedDcKw || target.acKw != commandedAcKw) {
                     System.out.println("[QC45] LoadManager set grid=" + one(criticalA)
+                        + "A target=" + one(activeTargetA)
                         + "A DC=" + target.dcKw + "kW AC=" + target.acKw
                         + "kW actualDC=" + actualDcKw + "kW actualAC=" + actualAcKw
                         + "kW evccCapDC=" + requestedDcMax + "kW evccCapAC="
@@ -314,6 +330,45 @@ public final class LoadManager extends Thread {
             + "kW non-authorizing=true settle=" + START_SETTLE_MS + "ms");
         lastPrearmDcKw = prearm.dcKw;
         lastPrearmAcKw = prearm.acKw;
+    }
+
+    private void logOperatingProfile(long now, double activeTargetA) {
+        boolean businessHours = isBusinessHours(now);
+        if (operatingProfileKnown && businessHours == lastBusinessHours) return;
+        operatingProfileKnown = true;
+        lastBusinessHours = businessHours;
+        System.out.println("[QC45] LoadManager operating profile="
+            + (businessHours ? "BUSINESS" : "OFF-HOURS")
+            + " target=" + one(activeTargetA) + "A");
+    }
+
+    static double operatingTargetA(long epochMillis, double configuredTargetA,
+                                   double commandCeilingA, double hysteresisA) {
+        if (isBusinessHours(epochMillis)) {
+            return Math.min(BUSINESS_TARGET_A, configuredTargetA);
+        }
+        // Use the complete safe control envelope outside business hours. With
+        // the standard 34.0 A failback reduce threshold and 0.8 A hysteresis,
+        // this yields 33.1 A. The 34 A failback stage and 35 A SLS remain above
+        // the normal control target and retain their existing safety roles.
+        double envelopeTargetA = commandCeilingA - hysteresisA - OFF_HOURS_CEILING_MARGIN_A;
+        return Math.max(configuredTargetA, envelopeTargetA);
+    }
+
+    static boolean isBusinessHours(long epochMillis) {
+        Calendar local = Calendar.getInstance(TimeZone.getTimeZone(BUSINESS_TIME_ZONE));
+        local.setTimeInMillis(epochMillis);
+        int day = local.get(Calendar.DAY_OF_WEEK);
+        int minuteOfDay = local.get(Calendar.HOUR_OF_DAY) * 60 + local.get(Calendar.MINUTE);
+        if (day >= Calendar.MONDAY && day <= Calendar.THURSDAY) {
+            return minuteOfDay >= BUSINESS_OPEN_MINUTE
+                && minuteOfDay < BUSINESS_CLOSE_MON_THU_MINUTE;
+        }
+        if (day == Calendar.FRIDAY) {
+            return minuteOfDay >= BUSINESS_OPEN_MINUTE
+                && minuteOfDay < BUSINESS_CLOSE_FRI_MINUTE;
+        }
+        return false;
     }
 
     private void sleepLoop() {
