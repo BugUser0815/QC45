@@ -7,11 +7,11 @@ import static org.junit.Assert.assertTrue;
 
 public final class ChargingLimitGuardTest {
     @Test
-    public void stopsActiveSessionThatDrawsPowerAgainstZeroTarget() throws Exception {
+    public void stopsActiveSessionThatDrawsPowerAboveNotladen() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         limits.setCcsAvailable(true);
         limits.setGridTargets(2, false, 5, 0);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
@@ -22,29 +22,31 @@ public final class ChargingLimitGuardTest {
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         assertEquals(0, station.stopCount);
-        guard.runCycle(3100L);
+        guard.runCycle(2100L);
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
-        assertEquals(0, limits.effectiveConnectorKw(1));
-        assertEquals(0, limits.effectiveConnectorKw(2));
-        assertEquals(0, limits.effectiveConnectorKw(3));
+        assertEquals(5, station.limit[1]);
+        assertEquals(5, station.limit[2]);
+        assertEquals(5, station.limit[3]);
     }
 
     @Test
-    public void keepsSuspendedZeroPowerSessionOpen() throws Exception {
+    public void keepsNotladenSessionOpenAtFiveKw() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         station.session[2] = true;
+        station.power[2] = 5;
 
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
-        guard.runCycle(2000L);
+        guard.runCycle(5000L);
 
         assertEquals(0, station.stopCount);
         assertTrue(!limits.snapshot().limitMismatchBlocked);
+        assertEquals(5, station.limit[2]);
     }
 
     @Test
@@ -52,7 +54,7 @@ public final class ChargingLimitGuardTest {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         limits.setCcsAvailable(true);
         station.session[2] = true;
         station.power[2] = 6;
@@ -70,17 +72,17 @@ public final class ChargingLimitGuardTest {
     }
 
     @Test
-    public void startupMismatchStillHardStopsWhenQualificationNeverCompletes() throws Exception {
+    public void startupMismatchHardStopsPowerFarAboveNotladen() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         station.session[2] = true;
-        station.power[2] = 6;
+        station.power[2] = 35;
 
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
-        guard.runCycle(11100L);
+        guard.runCycle(2100L);
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
@@ -91,7 +93,7 @@ public final class ChargingLimitGuardTest {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         limits.setCcsAvailable(true);
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
@@ -106,15 +108,15 @@ public final class ChargingLimitGuardTest {
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
-        assertEquals(0, station.limit[2]);
+        assertEquals(5, station.limit[2]);
     }
 
     @Test
-    public void toleratesSmallTelemetryDifferenceAbovePositiveLimit() throws Exception {
+    public void toleratesSmallTelemetryDifferenceAboveNotladen() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
-        limits.initializeSafeZero();
+        limits.initializeNotladen();
         limits.setCcsAvailable(true);
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
