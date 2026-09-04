@@ -62,6 +62,20 @@ public final class IntegrationConfigTest {
     }
 
     @Test
+    public void preservesLoadManagerTargetWhenFailbackEnvelopeAllowsIt() {
+        assertEquals(32.0d,
+            Integration.conservativeLoadManagerTargetA(32.0d, 34.0d, 0.8d),
+            0.000001d);
+    }
+
+    @Test
+    public void clampsLoadManagerTargetInsteadOfDisablingLegacyThirtyAmpFailback() {
+        assertEquals(29.1d,
+            Integration.conservativeLoadManagerTargetA(32.0d, 30.0d, 0.8d),
+            0.000001d);
+    }
+
+    @Test
     public void migratesLegacyFailbackTimingOnlyTowardsFasterProtection() {
         long[] value = Integration.conservativeFailbackTiming(800L, 400L, 200);
         assertEquals(500L, value[0]);
