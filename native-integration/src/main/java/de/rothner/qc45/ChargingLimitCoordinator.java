@@ -115,8 +115,10 @@ public final class ChargingLimitCoordinator {
 
     /**
      * Atomically publish active allocations and safe next-session start values.
-     * Pre-arm values apply only to currently inactive outputs and are written
-     * through the non-authorizing satellite-only path.
+     * The inactive CCS satellite is pre-armed without a start command. While no
+     * DC session is active, connector 1 also owns the shared native DC
+     * configuration value so EVCSD cannot restore a stale 45/50 kW default when
+     * a new CCS session starts.
      */
     public synchronized void setGridTargetsAndPrearm(
                                             int dcConnector, boolean acIsActive,
@@ -141,6 +143,13 @@ public final class ChargingLimitCoordinator {
         // sendCcsStart(true) only after transaction authorization is observable.
         if (dcConnector > 0 && dcConnector != oldDcConnector) {
             applied[dcConnector] = -1;
+        }
+        // When a DC session ends, force connector 1 through the full writer in
+        // the reduction pass. Its writer updates the shared Configuration maxPower
+        // without invoking the CCS START_CHARGE path, closing the start race before
+        // connector 2 is merely satellite-prearmed.
+        if (dcConnector == 0 && oldDcConnector > 0) {
+            applied[1] = -1;
         }
         if (acIsActive && !oldAcActive) applied[3] = -1;
         apply(false);
@@ -317,11 +326,32 @@ public final class ChargingLimitCoordinator {
     }
 
     private void writeTarget(int connector, int targetKw) throws Exception {
-        boolean idlePrearm = targetKw > 0
-            && ((connector <= 2 && activeDcConnector == 0)
-                || (connector == 3 && !acActive));
-        if (idlePrearm) io.preArmConnectorLimitKw(connector, targetKw);
-        else io.setConnectorLimitKw(connector, targetKw);
+        if (connector == 3) {
+            // AC owns a separate configuration value and its full writer does
+            // not authorize a charge. Prime it even while idle so EVCSD cannot
+            // restore the legacy AC maximum before LoadManager sees the session.
+            io.setConnectorLimitKw(connector, targetKw);
+            return;
+        }
+
+        if (activeDcConnector == connector) {
+            io.setConnectorLimitKw(connector, targetKw);
+            return;
+        }
+
+        if (activeDcConnector == 0 && connector == 1) {
+            // Both DC satellites share Configuration.maxPower. Use the non-CCS
+            // connector as the idle configuration owner: this updates the shared
+            // default without calling the CCS sendCcsStart path. Connector 2 is
+            // then satellite-prearmed to the same value below.
+            io.setConnectorLimitKw(connector, targetKw);
+            return;
+        }
+
+        // Never let an inactive DC sibling use the full writer while the other
+        // DC output is active; that would overwrite their shared configuration.
+        // Connector 2 also stays on the non-authorizing path while idle.
+        io.preArmConnectorLimitKw(connector, targetKw);
     }
 
     private static int clamp(int value, int min, int max) {
