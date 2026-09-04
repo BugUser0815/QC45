@@ -107,8 +107,9 @@ public final class ChargingLimitCoordinatorTest {
 
         limits.setGridTargets(2, true, 20, 20);
         assertLimits(io, 0, 20, 20);
-        assertTrue(io.operations.indexOf("1=0") >= 0);
-        assertTrue(io.operations.indexOf("2=20") > io.operations.indexOf("1=0"));
+        assertTrue(io.operations.indexOf("prearm1=0") >= 0);
+        assertTrue(io.operations.indexOf("set2=20") > io.operations.indexOf("prearm1=0"));
+        assertTrue(!io.operations.contains("set1=0"));
     }
 
     @Test
@@ -180,7 +181,7 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     @Test
-    public void gridApprovedIdlePrearmUsesNonAuthorizingWriter() throws Exception {
+    public void gridApprovedIdlePrearmPrimesSharedDcConfigurationWithoutCcsWriter() throws Exception {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
@@ -189,13 +190,14 @@ public final class ChargingLimitCoordinatorTest {
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
 
         assertLimits(io, 5, 5, 0);
-        assertTrue(io.operations.contains("prearm1=5"));
+        assertTrue(io.operations.contains("set1=5"));
         assertTrue(io.operations.contains("prearm2=5"));
+        assertTrue(!io.operations.contains("set2=5"));
         assertEquals("pre-arm is not an active allocation", 0, limits.effectiveDcKw());
     }
 
     @Test
-    public void safetyBlockClearsIdlePrearmWithAuthoritativeZero() throws Exception {
+    public void safetyBlockClearsIdlePrearmAndSharedDcConfiguration() throws Exception {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeSafeZero();
@@ -208,7 +210,8 @@ public final class ChargingLimitCoordinatorTest {
 
         assertLimits(io, 0, 0, 0);
         assertTrue(io.operations.contains("set1=0"));
-        assertTrue(io.operations.contains("set2=0"));
+        assertTrue(io.operations.contains("prearm2=0"));
+        assertTrue(!io.operations.contains("set2=0"));
     }
 
     @Test
@@ -224,7 +227,30 @@ public final class ChargingLimitCoordinatorTest {
         limits.setGridTargetsAndPrearm(2, false, 5, 0, 0, 0, false);
 
         assertLimits(io, 0, 5, 0);
+        assertTrue(io.operations.contains("prearm1=0"));
         assertTrue(io.operations.contains("set2=5"));
+        assertTrue(!io.operations.contains("set1=0"));
+    }
+
+    @Test
+    public void endingCcsSessionReprimesSharedDcBeforeIdleCcsPrearm() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeSafeZero();
+        limits.setCcsAvailable(true);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setGridTargetsAndPrearm(2, false, 20, 0, 0, 0, false);
+        io.operations.clear();
+
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
+
+        assertLimits(io, 5, 5, 0);
+        int sharedPrime = io.operations.indexOf("set1=5");
+        int ccsPrearm = io.operations.indexOf("prearm2=5");
+        assertTrue(sharedPrime >= 0);
+        assertTrue(ccsPrearm > sharedPrime);
+        assertTrue(!io.operations.contains("set2=5"));
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {
