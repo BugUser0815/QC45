@@ -211,13 +211,18 @@ public final class Integration {
                 double commandCeilingA = failbackEnabled
                     ? Math.min(configuredGridLimitA, failbackReduceA)
                     : configuredGridLimitA;
-                double targetA = positiveDecimal(p, "loadmanager.targetA", 32.0d);
-                if (targetA > MAX_CONTROL_TARGET_A) {
+                double configuredTargetA = positiveDecimal(p, "loadmanager.targetA", 32.0d);
+                if (configuredTargetA > MAX_CONTROL_TARGET_A) {
                     throw new IllegalArgumentException("loadmanager.targetA must not exceed 32A");
                 }
                 double hysteresisA = nonNegativeDecimal(p, "loadmanager.hysteresisA", 0.8d);
-                if (targetA + hysteresisA >= commandCeilingA) {
-                    throw new IllegalArgumentException("loadmanager target plus hysteresis must remain below command ceiling");
+                double targetA = conservativeLoadManagerTargetA(
+                    configuredTargetA, commandCeilingA, hysteresisA);
+                if (targetA != configuredTargetA) {
+                    System.err.println("[QC45] loadmanager target compatibility migration: configured target="
+                        + configuredTargetA + "A -> effective target=" + targetA
+                        + "A because command ceiling=" + commandCeilingA
+                        + "A and hysteresis=" + hysteresisA + "A");
                 }
                 int rampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 2);
                 int intervalMs = positiveInt(p, "loadmanager.intervalMs", 1000);
@@ -401,6 +406,23 @@ public final class Integration {
             safeTrip - MIN_FAILBACK_GAP_A);
         validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
         return new double[] { safeReduce, safeTrip, safeInstant };
+    }
+
+    static double conservativeLoadManagerTargetA(double configuredTargetA,
+                                                 double commandCeilingA,
+                                                 double hysteresisA) {
+        if (configuredTargetA <= 0.0d || configuredTargetA > MAX_CONTROL_TARGET_A
+                || commandCeilingA <= 0.0d || hysteresisA < 0.0d
+                || Double.isNaN(configuredTargetA) || Double.isInfinite(configuredTargetA)
+                || Double.isNaN(commandCeilingA) || Double.isInfinite(commandCeilingA)
+                || Double.isNaN(hysteresisA) || Double.isInfinite(hysteresisA)) {
+            throw new IllegalArgumentException("invalid loadmanager target/ceiling/hysteresis");
+        }
+        double safeMaximumA = commandCeilingA - hysteresisA - MIN_FAILBACK_GAP_A;
+        if (safeMaximumA <= 0.0d) {
+            throw new IllegalArgumentException("loadmanager command ceiling leaves no positive control target");
+        }
+        return Math.min(configuredTargetA, safeMaximumA);
     }
 
     private static String thresholdValues(double reduceA, double tripA,
