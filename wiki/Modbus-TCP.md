@@ -63,6 +63,12 @@ Nur Register **110 und 111** sind beschreibbar. Alle anderen Schreibversuche lie
 | 142 | R | wirksame AC-Freigabe | kW |
 | 143 | R | AC-Ladezeit | s |
 | 144–145 | R | AC-Sessionenergie U32 high/low | Wh |
+| 146 | R | Länge der aktuellen DC-RFID-/OCPP-Kennung | Byte |
+| 147–162 | R | aktuelle DC-RFID-/OCPP-Kennung, 32 ASCII-Bytes, zwei Bytes je Register | ASCII |
+| 163 | R | Länge der aktuellen Type2-RFID-/OCPP-Kennung | Byte |
+| 164–179 | R | aktuelle Type2-RFID-/OCPP-Kennung, 32 ASCII-Bytes, zwei Bytes je Register | ASCII |
+| 180–182 | R | DC L1/L2/L3, dreiphasiges 400-V-Stromäquivalent | 0,1 A |
+| 183–185 | R | Type2 L1/L2/L3, dreiphasiges 400-V-Stromäquivalent | 0,1 A |
 
 Register 127 verwendet folgende Bits:
 
@@ -79,6 +85,12 @@ Register 127 verwendet folgende Bits:
 | 10 | reduzierte GridFailback-Schutzkappe aktiv |
 | 11 | ungültige Sicherheitskonfiguration; Laden bleibt gesperrt |
 | 12 | gemessene Leistung trotz wirksamer 0-kW-Freigabe; Notabschaltung verriegelt |
+
+## evcc-Telemetrie
+
+Die Kennung in 146–179 kommt direkt aus dem von EVCSD gehaltenen `idTag` und kann damit in evcc über `api.Identifier` als RFID-Kennung dargestellt werden. Für den logischen DC-Lader wird bevorzugt der aktive CHAdeMO-/CCS-Connector verwendet; ohne aktiven DC-Connector wird eine noch vorhandene Kennung von Connector 1 oder 2 geliefert.
+
+Die Stromwerte 180–185 sind **keine zusätzlichen Messwerte eines internen Phasenzählers**. Da die vorhandene EVCSD-Schnittstelle auf allen bekannten Softwareständen keine verlässlich nachgewiesenen L1/L2/L3-Ströme bereitstellt, werden sie aus der jeweiligen Live-Leistung als symmetrisches dreiphasiges 400-V-Äquivalent berechnet (`I = P / (sqrt(3) × 400 V)`). Sie dienen ausschließlich der evcc-Anzeige und werden weder für GridFailback noch für das Loadmanagement verwendet.
 
 ## Aktiver DC-Connector
 
