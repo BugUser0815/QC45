@@ -22,6 +22,16 @@ public final class ModbusServer extends Thread {
     static final int UI_BALANCING_REGISTER_COUNT = 20;
     static final int UI_BALANCING_VERSION = 1;
 
+    // Extended evcc telemetry. Identifier blocks are one length register plus
+    // 16 registers containing up to 32 ASCII bytes, two bytes per register.
+    static final int EVCC_DC_IDENTIFIER_LENGTH_REGISTER = 146;
+    static final int EVCC_DC_IDENTIFIER_FIRST_REGISTER = 147;
+    static final int EVCC_AC_IDENTIFIER_LENGTH_REGISTER = 163;
+    static final int EVCC_AC_IDENTIFIER_FIRST_REGISTER = 164;
+    static final int EVCC_IDENTIFIER_REGISTER_COUNT = 16;
+    static final int EVCC_DC_PHASE_CURRENT_FIRST_REGISTER = 180;
+    static final int EVCC_AC_PHASE_CURRENT_FIRST_REGISTER = 183;
+
     static final int UI_FLAG_DC_SESSION = 1 << 0;
     static final int UI_FLAG_AC_SESSION = 1 << 1;
     static final int UI_FLAG_DC_FLOW = 1 << 2;
@@ -232,6 +242,24 @@ public final class ModbusServer extends Thread {
                 && address < UI_BALANCING_FIRST_REGISTER + UI_BALANCING_REGISTER_COUNT) {
             return snapshot.balancingRegisters[address - UI_BALANCING_FIRST_REGISTER];
         }
+        if (address >= EVCC_DC_IDENTIFIER_FIRST_REGISTER
+                && address < EVCC_DC_IDENTIFIER_FIRST_REGISTER + EVCC_IDENTIFIER_REGISTER_COUNT) {
+            return identifierWord(snapshot.dcIdentifier,
+                address - EVCC_DC_IDENTIFIER_FIRST_REGISTER);
+        }
+        if (address >= EVCC_AC_IDENTIFIER_FIRST_REGISTER
+                && address < EVCC_AC_IDENTIFIER_FIRST_REGISTER + EVCC_IDENTIFIER_REGISTER_COUNT) {
+            return identifierWord(snapshot.acIdentifier,
+                address - EVCC_AC_IDENTIFIER_FIRST_REGISTER);
+        }
+        if (address >= EVCC_DC_PHASE_CURRENT_FIRST_REGISTER
+                && address < EVCC_DC_PHASE_CURRENT_FIRST_REGISTER + 3) {
+            return equivalentPhaseCurrentDeciA(snapshot.liveDcPowerKw);
+        }
+        if (address >= EVCC_AC_PHASE_CURRENT_FIRST_REGISTER
+                && address < EVCC_AC_PHASE_CURRENT_FIRST_REGISTER + 3) {
+            return equivalentPhaseCurrentDeciA(snapshot.liveAcPowerKw);
+        }
         switch (address) {
             case 0: return snapshot.stationPowerKw;
             case 1: return snapshot.power[1];
@@ -264,6 +292,8 @@ public final class ModbusServer extends Thread {
             case 123: chargingScreenDiagnostic(snapshot.activeDc); return (int)Math.min(65535L, snapshot.chargingSeconds);
             case 124: chargingScreenDiagnostic(snapshot.activeDc); return highWord(snapshot.sessionEnergyWh);
             case 125: chargingScreenDiagnostic(snapshot.activeDc); return lowWord(snapshot.sessionEnergyWh);
+            case EVCC_DC_IDENTIFIER_LENGTH_REGISTER: return identifierLength(snapshot.dcIdentifier);
+            case EVCC_AC_IDENTIFIER_LENGTH_REGISTER: return identifierLength(snapshot.acIdentifier);
             default: throw new ModbusException(2);
         }
     }
@@ -528,6 +558,31 @@ public final class ModbusServer extends Thread {
         return (int)(value & 0xffffL);
     }
 
+    private static int identifierLength(String value) {
+        return value == null ? 0 : Math.min(32, value.length());
+    }
+
+    private static int identifierWord(String value, int word) {
+        int length = identifierLength(value);
+        int first = word * 2;
+        int high = first < length ? value.charAt(first) & 0xff : 0;
+        int low = first + 1 < length ? value.charAt(first + 1) & 0xff : 0;
+        return (high << 8) | low;
+    }
+
+    /**
+     * evcc expects L1/L2/L3 for charger telemetry. EVCSD exposes live power but
+     * no proven per-phase current API on all QC45 software versions, so expose
+     * the balanced 400 V three-phase equivalent in 0.1 A. This is deliberately
+     * kept separate from grid/KSEM currents and therefore never affects safety
+     * or load-management decisions.
+     */
+    private static int equivalentPhaseCurrentDeciA(int powerKw) {
+        if (powerKw <= 0) return 0;
+        double amps = (powerKw * 1000.0d) / (Math.sqrt(3.0d) * 400.0d);
+        return clamp((int)Math.round(amps * 10.0d), 0, 65535);
+    }
+
     static int[] uiBalancingBlock(int flags, int activeDc, int liveDcPowerKw,
                                   ChargingLimitCoordinator.Snapshot balancing,
                                   int socPct, long dcSeconds, long dcEnergyWh,
@@ -599,6 +654,8 @@ public final class ModbusServer extends Thread {
         final int requestedAcKw;
         final int liveDcPowerKw;
         final int liveAcPowerKw;
+        final String dcIdentifier;
+        final String acIdentifier;
         final int socPct;
         final long chargingSeconds;
         final long sessionEnergyWh;
@@ -640,6 +697,8 @@ public final class ModbusServer extends Thread {
 
                 liveDcPowerKw = clamp(dcPower, 0, 65535);
                 liveAcPowerKw = clamp(session[3] ? livePowerKw(3) : 0, 0, 65535);
+                dcIdentifier = safeDcIdentifier(activeDc);
+                acIdentifier = safeIdentifier(3);
                 socPct = clamp(dcSoc, 0, 100);
                 chargingSeconds = Math.max(0L, dcSeconds);
                 sessionEnergyWh = Math.max(0L, dcEnergy);
@@ -682,6 +741,25 @@ public final class ModbusServer extends Thread {
         private long safeEnergyWh(int connector) {
             try { return Math.max(0L, ModbusServer.this.energyWh(connector)); }
             catch (Throwable e) { return 0L; }
+        }
+
+        private String safeIdentifier(int connector) {
+            try {
+                String value = station.idTag(connector);
+                return value == null ? "" : value.trim();
+            } catch (Throwable e) {
+                return "";
+            }
+        }
+
+        private String safeDcIdentifier(int active) {
+            if (active == 1 || active == 2) {
+                String value = safeIdentifier(active);
+                if (value.length() > 0) return value;
+            }
+            String c1 = safeIdentifier(1);
+            if (c1.length() > 0) return c1;
+            return safeIdentifier(2);
         }
 
         private boolean safeRemoteStarted() {
