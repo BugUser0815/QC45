@@ -84,12 +84,12 @@ ksem.wordOrder=HIGH_LOW
 # One shared KSEM budget controls the active DC connector and Type2/AC.
 # When both charge, the released kW are split equally. The grid limit is a hard
 # command ceiling; targetA stays below it to retain control reserve.
-# Safety validation preserves the 32/34/35 A operating envelope and the fixed
+# Safety validation preserves the 34/36/38 A operating envelope and the fixed
 # E35 magnetic range; it also rejects KSEM timeouts above 1 s or increases
 # faster than 2 kW/s.
 loadmanager.enabled=true
-loadmanager.targetA=32.0
-loadmanager.gridLimitA=35.0
+loadmanager.targetA=34.0
+loadmanager.gridLimitA=38.0
 loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50
@@ -103,17 +103,19 @@ loadmanager.demandStableMs=5000
 loadmanager.demandReserveKw=2
 
 # Independent grid failback
+# 36 A starts the reduction stage; 38 A immediately pauses charging. The
+# separate 175 A threshold remains the lower magnetic E35 hard-trip boundary.
 failback.enabled=true
-failback.reduceA=34.0
+failback.reduceA=36.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
-failback.tripA=35.0
+failback.tripA=38.0
 # Compatibility minimum for timed E35 overload bands. The conservative instant
 # trip at the lower magnetic boundary remains immediate.
 failback.tripDelayMs=250
 # Fixed 5 x In lower E35 magnetic boundary for an assumed preloaded 35A SLS.
-# Historical 38A and 218.75A values are migrated automatically.
+# Historical 38A and 218.75A instantTripA values are migrated automatically.
 failback.instantTripA=175.0
 failback.intervalMs=100
 # A hard trip resets automatically after this many ms continuously below reduceA.
