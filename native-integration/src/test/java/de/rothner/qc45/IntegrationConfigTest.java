@@ -11,7 +11,7 @@ import static org.junit.Assert.fail;
 public final class IntegrationConfigTest {
     @Test
     public void acceptsCanonicalFailbackEnvelope() {
-        Integration.validateFailbackThresholds(34.0d, 35.0d, 175.0d);
+        Integration.validateFailbackThresholds(36.0d, 38.0d, 175.0d);
     }
 
     @Test
@@ -45,9 +45,9 @@ public final class IntegrationConfigTest {
 
     @Test
     public void clampsOperationalThresholdsAndFixesMagneticInstantRange() {
-        double[] value = Integration.conservativeFailbackThresholds(36.0d, 37.0d, 39.0d);
-        assertEquals(34.0d, value[0], 0.000001d);
-        assertEquals(35.0d, value[1], 0.000001d);
+        double[] value = Integration.conservativeFailbackThresholds(40.0d, 41.0d, 39.0d);
+        assertEquals(36.0d, value[0], 0.000001d);
+        assertEquals(38.0d, value[1], 0.000001d);
         assertEquals(175.0d, value[2], 0.000001d);
     }
 
@@ -62,7 +62,14 @@ public final class IntegrationConfigTest {
     }
 
     @Test
-    public void preservesLoadManagerTargetWhenFailbackEnvelopeAllowsIt() {
+    public void preservesCanonicalThirtyFourAmpLoadManagerTarget() {
+        assertEquals(34.0d,
+            Integration.conservativeLoadManagerTargetA(34.0d, 36.0d, 0.8d),
+            0.000001d);
+    }
+
+    @Test
+    public void preservesMoreConservativeLoadManagerTarget() {
         assertEquals(32.0d,
             Integration.conservativeLoadManagerTargetA(32.0d, 34.0d, 0.8d),
             0.000001d);
