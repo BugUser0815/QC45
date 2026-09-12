@@ -214,6 +214,42 @@ public final class LoadAllocatorTest {
     }
 
     @Test
+    public void headroomRampKeepsTwoKwStepFarBelowTarget() {
+        LoadAllocator.Targets next = LoadAllocator.plan(
+            true, false,
+            20, 0,
+            20, 0,
+            26.0d, 32.0d, 36.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(22, next.dcKw);
+        assertEquals(0, next.acKw);
+    }
+
+    @Test
+    public void headroomRampDropsToOneKwNearTarget() {
+        LoadAllocator.Targets next = LoadAllocator.plan(
+            true, false,
+            20, 0,
+            20, 0,
+            29.0d, 32.0d, 36.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(21, next.dcKw);
+        assertEquals(0, next.acKw);
+    }
+
+    @Test
+    public void headroomRampStopsWhenOneKwWouldConsumeReserve() {
+        LoadAllocator.Targets held = LoadAllocator.plan(
+            true, false,
+            20, 0,
+            20, 0,
+            30.2d, 32.0d, 36.0d, 0.8d,
+            5, 50, 5, 43, 2);
+        assertEquals(20, held.dcKw);
+        assertEquals(0, held.acKw);
+    }
+
+    @Test
     public void catchupGuardNeverDelaysReduction() {
         LoadAllocator.Targets reduced = LoadAllocator.plan(
             true, false,

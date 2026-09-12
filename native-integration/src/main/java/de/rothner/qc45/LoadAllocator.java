@@ -3,6 +3,11 @@ package de.rothner.qc45;
 /** Pure AC/DC budget calculation used by {@link LoadManager}. */
 final class LoadAllocator {
     private static final double THREE_PHASE_KW_PER_A = 0.692820323d;
+    // Leave 25% of the measured headroom unused when calculating an upward
+    // step. With integer-kW QC45 commands this produces roughly 2 kW steps
+    // below ~28 A, 1 kW steps near the target, and no further increase when
+    // even 1 kW would consume the remaining control reserve.
+    private static final double RAMP_HEADROOM_SAFETY_FACTOR = 0.75d;
     // Conservative command projection. Type2 may charge on only one 230 V
     // phase; the DC rectifier also has conversion losses. Using separate
     // factors prevents a released-but-not-yet-drawn target from exceeding a
@@ -51,8 +56,9 @@ final class LoadAllocator {
                 (int)Math.floor(actualTotalKw + headroomA * THREE_PHASE_KW_PER_A),
                 0, maxTotalKw);
             if (requestedTotalKw > currentTotalKw) {
+                int allowedRampKw = headroomLimitedRampKw(headroomA, rampUpKwPerLoop);
                 desiredTotalKw = Math.min(requestedTotalKw,
-                    currentTotalKw + Math.max(1, rampUpKwPerLoop));
+                    currentTotalKw + allowedRampKw);
             } else {
                 desiredTotalKw = requestedTotalKw;
             }
@@ -259,6 +265,15 @@ final class LoadAllocator {
         return measuredCriticalA
             + unreachedDcKw / DC_KW_PER_GRID_A
             + unreachedAcKw / AC_KW_PER_GRID_A;
+    }
+
+    private static int headroomLimitedRampKw(double headroomA,
+                                             int configuredRampUpKwPerLoop) {
+        if (headroomA <= 0.0d) return 0;
+        int safeHeadroomKw = (int)Math.floor(
+            headroomA * THREE_PHASE_KW_PER_A * RAMP_HEADROOM_SAFETY_FACTOR);
+        return Math.min(Math.max(1, configuredRampUpKwPerLoop),
+            Math.max(0, safeHeadroomKw));
     }
 
     private static int normalize(int value, int min, int max) {
