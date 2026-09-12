@@ -11,9 +11,9 @@ public final class Integration {
     private static final int DEFAULT_MAX_DC_KW = 50;
     private static final int DEFAULT_MIN_AC_KW = 5;
     private static final int DEFAULT_MAX_AC_KW = 43;
-    private static final double MAX_GRID_LIMIT_A = 35.0d;
-    private static final double MAX_CONTROL_TARGET_A = 32.0d;
-    private static final double MAX_REDUCE_THRESHOLD_A = 34.0d;
+    private static final double MAX_GRID_LIMIT_A = 38.0d;
+    private static final double MAX_CONTROL_TARGET_A = 34.0d;
+    private static final double MAX_REDUCE_THRESHOLD_A = 36.0d;
     private static final double SLS_E_INSTANT_TRIP_A = GridFailback.SLS_E_INSTANT_A;
     private static final double MIN_FAILBACK_GAP_A = 0.1d;
     private static final double KSEM_CURRENT_SCALE = 0.001d;
@@ -122,8 +122,8 @@ public final class Integration {
         try {
             boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
             boolean failbackEnabled = bool(p, "failback.enabled", true);
-            double configuredFailbackReduceA = positiveDecimal(p, "failback.reduceA", 34.0d);
-            double configuredFailbackTripA = positiveDecimal(p, "failback.tripA", 35.0d);
+            double configuredFailbackReduceA = positiveDecimal(p, "failback.reduceA", 36.0d);
+            double configuredFailbackTripA = positiveDecimal(p, "failback.tripA", 38.0d);
             double configuredFailbackInstantTripA = positiveDecimal(p, "failback.instantTripA",
                 SLS_E_INSTANT_TRIP_A);
             double[] failbackThresholds = conservativeFailbackThresholds(
@@ -204,16 +204,16 @@ public final class Integration {
             }
 
             if (loadManagerEnabled) {
-                double configuredGridLimitA = positiveDecimal(p, "loadmanager.gridLimitA", 35.0d);
+                double configuredGridLimitA = positiveDecimal(p, "loadmanager.gridLimitA", 38.0d);
                 if (configuredGridLimitA > MAX_GRID_LIMIT_A) {
-                    throw new IllegalArgumentException("loadmanager.gridLimitA must not exceed 35A");
+                    throw new IllegalArgumentException("loadmanager.gridLimitA must not exceed 38A");
                 }
                 double commandCeilingA = failbackEnabled
                     ? Math.min(configuredGridLimitA, failbackReduceA)
                     : configuredGridLimitA;
-                double configuredTargetA = positiveDecimal(p, "loadmanager.targetA", 32.0d);
+                double configuredTargetA = positiveDecimal(p, "loadmanager.targetA", 34.0d);
                 if (configuredTargetA > MAX_CONTROL_TARGET_A) {
-                    throw new IllegalArgumentException("loadmanager.targetA must not exceed 32A");
+                    throw new IllegalArgumentException("loadmanager.targetA must not exceed 34A");
                 }
                 double hysteresisA = nonNegativeDecimal(p, "loadmanager.hysteresisA", 0.8d);
                 double targetA = conservativeLoadManagerTargetA(
@@ -381,7 +381,7 @@ public final class Integration {
         }
         if (reduceA > MAX_REDUCE_THRESHOLD_A || tripA > MAX_GRID_LIMIT_A) {
             throw new IllegalArgumentException("failback reduction and pause thresholds may only be made "
-                + "more conservative than 34/35A (configured " + values + ")");
+                + "more conservative than 36/38A (configured " + values + ")");
         }
         if (Math.abs(instantTripA - SLS_E_INSTANT_TRIP_A) > 0.000001d) {
             throw new IllegalArgumentException("failback.instantTripA is fixed at the conservative "
