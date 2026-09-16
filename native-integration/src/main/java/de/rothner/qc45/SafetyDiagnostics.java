@@ -50,7 +50,11 @@ final class SafetyDiagnostics {
     private SafetyDiagnostics() {}
 
     static synchronized void startModbus(ChargingLimitCoordinator limits) {
-        if (limits == null || server != null) return;
+        if (limits == null) return;
+        if (server != null) {
+            server.setLimits(limits);
+            return;
+        }
         DiagnosticModbusServer candidate = new DiagnosticModbusServer(limits);
         server = candidate;
         candidate.start();
@@ -66,9 +70,6 @@ final class SafetyDiagnostics {
         ChargingLimitCoordinator.Snapshot state = limits.snapshot();
         if (!state.blocked) return new Snapshot(STATE_NORMAL, 0, 0, UNIT_NONE);
 
-        // Highest-severity blockers win. LIMIT_MISMATCH intentionally precedes
-        // FAILBACK because both may coexist while a failed ramp-down is being
-        // aborted; operators need to see the immediate recovery condition.
         if (state.shutdownBlocked)
             return new Snapshot(STATE_SHUTDOWN, 0, 0, UNIT_NONE);
         if (state.configurationBlocked)
@@ -222,13 +223,17 @@ final class SafetyDiagnostics {
 
     /** Minimal FC03/FC04 server for five read-only diagnostic registers. */
     private static final class DiagnosticModbusServer extends Thread {
-        private final ChargingLimitCoordinator limits;
+        private volatile ChargingLimitCoordinator limits;
         private volatile ServerSocket listener;
 
         DiagnosticModbusServer(ChargingLimitCoordinator limits) {
             super("QC45-Safety-Diagnostics-Modbus");
             this.limits = limits;
             setDaemon(true);
+        }
+
+        void setLimits(ChargingLimitCoordinator limits) {
+            if (limits != null) this.limits = limits;
         }
 
         public void run() {
