@@ -22,7 +22,7 @@ public final class ChargingLimitGuardTest {
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         assertEquals(0, station.stopCount);
-        guard.runCycle(2100L);
+        guard.runCycle(6100L);
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
@@ -82,7 +82,7 @@ public final class ChargingLimitGuardTest {
 
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
-        guard.runCycle(2100L);
+        guard.runCycle(6100L);
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
@@ -104,7 +104,7 @@ public final class ChargingLimitGuardTest {
         guard.runCycle(1000L);
         assertEquals(0, station.stopCount);
         assertEquals(5, station.limit[2]);
-        guard.runCycle(2100L);
+        guard.runCycle(6100L);
 
         assertEquals(1, station.stopCount);
         assertTrue(limits.snapshot().limitMismatchBlocked);
@@ -128,6 +128,84 @@ public final class ChargingLimitGuardTest {
         guard.runCycle(5000L);
 
         assertEquals(0, station.stopCount);
+        assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test
+    public void allowsQc45ToRampDownWhilePowerKeepsMakingProgress() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        limits.setCcsAvailable(true);
+        limits.setGridTargets(2, false, 5, 0);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        station.power[2] = 35;
+        guard.runCycle(1000L);
+        station.power[2] = 31;
+        guard.runCycle(3000L);
+        station.power[2] = 26;
+        guard.runCycle(6500L);
+        station.power[2] = 20;
+        guard.runCycle(10000L);
+        station.power[2] = 14;
+        guard.runCycle(14000L);
+        station.power[2] = 9;
+        guard.runCycle(18000L);
+        station.power[2] = 8;
+        guard.runCycle(22000L);
+
+        assertEquals(0, station.stopCount);
+        assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test
+    public void hardStopsOnlyAfterPowerStallsAboveLimit() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        limits.setCcsAvailable(true);
+        limits.setGridTargets(2, false, 5, 0);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        station.power[2] = 35;
+        guard.runCycle(1000L);
+        station.power[2] = 30;
+        guard.runCycle(3000L);
+        station.power[2] = 30;
+        guard.runCycle(7900L);
+        assertEquals(0, station.stopCount);
+        guard.runCycle(8101L);
+
+        assertEquals(1, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test
+    public void clearsMismatchBlockAfterHardStoppedConnectorIsInactive() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        limits.setCcsAvailable(true);
+        limits.setGridTargets(2, false, 5, 0);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+        station.power[2] = 35;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        guard.runCycle(6100L);
+        assertEquals(1, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+
+        guard.runCycle(6350L);
         assertTrue(!limits.snapshot().limitMismatchBlocked);
     }
 
