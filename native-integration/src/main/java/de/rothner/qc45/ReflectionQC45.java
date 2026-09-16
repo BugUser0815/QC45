@@ -55,7 +55,12 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo,
 
     public int powerKw(int connector) throws Exception {
         Object sat = satellite(connector);
-        return Math.max(0, ((Number) sat.getClass().getMethod("getCurrentPower").invoke(sat)).intValue());
+        int nativeKw = Math.max(0,
+            ((Number) sat.getClass().getMethod("getCurrentPower").invoke(sat)).intValue());
+        // For safety/idle detection a fresh positive wire sample must not be
+        // hidden by a zero satellite cache. Never lower a native power reading.
+        int wireKw = connector == 2 ? CcsRawTracerV2.freshPowerKw() : -1;
+        return Math.max(nativeKw, Math.max(0, wireKw));
     }
 
     public int limitKw(int connector) throws Exception {
