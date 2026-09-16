@@ -36,7 +36,7 @@ public final class ModbusServerTest {
         assertEquals(20, ModbusServer.UI_BALANCING_REGISTER_COUNT);
         assertEquals(145, ModbusServer.UI_BALANCING_FIRST_REGISTER
             + ModbusServer.UI_BALANCING_REGISTER_COUNT - 1);
-        assertEquals(1, ModbusServer.UI_BALANCING_VERSION);
+        assertEquals(2, ModbusServer.UI_BALANCING_VERSION);
         assertEquals(0, ModbusServer.UI_FLAG_DC_SESSION & ModbusServer.UI_FLAG_AC_SESSION);
         assertEquals(0, ModbusServer.UI_FLAG_BLOCKED & ModbusServer.UI_FLAG_DEMAND_TRANSFER);
         assertEquals(0, ModbusServer.UI_FLAG_CONFIGURATION & ModbusServer.UI_FLAG_STARTUP);
@@ -58,7 +58,7 @@ public final class ModbusServerTest {
         int[] block = ModbusServer.uiBalancingBlock(0x2aa, 2, 17,
             limits.snapshot(), 78, 754L, 70000L, 11, 302L, 80000L);
         assertEquals(20, block.length);
-        assertEquals(1, block[0]);
+        assertEquals(2, block[0]);
         assertEquals(0x2aa, block[1]);
         assertEquals(2, block[2]);
         assertEquals(17, block[3]);

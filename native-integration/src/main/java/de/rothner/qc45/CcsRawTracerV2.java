@@ -90,6 +90,15 @@ public final class CcsRawTracerV2 {
         }
     }
 
+    /** Atomic freshness/value read. -1 means unknown, never a fabricated zero. */
+    public static int freshPowerKw() {
+        synchronized (LIVE_LOCK) {
+            long age = System.currentTimeMillis() - liveLastRxMs;
+            return liveLastRxMs > 0L && age >= 0L && age <= 1500L
+                ? Math.max(0, (livePowerW + 500) / 1000) : -1;
+        }
+    }
+
     public static int livePowerKw() {
         synchronized (LIVE_LOCK) {
             return Math.max(0, (livePowerW + 500) / 1000);
@@ -239,6 +248,7 @@ public final class CcsRawTracerV2 {
     static void observeLiveRx(byte[] b, int o, int l) {
         if (b == null || l <= 0) return;
         synchronized (LIVE_LOCK) {
+            int oldCarryLength = liveCarryLength;
             byte[] data = new byte[liveCarryLength + l];
             System.arraycopy(liveCarry, 0, data, 0, liveCarryLength);
             System.arraycopy(b, o, data, liveCarryLength, l);
@@ -247,7 +257,10 @@ public final class CcsRawTracerV2 {
             liveCarryLength = retained;
 
             int end = data.length;
-            for (int p = 0; p < end; p++) {
+            // Prefer the newest complete frame; retained old frames must never
+            // refresh the sample age or hide a newly received power value.
+            for (int p = end - 12; p >= 0; p--) {
+                if (p + 12 <= oldCarryLength) continue;
                 if ((data[p] & 0xff) != 0x63) continue;
                 if (end - p < 12) continue;
 
@@ -274,7 +287,8 @@ public final class CcsRawTracerV2 {
                 }
 
                 liveSocPct = soc;
-                livePowerW = charging ? powerW : 0;
+                // Measured V*I remains visible even after the charging flag clears.
+                livePowerW = powerW;
                 liveLastRxMs = now;
                 if (charging) liveLastChargingMs = now;
                 liveLastIntegrateMs = now;

@@ -191,19 +191,31 @@ reassembled.
   a preloaded SLS, every tolerance uses the lower current boundary; the instant
   threshold is therefore fixed at 5 x In (175 A). Historical 38 A and 218.75 A
   configurations are migrated automatically.
-- KSEM failure immediately blocks AC/DC at 0 kW while transactions remain alive.
-- The zero-limit mismatch guard allows the bounded initial KSEM qualification
-  and one complete LoadManager cycle, then aborts persistent power against 0 kW.
+- KSEM failure immediately withdraws the normal allocation. DC remains at the
+  agreed 5 kW Notladen floor; Type2 uses its explicit SUSPEND_CHARGE transport.
+  A native QC45 zero-power limit is never used as a physical stop command.
 - After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe
   5 kW minimum without authorization or a start command. A detected session sends
   that target through the full CCS path and holds it for three seconds before ramping.
 - Positive ramp steps are never queued ahead of a delayed vehicle response. The next
   2 kW step requires the previous release to be reached within 1 kW on two consecutive
   LoadManager observations; reductions remain immediate.
-- The 250 ms guard also reasserts positive limits and hard-stops a transaction that
-  keeps drawing more than 3 kW above its released limit for one second.
-- A positive CCS target uses the connector's active transaction as its control
-  authorization; a 0 kW target always sends the CCS control flag as false.
+- The 250 ms guard reasserts limits. Normally, power more than 3 kW above the
+  enforced target for one second requests a latched stop. For an observed downward
+  target step of at least 5 kW, measured power may settle for at most 5 seconds,
+  provided it keeps falling with no stall of 1.5 seconds and no rise above the
+  best observed power plus tolerance. Reassertions do not renew that deadline;
+  write failures cancel the extra grace. The independent grid trip is unchanged.
+- Notladen is distinct from a hard stop. A mismatch, grid hard trip, configuration
+  error or shutdown rejects RemoteStart and disables CCS control authorization.
+  The guard retries RemoteStop every two seconds for every active connector,
+  even if it has already dropped to 5 kW. Native/RFID starts are also stopped.
+- A mismatch automatically clears only after all sessions have ended, observed
+  power is zero, E-stop is released and fresh KSEM readings remain below reduceA
+  for failback.resetDelayMs (at least 60 seconds). Missing/stale grid evidence,
+  failed reads, active sessions and other blockers prevent recovery. Stale RFID
+  strings alone do not count as sessions when native transaction state exists.
+  Recovery discards the old allocation and requires the LoadManager to ramp anew.
 - A hard trip retries RemoteStop until sessions end and remains latched while the
   grid is unsafe. It resets automatically after at least 60 seconds continuously
   below `reduceA`; a current at/above that threshold or a failed KSEM read restarts
@@ -230,3 +242,23 @@ firmware state enum.
   the upstream 35-A hardware protection.
 
 These are isolated in the reflection adapter so firmware-specific adjustments do not affect the OCPP or Modbus layers.
+
+## Notladen recovery update deployment
+
+Install the matching native-integration JAR and UI overlay from this change.
+The UI decodes telemetry versions 1 and 2; version 2 retains registers 126–145
+and assigns flag bit 10 to HARD_STOP (formerly STAGE_LIMIT). Stage caps remain
+available in the numeric registers. An older overlay rejects v2 and falls back
+to its legacy screen, so update the overlay before the integration if deploying
+separately. The UI deployer updates only the overlay, not EVCSD/Tomcat.
+
+The UI distinguishes DC Notladen (5 kW) from requested stops, never claims a
+transaction has stopped solely because a blocker is set, and retains measured
+power during faults. Fresh CCS serial samples prefer the newest complete frame;
+old retained frames cannot refresh their age, and clearing the charging flag
+cannot hide measured voltage × current. Historical AC energy/time averages are
+not shown as instantaneous power.
+
+The 5-second settling maximum is a bounded software policy, not a measured QC45
+hardware specification. Validate the first 30→5 kW fallback on the station with
+logs. Persistent KSEM/network failures are not repaired by this software change.

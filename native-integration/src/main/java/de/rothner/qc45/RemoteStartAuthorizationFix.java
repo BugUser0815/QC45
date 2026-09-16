@@ -72,7 +72,7 @@ public final class RemoteStartAuthorizationFix {
     private void applyOnce() throws Exception {
         Object central = central();
         boolean loggedIn = booleanMethod(central, "isLoggedIn");
-        boolean shouldAuthorize = station.isRemoteSession(2)
+        boolean shouldAuthorize = !station.hardStopRequired() && station.isRemoteSession(2)
             && station.sessionActive(2) && station.isCcsCharge(2);
 
         if (shouldAuthorize) {

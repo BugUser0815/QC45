@@ -247,7 +247,8 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private boolean isChargingSession() {
         if (freshBalancingData(System.currentTimeMillis())) {
-            if (lastBalancingData.dcSession() || lastBalancingData.acSession()) return true;
+            return lastBalancingData.hardStopRequired() || lastBalancingData.totalActualKw() > 0
+                || lastBalancingData.dcSession() || lastBalancingData.acSession();
         }
         int state = AlpitronicSessionState.get();
         if (state != AlpitronicSessionState.UNKNOWN) return state == AlpitronicSessionState.CHARGING;
@@ -423,7 +424,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         boolean hasFreshPower = balancing != null
             ? balancing.totalActualKw() > 0
             : actualKw > 0 && lastChargingData != null && now - lastChargingDataFetch <= 2500L;
-        boolean blocked = balancing != null && balancing.blocked();
+        boolean blocked = balancing != null && balancing.hardStopRequired();
         g.setColor(blocked ? STOP_RED : hasFreshPower ? YELLOW : READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
@@ -439,9 +440,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private String headerStatus(LoadBalancingTelemetry data) {
-        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "STOPP ANGEFORDERT";
         if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "LEISTUNGSFEHLER";
         if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION";
+        if (data.hardStopRequired()) return "NETZSCHUTZ · STOPP";
+        if (data.anyNotladen()) return "NOTLADEN";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM WARTET";
         if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
@@ -471,8 +474,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int y = 60;
         int width = 292;
         int height = 188;
-        Color accent = data.blocked() ? STOP_RED
-            : actualKw > 0 ? YELLOW : session && effectiveKw > 0 ? READY_GREEN : DIVIDER;
+        boolean notladen = "DC".equals(channel) && data.notladen(session, actualKw, effectiveKw);
+        Color accent = data.hardStopRequired() ? STOP_RED
+            : notladen ? YELLOW : actualKw > 0 ? YELLOW : session && effectiveKw > 0 ? READY_GREEN : DIVIDER;
         drawPanel(g, x, y, width, height, accent);
 
         g.setColor(PRIMARY);
@@ -508,7 +512,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 12));
-        g.drawString("FREIGABE  " + effectiveKw + " kW", x + 20, y + 155);
+        String release = data.hardStopRequired() ? "START GESPERRT"
+            : notladen ? "NOTLADEN  5 kW" : "FREIGABE  " + effectiveKw + " kW";
+        g.drawString(release, x + 20, y + 155);
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 11));
         rightAligned(g, (evccControlled ? "EVCC " : "AUTO ") + requestedKw + "  ·  NETZ "
@@ -517,7 +523,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(accent);
         g.setFont(font(Font.BOLD, 11));
         g.drawString(loadState(session, actualKw, requestedKw, gridKw,
-            stageCapKw, effectiveKw, data), x + 20, y + 177);
+            stageCapKw, effectiveKw, data, notladen), x + 20, y + 177);
         if (session) {
             g.setColor(SECONDARY);
             g.setFont(font(Font.PLAIN, 10));
@@ -527,9 +533,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private String loadState(boolean session, int actualKw, int requestedKw,
                              int gridKw, int stageCapKw, int effectiveKw,
-                             LoadBalancingTelemetry data) {
-        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
-        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "NOTABSCHALTUNG";
+                             LoadBalancingTelemetry data, boolean notladen) {
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "STOPP ANGEFORDERT";
+        if (data.hardStopRequired()) return actualKw > 0 ? "STOPP · LEISTUNG FLIESST"
+            : "GESPERRT · WARTET";
+        if (notladen) return "NOTLADEN · BEGRENZT";
         if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION PRÜFEN";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ AKTIV";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM-MESSUNG FEHLT";
@@ -592,7 +600,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private void drawLoadBalancingFooter(Graphics2D g, LoadBalancingTelemetry data) {
         g.setColor(DIVIDER);
         g.drawLine(0, 416, WIDTH, 416);
-        g.setColor(data.blocked() ? STOP_RED : SECONDARY);
+        g.setColor(data.hardStopRequired() ? STOP_RED : data.anyNotladen() ? YELLOW : SECONDARY);
         g.setFont(font(data.blocked() ? Font.BOLD : Font.PLAIN, 11));
         centered(g, loadBalancingExplanation(data), 320, 438);
 
@@ -607,18 +615,24 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private String loadBalancingExplanation(LoadBalancingTelemetry data) {
         if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH))
-            return "0-kW-Freigabe verletzt: Transaktion gestoppt; Neustart erforderlich.";
+            return data.totalActualKw() > 0
+                ? "Leistungsfehler: Stopp angefordert; es fließt noch Leistung."
+                : "Leistungsfehler: Reset nach stabiler Ruhe und gesundem Netz.";
         if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION))
-            return "Sicherheitskonfiguration ungültig: AC und DC bleiben auf 0 kW.";
+            return "Sicherheitskonfiguration ungültig: Ladestopp angefordert.";
+        if (data.hardStopRequired())
+            return "Schutzabschaltung: Ladestopp angefordert; Start gesperrt.";
+        if (data.anyNotladen())
+            return "Notladen: DC auf 5 kW begrenzt; normale Freigabe ausgesetzt.";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK))
-            return "Netzschutz aktiv: AC und DC sind auf 0 kW begrenzt.";
+            return "Netzschutz aktiv: normale Freigabe ausgesetzt.";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER))
-            return "KSEM-Messung fehlt: AC und DC bleiben sicher pausiert.";
+            return "KSEM-Messung fehlt: normale Freigabe ausgesetzt.";
         if (data.has(LoadBalancingTelemetry.FLAG_STARTUP))
             return "Freigabe nach fünf gültigen KSEM-Messungen.";
         if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN))
             return "Ladesteuerung ist sicher abgeschaltet.";
-        if (data.has(LoadBalancingTelemetry.FLAG_STAGE_LIMIT))
+        if (data.stageLimited())
             return "Die Schutzkappe reduziert die AC/DC-Freigabe am Netzlimit.";
         if (data.demandTransfer())
             return "Ungenutzte Leistung wird bedarfsgerecht zwischen AC und DC verteilt.";

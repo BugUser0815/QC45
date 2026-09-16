@@ -14,7 +14,7 @@ native_modbus="$script_dir/../native-integration/src/main/java/de/rothner/qc45/M
 if [ -r "$native_modbus" ]; then
     grep -q 'UI_BALANCING_FIRST_REGISTER = 126;' "$native_modbus"
     grep -q 'UI_BALANCING_REGISTER_COUNT = 20;' "$native_modbus"
-    grep -q 'UI_BALANCING_VERSION = 1;' "$native_modbus"
+    grep -q 'UI_BALANCING_VERSION = 2;' "$native_modbus"
 fi
 
 compile_java7() {

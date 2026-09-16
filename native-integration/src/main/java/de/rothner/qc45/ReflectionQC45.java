@@ -8,7 +8,12 @@ import java.util.HashSet;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo {
+public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo, ChargingSafetyIo {
+    private volatile boolean hardStopRequired;
+
+    public void setHardStopRequired(boolean required) { hardStopRequired = required; }
+    public boolean hardStopRequired() { return hardStopRequired; }
+
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
     private final Set<Integer> remoteConnectors = new HashSet<Integer>();
@@ -230,7 +235,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         boolean loggedIn = ((Boolean) centralClass.getMethod("isLoggedIn").invoke(cm)).booleanValue();
         boolean transactionActive = activeTransaction(connector) != null;
         boolean remoteSession = isRemoteSession(connector);
-        boolean controlAuthorized = ccsControlAuthorized(
+        boolean controlAuthorized = !hardStopRequired && ccsControlAuthorized(
             effectiveKw, loggedIn, transactionActive, remoteSession);
         satType.getMethod("sendCcsStart", Boolean.TYPE).invoke(
             sat, Boolean.valueOf(controlAuthorized));
@@ -366,7 +371,8 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         Object sat = satellite(connector);
         try {
             Object tx = sat.getClass().getMethod("getActiveTransaction").invoke(sat);
-            if (tx != null) return true;
+            // A cached RFID/user value is not an active transaction.
+            return tx != null || powerKw(connector) > 0;
         } catch (NoSuchMethodException ignored) {}
         return powerKw(connector) > 0 || idTag(connector).length() > 0;
     }
@@ -559,6 +565,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
     }
 
     public void remoteStart(String idTag, int connector) throws Exception {
+        if (hardStopRequired) throw new IllegalStateException("charging safety stop is latched");
         if (idTag == null || idTag.trim().length() == 0) throw new IllegalArgumentException("missing idTag");
         if (connector < 1 || connector > 3) throw new IllegalArgumentException("connector must be 1..3");
         idTag = idTag.trim();
