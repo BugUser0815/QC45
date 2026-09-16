@@ -68,6 +68,7 @@ public final class GridFailback extends Thread {
         this.reduceAcKw = reduceAcKw;
         this.intervalMs = intervalMs;
         this.resetDelayMs = resetDelayMs;
+        limits.configureMismatchReset(resetDelayMs);
     }
 
     public boolean isTripped() { return tripped; }
@@ -100,6 +101,7 @@ public final class GridFailback extends Thread {
             }
 
             double max = currents.max();
+            limits.recordRecoveryGrid(System.nanoTime() / 1000000L, max < reduceA);
             if (now - lastGridLog >= 5000L) {
                 System.out.println("[QC45] Grid L1=" + one(currents.l1) + "A L2="
                     + one(currents.l2) + "A L3=" + one(currents.l3) + "A max="
@@ -232,6 +234,7 @@ public final class GridFailback extends Thread {
     }
 
     private void onMeterFailure(long now, Throwable error) {
+        limits.recordRecoveryGrid(now, false);
         goodMeterReads = 0;
         resetSince = 0L;
         tripSince = 0L;
@@ -250,6 +253,8 @@ public final class GridFailback extends Thread {
     private synchronized void hardTrip(String reason) {
         if (tripped) return;
         tripped = true;
+        try { limits.setBlocked(ChargingLimitCoordinator.HARD_TRIP, true); }
+        catch (Exception e) { System.err.println("[QC45] hard-trip enforcement failed: " + e); }
         meterPaused = false;
         overLimitPaused = false;
         resetSince = 0L;
@@ -285,6 +290,7 @@ public final class GridFailback extends Thread {
         prepareSafeResume();
         limits.clearStageCaps();
         limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
+        limits.setBlocked(ChargingLimitCoordinator.HARD_TRIP, false);
         tripped = false;
         reduceSince = 0L;
         tripSince = 0L;

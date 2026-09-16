@@ -7,7 +7,7 @@ import java.lang.reflect.Method;
 final class LoadBalancingTelemetry {
     static final int FIRST_REGISTER = 126;
     static final int REGISTER_COUNT = 20;
-    static final int VERSION = 1;
+    static final int VERSION = 2;
 
     static final int FLAG_DC_SESSION = 1 << 0;
     static final int FLAG_AC_SESSION = 1 << 1;
@@ -19,13 +19,16 @@ final class LoadBalancingTelemetry {
     static final int FLAG_STARTUP = 1 << 7;
     static final int FLAG_SHUTDOWN = 1 << 8;
     static final int FLAG_DEMAND_TRANSFER = 1 << 9;
+    // v1: stage limit; v2: hard stop. Stage caps remain numeric registers.
     static final int FLAG_STAGE_LIMIT = 1 << 10;
+    static final int FLAG_HARD_STOP = 1 << 10;
     static final int FLAG_CONFIGURATION = 1 << 11;
     static final int FLAG_LIMIT_MISMATCH = 1 << 12;
     static final int FLAG_EVCC_DC = 1 << 13;
     static final int FLAG_EVCC_AC = 1 << 14;
     static final int FLAG_REMOTE_START = 1 << 15;
 
+    final int version;
     final int flags;
     final int activeDcConnector;
     final int dcActualKw;
@@ -45,6 +48,7 @@ final class LoadBalancingTelemetry {
     final long acEnergyWh;
 
     private LoadBalancingTelemetry(int[] value) {
+        version = value[0];
         flags = value[1];
         activeDcConnector = value[2];
         dcActualKw = value[3];
@@ -60,9 +64,8 @@ final class LoadBalancingTelemetry {
 
         int nativeAcKw = value[12];
         int directAcKw = nativeAcKw > 0 ? 0 : liveType2PowerKw();
-        acActualKw = nativeAcKw > 0 ? nativeAcKw
-            : directAcKw > 0 ? directAcKw
-            : averagePowerKw(acEnergyWh, acSeconds);
+        // A historical energy/time average is never an instantaneous power value.
+        acActualKw = nativeAcKw > 0 ? nativeAcKw : directAcKw;
 
         acRequestedKw = value[13];
         acGridKw = value[14];
@@ -71,7 +74,7 @@ final class LoadBalancingTelemetry {
     }
 
     static LoadBalancingTelemetry decode(int[] value) {
-        if (value == null || value.length != REGISTER_COUNT || value[0] != VERSION) {
+        if (value == null || value.length != REGISTER_COUNT || (value[0] != 1 && value[0] != VERSION)) {
             throw new IllegalArgumentException("unsupported AC/DC UI telemetry block");
         }
         if (value[2] < 0 || value[2] > 2) {
@@ -87,6 +90,21 @@ final class LoadBalancingTelemetry {
     boolean dcSession() { return has(FLAG_DC_SESSION); }
     boolean acSession() { return has(FLAG_AC_SESSION); }
     boolean blocked() { return has(FLAG_BLOCKED); }
+    boolean hardStopRequired() {
+        return (version >= 2 && has(FLAG_HARD_STOP)) || has(FLAG_LIMIT_MISMATCH)
+            || has(FLAG_CONFIGURATION) || has(FLAG_SHUTDOWN);
+    }
+    boolean stageLimited() {
+        return version == 1 ? has(FLAG_STAGE_LIMIT)
+            : dcStageCapKw < dcGridKw || acStageCapKw < acGridKw;
+    }
+    boolean notladen(boolean session, int actualKw, int effectiveKw) {
+        return !hardStopRequired() && (session || actualKw > 0) && effectiveKw <= 0;
+    }
+    boolean anyNotladen() {
+        // Type2 uses SUSPEND_CHARGE for logical zero; only DC has Notladen.
+        return notladen(dcSession(), dcActualKw, dcEffectiveKw);
+    }
     boolean demandTransfer() { return has(FLAG_DEMAND_TRANSFER); }
     boolean evccControlsDc() { return has(FLAG_EVCC_DC); }
     boolean evccControlsAc() { return has(FLAG_EVCC_AC); }

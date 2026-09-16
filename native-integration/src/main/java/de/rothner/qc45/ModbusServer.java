@@ -20,7 +20,7 @@ import java.util.Set;
 public final class ModbusServer extends Thread {
     static final int UI_BALANCING_FIRST_REGISTER = 126;
     static final int UI_BALANCING_REGISTER_COUNT = 20;
-    static final int UI_BALANCING_VERSION = 1;
+    static final int UI_BALANCING_VERSION = 2;
 
     // Extended evcc telemetry. Identifier blocks are one length register plus
     // 16 registers containing up to 32 ASCII bytes, two bytes per register.
@@ -42,7 +42,7 @@ public final class ModbusServer extends Thread {
     static final int UI_FLAG_STARTUP = 1 << 7;
     static final int UI_FLAG_SHUTDOWN = 1 << 8;
     static final int UI_FLAG_DEMAND_TRANSFER = 1 << 9;
-    static final int UI_FLAG_STAGE_LIMIT = 1 << 10;
+    static final int UI_FLAG_HARD_STOP = 1 << 10;
     static final int UI_FLAG_CONFIGURATION = 1 << 11;
     static final int UI_FLAG_LIMIT_MISMATCH = 1 << 12;
     static final int UI_FLAG_EVCC_DC = 1 << 13;
@@ -344,6 +344,10 @@ public final class ModbusServer extends Thread {
     }
 
     private int livePowerKw(int connector) throws Exception {
+        if (connector == 2) {
+            int fresh = CcsRawTracerV2.freshPowerKw();
+            if (fresh >= 0) return fresh;
+        }
         int power = station.powerKw(connector);
         if (power > 0) return power;
         int voltage = infoInt(connector, "voltage", 0);
@@ -689,7 +693,7 @@ public final class ModbusServer extends Thread {
                 long dcEnergy = activeDc == 0 ? 0L : sessionEnergyWh(activeDc);
 
                 if (activeDc == 2 && CcsRawTracerV2.hasFreshLiveTelemetry()) {
-                    if (dcPower == 0) dcPower = CcsRawTracerV2.livePowerKw();
+                    // Power already uses an atomic freshness check in livePowerKw().
                     if (dcSoc == 0) dcSoc = CcsRawTracerV2.liveSocPct();
                     if (dcSeconds == 0L) dcSeconds = CcsRawTracerV2.liveElapsedSeconds();
                     if (dcEnergy == 0L) dcEnergy = CcsRawTracerV2.liveEnergyWh();
@@ -722,7 +726,7 @@ public final class ModbusServer extends Thread {
             if (balancing.startupBlocked) flags |= UI_FLAG_STARTUP;
             if (balancing.shutdownBlocked) flags |= UI_FLAG_SHUTDOWN;
             if (balancing.demandTransfer) flags |= UI_FLAG_DEMAND_TRANSFER;
-            if (balancing.stageLimited) flags |= UI_FLAG_STAGE_LIMIT;
+            if (balancing.hardStopRequired) flags |= UI_FLAG_HARD_STOP;
             if (balancing.configurationBlocked) flags |= UI_FLAG_CONFIGURATION;
             if (balancing.limitMismatchBlocked) flags |= UI_FLAG_LIMIT_MISMATCH;
             if (balancing.evccControlsDc) flags |= UI_FLAG_EVCC_DC;

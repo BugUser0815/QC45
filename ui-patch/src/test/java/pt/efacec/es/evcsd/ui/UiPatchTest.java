@@ -131,6 +131,20 @@ public final class UiPatchTest {
         data = LoadBalancingTelemetry.decode(raw);
         require(data.remoteStarted(), "RemoteStart flag must decode");
 
+        raw = telemetry(1);
+        raw[3] = 5;
+        data = LoadBalancingTelemetry.decode(raw);
+        require(data.anyNotladen(), "5 kW fallback must be visible as Notladen");
+        require(!data.hardStopRequired(), "meter pause is not a hard stop");
+        require(data.dcActualKw == 5, "a block must not mask actual power");
+        require(data.acActualKw == 0, "old session energy must not fake current AC power");
+        raw[1] |= LoadBalancingTelemetry.FLAG_HARD_STOP;
+        data = LoadBalancingTelemetry.decode(raw);
+        require(data.hardStopRequired() && !data.anyNotladen(), "hard trip prohibits Notladen");
+        raw[0] = 1;
+        data = LoadBalancingTelemetry.decode(raw);
+        require(!data.hardStopRequired() && data.stageLimited(), "legacy v1 bit 10 is a stage cap");
+
         raw[0] = 99;
         try {
             LoadBalancingTelemetry.decode(raw);
@@ -303,7 +317,7 @@ public final class UiPatchTest {
         boolean blocked = safetyState != 0;
         return new int[] {
             LoadBalancingTelemetry.VERSION, flags, 2,
-            blocked ? 0 : 17, 50, 17, blocked ? 0 : 50, blocked ? 0 : 17,
+            safetyState == 1 ? 5 : blocked ? 0 : 17, 50, 17, blocked ? 0 : 50, blocked ? 0 : 17,
             78, 754, 0, 12400,
             blocked ? 0 : 11, 43, 13, blocked ? 0 : 43, blocked ? 0 : 13,
             302, 0, 5200

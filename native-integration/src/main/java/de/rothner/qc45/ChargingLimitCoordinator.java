@@ -17,6 +17,7 @@ public final class ChargingLimitCoordinator {
     public static final String LOAD_METER = "loadmanager-meter";
     public static final String CONFIGURATION = "configuration";
     public static final String LIMIT_MISMATCH = "limit-mismatch";
+    public static final String HARD_TRIP = "hard-trip";
     public static final String SHUTDOWN = "shutdown";
 
     /**
@@ -47,6 +48,9 @@ public final class ChargingLimitCoordinator {
     private boolean acActive;
     private boolean ccsAvailable;
     private boolean demandTransfer;
+    private long recoveryGridSince;
+    private long recoveryGridLast;
+    private long mismatchResetDelayMs = 60000L;
     private final int[] applied = new int[] { -1, -1, -1, -1 };
 
     public ChargingLimitCoordinator(ChargingLimitIo io,
@@ -71,6 +75,7 @@ public final class ChargingLimitCoordinator {
         this.stageAcCapKw = maxAcKw;
         this.ccsAvailable = false;
         blockers.add(STARTUP);
+        publishHardStop();
     }
 
     /** Establish the persistent 5 kW QC45 safety floor ("Notladen"). */
@@ -183,7 +188,45 @@ public final class ChargingLimitCoordinator {
     public synchronized void setBlocked(String source, boolean blocked) throws Exception {
         if (source == null || source.trim().length() == 0) throw new IllegalArgumentException("block source is required");
         boolean changed = blocked ? blockers.add(source) : blockers.remove(source);
+        publishHardStop();
         apply(blocked && changed);
+    }
+
+    public synchronized boolean hardStopRequired() {
+        return blockers.contains(LIMIT_MISMATCH) || blockers.contains(HARD_TRIP)
+            || blockers.contains(CONFIGURATION) || blockers.contains(SHUTDOWN);
+    }
+
+    private void publishHardStop() {
+        if (io instanceof ChargingSafetyIo) {
+            ((ChargingSafetyIo)io).setHardStopRequired(hardStopRequired());
+        }
+    }
+
+    synchronized void configureMismatchReset(long delayMs) {
+        if (delayMs < 60000L) throw new IllegalArgumentException("reset requires at least 60s");
+        mismatchResetDelayMs = delayMs;
+    }
+
+    synchronized long mismatchResetDelayMs() { return mismatchResetDelayMs; }
+
+    synchronized void recordRecoveryGrid(long now, boolean safe) {
+        if (!safe) { recoveryGridSince = 0L; recoveryGridLast = 0L; return; }
+        if (recoveryGridSince == 0L || now < recoveryGridLast
+                || now - recoveryGridLast > 2000L) recoveryGridSince = now;
+        recoveryGridLast = now;
+    }
+
+    synchronized boolean clearMismatchIfRecovered(long now, long idleSince) throws Exception {
+        if (!blockers.contains(LIMIT_MISMATCH) || blockers.size() != 1
+                || idleSince == 0L || now - idleSince < mismatchResetDelayMs
+                || recoveryGridSince == 0L || now < recoveryGridLast
+                || now - recoveryGridLast > 2000L
+                || now - recoveryGridSince < mismatchResetDelayMs) return false;
+        // Never release an allocation retained from before the fault.
+        setGridTargets(0, false, 0, 0);
+        setBlocked(LIMIT_MISMATCH, false);
+        return true;
     }
 
     public synchronized boolean isBlocked() { return !blockers.isEmpty(); }
@@ -252,7 +295,7 @@ public final class ChargingLimitCoordinator {
             blockers.contains(LOAD_METER),
             blockers.contains(CONFIGURATION),
             blockers.contains(LIMIT_MISMATCH),
-            blockers.contains(SHUTDOWN),
+            blockers.contains(SHUTDOWN), hardStopRequired(),
             demandTransfer && blockers.isEmpty(),
             stageDcCapKw < maxDcKw || stageAcCapKw < maxAcKw);
     }
@@ -413,6 +456,7 @@ public final class ChargingLimitCoordinator {
         public final boolean configurationBlocked;
         public final boolean limitMismatchBlocked;
         public final boolean shutdownBlocked;
+        public final boolean hardStopRequired;
         public final boolean demandTransfer;
         public final boolean stageLimited;
 
@@ -425,7 +469,7 @@ public final class ChargingLimitCoordinator {
                          boolean blocked, boolean startupBlocked,
                          boolean failbackBlocked, boolean loadMeterBlocked,
                          boolean configurationBlocked, boolean limitMismatchBlocked,
-                         boolean shutdownBlocked, boolean demandTransfer,
+                         boolean shutdownBlocked, boolean hardStopRequired, boolean demandTransfer,
                          boolean stageLimited) {
             this.requestedDcKw = requestedDcKw;
             this.requestedAcKw = requestedAcKw;
@@ -446,6 +490,7 @@ public final class ChargingLimitCoordinator {
             this.configurationBlocked = configurationBlocked;
             this.limitMismatchBlocked = limitMismatchBlocked;
             this.shutdownBlocked = shutdownBlocked;
+            this.hardStopRequired = hardStopRequired;
             this.demandTransfer = demandTransfer;
             this.stageLimited = stageLimited;
         }
