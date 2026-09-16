@@ -45,6 +45,7 @@ final class ChargingLimitGuard extends Thread {
     }
 
     public void run() {
+        SafetyDiagnostics.startModbus(limits);
         System.out.println("[QC45] charging-limit guard started interval=" + intervalMs
             + "ms Notladen=" + ChargingLimitCoordinator.NOTLADEN_KW + "kW"
             + " mismatch-stall=" + POSITIVE_LIMIT_STALL_MS + "ms");
