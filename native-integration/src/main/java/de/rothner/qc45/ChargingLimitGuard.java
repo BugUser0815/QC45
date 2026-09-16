@@ -7,17 +7,28 @@ package de.rothner.qc45;
  * reflection add-on fails, the startup blocker remains active and this thread
  * keeps all three connectors at 5 kW Notladen instead of writing QC45's
  * ambiguous native 0 kW value.
+ *
+ * The QC45 does not reduce DC power instantaneously. A connector above its
+ * effective limit is therefore allowed to ramp down as long as telemetry keeps
+ * reaching new lower power values. Only a sustained stall above the tolerated
+ * limit is treated as a real limit mismatch and hard-stopped.
  */
 final class ChargingLimitGuard extends Thread {
     private static final int POSITIVE_LIMIT_TOLERANCE_KW = 3;
-    private static final long POSITIVE_LIMIT_GRACE_MS = 1000L;
+    private static final int POSITIVE_LIMIT_PROGRESS_KW = 1;
+    private static final long POSITIVE_LIMIT_STALL_MS = 5000L;
     private static final long STOP_RETRY_MS = 2000L;
 
     private final ChargingSessionIo station;
     private final ChargingLimitCoordinator limits;
     private final int intervalMs;
-    private final long[] overLimitSince = new long[] { 0L, 0L, 0L, 0L };
+    private final long[] lastProgressAt = new long[] { 0L, 0L, 0L, 0L };
+    private final int[] bestOverLimitPower = new int[] {
+        Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE
+    };
+    private final int[] trackedLimitKw = new int[] { -1, -1, -1, -1 };
     private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
+    private final boolean[] mismatchLatched = new boolean[] { false, false, false, false };
     private volatile boolean running = true;
     private long lastErrorLog;
 
@@ -35,7 +46,8 @@ final class ChargingLimitGuard extends Thread {
 
     public void run() {
         System.out.println("[QC45] charging-limit guard started interval=" + intervalMs
-            + "ms Notladen=" + ChargingLimitCoordinator.NOTLADEN_KW + "kW");
+            + "ms Notladen=" + ChargingLimitCoordinator.NOTLADEN_KW + "kW"
+            + " mismatch-stall=" + POSITIVE_LIMIT_STALL_MS + "ms");
         while (running) {
             try {
                 runCycle(System.currentTimeMillis());
@@ -66,29 +78,56 @@ final class ChargingLimitGuard extends Thread {
                 ? ChargingLimitCoordinator.NOTLADEN_KW : logicalEffectiveKw;
             boolean active = station.sessionActive(connector);
             if (!active) {
-                overLimitSince[connector] = 0L;
+                resetTracking(connector);
+                mismatchLatched[connector] = false;
+                lastStopAttempt[connector] = 0L;
                 continue;
             }
 
             int actualKw = station.powerKw(connector);
             if (actualKw <= enforcedKw + POSITIVE_LIMIT_TOLERANCE_KW) {
-                overLimitSince[connector] = 0L;
+                resetTracking(connector);
                 continue;
             }
 
-            if (overLimitSince[connector] == 0L) overLimitSince[connector] = now;
+            trackRampDown(connector, enforcedKw, actualKw, now);
             try { limits.reassertConnectorLimit(connector); }
             catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
-            if (now - overLimitSince[connector] < POSITIVE_LIMIT_GRACE_MS) continue;
 
+            if (now - lastProgressAt[connector] < POSITIVE_LIMIT_STALL_MS) continue;
             hardStop(connector, enforcedKw, actualKw, now, reconcileFailure);
         }
+
+        try { clearLimitMismatchIfStopped(); }
+        catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
+
         if (reconcileFailure != null) throw reconcileFailure;
+    }
+
+    private void trackRampDown(int connector, int enforcedKw, int actualKw, long now) {
+        if (trackedLimitKw[connector] != enforcedKw || lastProgressAt[connector] == 0L) {
+            trackedLimitKw[connector] = enforcedKw;
+            bestOverLimitPower[connector] = actualKw;
+            lastProgressAt[connector] = now;
+            return;
+        }
+
+        if (actualKw <= bestOverLimitPower[connector] - POSITIVE_LIMIT_PROGRESS_KW) {
+            bestOverLimitPower[connector] = actualKw;
+            lastProgressAt[connector] = now;
+        }
+    }
+
+    private void resetTracking(int connector) {
+        lastProgressAt[connector] = 0L;
+        bestOverLimitPower[connector] = Integer.MAX_VALUE;
+        trackedLimitKw[connector] = -1;
     }
 
     private void hardStop(int connector, int effectiveKw, int actualKw,
                           long now, Exception priorFailure) throws Exception {
         Exception blockFailure = priorFailure;
+        mismatchLatched[connector] = true;
         try { limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true); }
         catch (Exception e) { if (blockFailure == null) blockFailure = e; }
         if (lastStopAttempt[connector] == 0L
@@ -96,10 +135,20 @@ final class ChargingLimitGuard extends Thread {
             lastStopAttempt[connector] = now;
             System.err.println("[QC45] LIMIT MISMATCH HARD STOP connector=" + connector
                 + " effective=" + effectiveKw + "kW actual=" + actualKw
-                + "kW -> transaction abort; restart required");
+                + "kW stalled=" + (now - lastProgressAt[connector])
+                + "ms -> transaction abort; waiting for inactive confirmation");
             station.remoteStop(connector);
         }
         if (blockFailure != null) throw blockFailure;
+    }
+
+    private void clearLimitMismatchIfStopped() throws Exception {
+        if (!limits.isBlockedBy(ChargingLimitCoordinator.LIMIT_MISMATCH)) return;
+        for (int connector = 1; connector <= 3; connector++) {
+            if (mismatchLatched[connector]) return;
+        }
+        limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, false);
+        System.out.println("[QC45] LIMIT MISMATCH CLEARED: all hard-stopped connectors inactive");
     }
 
     void shutdown() {
