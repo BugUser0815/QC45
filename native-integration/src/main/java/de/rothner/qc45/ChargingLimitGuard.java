@@ -86,6 +86,14 @@ final class ChargingLimitGuard extends Thread {
             }
 
             int actualKw = station.powerKw(connector);
+            if (mismatchLatched[connector]) {
+                // A successful RemoteStop request is not proof that the
+                // transaction ended. Keep retrying until the firmware reports
+                // the connector inactive, even after power has fallen back to
+                // the physical 5 kW Notladen value.
+                retryLatchedStop(connector, enforcedKw, actualKw, now);
+                continue;
+            }
             if (actualKw <= enforcedKw + POSITIVE_LIMIT_TOLERANCE_KW) {
                 resetTracking(connector);
                 continue;
@@ -141,6 +149,29 @@ final class ChargingLimitGuard extends Thread {
             station.remoteStop(connector);
         }
         if (blockFailure != null) throw blockFailure;
+    }
+
+    private void retryLatchedStop(int connector, int effectiveKw,
+                                  int actualKw, long now) throws Exception {
+        try { limits.reassertConnectorLimit(connector); }
+        catch (Exception e) {
+            // Still attempt the transaction stop. Limit enforcement and
+            // transaction termination are independent safety layers.
+            if (lastStopAttempt[connector] == 0L
+                    || now - lastStopAttempt[connector] >= STOP_RETRY_MS) {
+                lastStopAttempt[connector] = now;
+                station.remoteStop(connector);
+            }
+            throw e;
+        }
+        if (lastStopAttempt[connector] == 0L
+                || now - lastStopAttempt[connector] >= STOP_RETRY_MS) {
+            lastStopAttempt[connector] = now;
+            System.err.println("[QC45] LIMIT MISMATCH STOP RETRY connector=" + connector
+                + " effective=" + effectiveKw + "kW actual=" + actualKw
+                + "kW; waiting for inactive confirmation");
+            station.remoteStop(connector);
+        }
     }
 
     private void clearLimitMismatchIfStopped() throws Exception {

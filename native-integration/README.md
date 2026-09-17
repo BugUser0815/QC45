@@ -41,7 +41,7 @@ Modbus TCP registers used by evcc and the local charging screen:
 110   persistent evcc DC request/cap [kW] R/W
 111   persistent evcc AC request/cap [kW] R/W
 120   active DC charging power [kW]
-121   active DC target/limit [kW]
+121   active DC logical target/limit [kW] (0 while physical Notladen is 5 kW)
 122   vehicle SoC [%]
 123   charging time [s]
 124   session energy high word [Wh]

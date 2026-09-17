@@ -51,13 +51,26 @@ final class SafetyDiagnostics {
 
     static synchronized void startModbus(ChargingLimitCoordinator limits) {
         if (limits == null) return;
-        if (server != null) {
+        if (server != null && server.isAlive()) {
             server.setLimits(limits);
             return;
         }
+        if (server != null) server.shutdown();
         DiagnosticModbusServer candidate = new DiagnosticModbusServer(limits);
         server = candidate;
         candidate.start();
+    }
+
+    static void stopModbus() {
+        DiagnosticModbusServer current;
+        synchronized (SafetyDiagnostics.class) {
+            current = server;
+            server = null;
+        }
+        if (current == null) return;
+        current.shutdown();
+        try { current.join(2000L); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     static Snapshot capture(ChargingLimitCoordinator limits) {
@@ -225,6 +238,7 @@ final class SafetyDiagnostics {
     private static final class DiagnosticModbusServer extends Thread {
         private volatile ChargingLimitCoordinator limits;
         private volatile ServerSocket listener;
+        private volatile boolean running = true;
 
         DiagnosticModbusServer(ChargingLimitCoordinator limits) {
             super("QC45-Safety-Diagnostics-Modbus");
@@ -245,7 +259,7 @@ final class SafetyDiagnostics {
                 System.out.println("[QC45] safety diagnostics Modbus listening on 127.0.0.1:"
                     + MODBUS_PORT + " registers=" + MODBUS_FIRST_REGISTER + ".."
                     + (MODBUS_FIRST_REGISTER + MODBUS_REGISTER_COUNT - 1));
-                while (true) {
+                while (running) {
                     Socket socket = listener.accept();
                     socket.setSoTimeout(1500);
                     try { handle(socket); }
@@ -257,8 +271,24 @@ final class SafetyDiagnostics {
                     }
                 }
             } catch (Throwable e) {
-                System.err.println("[QC45] safety diagnostics Modbus disabled: " + e);
+                if (running) {
+                    System.err.println("[QC45] safety diagnostics Modbus disabled: " + e);
+                }
+            } finally {
+                ServerSocket current = listener;
+                listener = null;
+                if (current != null) try { current.close(); } catch (Throwable ignored) {}
+                synchronized (SafetyDiagnostics.class) {
+                    if (server == this) server = null;
+                }
             }
+        }
+
+        void shutdown() {
+            running = false;
+            ServerSocket current = listener;
+            if (current != null) try { current.close(); } catch (Throwable ignored) {}
+            interrupt();
         }
 
         private void handle(Socket socket) throws Exception {

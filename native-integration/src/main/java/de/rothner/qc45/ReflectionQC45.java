@@ -4,14 +4,20 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
 public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo {
+    private static final long REMOTE_START_PENDING_GRACE_MS = 60000L;
+
     private final Class<?> centralClass;
     private final Class<?> configurationClass;
     private final Set<Integer> remoteConnectors = new HashSet<Integer>();
+    private final Map<Integer,Long> remoteStartedAt = new HashMap<Integer,Long>();
+    private final Set<Integer> remoteSessionObserved = new HashSet<Integer>();
 
     public ReflectionQC45() throws Exception {
         centralClass = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
@@ -364,11 +370,25 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
 
     public boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
-        try {
-            Object tx = sat.getClass().getMethod("getActiveTransaction").invoke(sat);
-            if (tx != null) return true;
-        } catch (NoSuchMethodException ignored) {}
-        return powerKw(connector) > 0 || idTag(connector).length() > 0;
+        Method transactionMethod = findMethod(sat.getClass(), "getActiveTransaction");
+        if (transactionMethod != null) {
+            try {
+                Object tx = transactionMethod.invoke(sat);
+                return sessionEvidence(true, tx != null, powerKw(connector), false);
+            } catch (Throwable ignored) {
+                // Fall back to the legacy evidence below only when the
+                // authoritative transaction API itself cannot be observed.
+            }
+        }
+        return sessionEvidence(false, false, powerKw(connector),
+            idTag(connector).length() > 0);
+    }
+
+    static boolean sessionEvidence(boolean transactionApiAvailable,
+                                   boolean transactionActive, int powerKw,
+                                   boolean legacyIdTagPresent) {
+        if (transactionApiAvailable) return transactionActive || powerKw > 0;
+        return powerKw > 0 || legacyIdTagPresent;
     }
 
     public boolean isCcsCharge(int connector) throws Exception {
@@ -405,8 +425,14 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         Integer key = Integer.valueOf(connector);
         if (!remoteConnectors.contains(key)) return false;
         try {
-            if (!sessionActive(connector)) {
-                remoteConnectors.remove(key);
+            boolean active = sessionActive(connector);
+            if (active) remoteSessionObserved.add(key);
+            Long started = remoteStartedAt.get(key);
+            long startedAt = started == null ? 0L : started.longValue();
+            if (!shouldKeepRemoteMarker(active,
+                    remoteSessionObserved.contains(key), startedAt,
+                    System.currentTimeMillis())) {
+                clearRemoteMarker(key);
                 return false;
             }
         } catch (Throwable ignored) {
@@ -414,6 +440,19 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
             // authorization from a still-active remote session.
         }
         return true;
+    }
+
+    static boolean shouldKeepRemoteMarker(boolean active, boolean sessionObserved,
+                                          long startedAt, long now) {
+        if (active) return true;
+        if (sessionObserved || startedAt <= 0L) return false;
+        return now < startedAt || now - startedAt <= REMOTE_START_PENDING_GRACE_MS;
+    }
+
+    private void clearRemoteMarker(Integer key) {
+        remoteConnectors.remove(key);
+        remoteStartedAt.remove(key);
+        remoteSessionObserved.remove(key);
     }
 
     /** Resolve a backend transaction after a bridge/JVM restart when possible. */
@@ -571,7 +610,12 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         System.out.println("[QC45] Native RemoteStart connector=" + connector
             + " remoteStartCharge=" + result + " remoteStarted=" + remote);
         if (!result) throw new IllegalStateException("remoteStartCharge returned false");
-        synchronized (this) { remoteConnectors.add(Integer.valueOf(connector)); }
+        synchronized (this) {
+            Integer key = Integer.valueOf(connector);
+            remoteConnectors.add(key);
+            remoteStartedAt.put(key, Long.valueOf(System.currentTimeMillis()));
+            remoteSessionObserved.remove(key);
+        }
     }
 
     public void remoteStop(int connector) throws Exception {
@@ -592,7 +636,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         Object value = abort.invoke(listener, satelliteUniqueId, transactionUniqueId, "");
         boolean result = value instanceof Boolean && ((Boolean) value).booleanValue();
         if (!result) throw new IllegalStateException("abortCharge returned false");
-        synchronized (this) { remoteConnectors.remove(Integer.valueOf(connector)); }
+        synchronized (this) { clearRemoteMarker(Integer.valueOf(connector)); }
         boolean anyRemote = hasAnyRemoteSession();
         if (!anyRemote) setRemoteStartedFalse(cm);
         boolean remote = remoteStarted();

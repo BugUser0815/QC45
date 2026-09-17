@@ -60,15 +60,22 @@ public final class BootstrapListener implements ServletContextListener {
                 }
             }
 
-            Integration failed = integration;
-            integration = null;
-            if (failed != null) {
-                try { failed.stop(); }
-                catch (Throwable stopError) {
-                    System.err.println("[QC45] failed integration cleanup error: " + stopError);
-                }
+            Integration degraded = integration;
+            if (degraded != null) {
+                // Integration.start() has already installed the independent
+                // limit guard. Keep it alive: stopping the integration here
+                // would let stock EVCSD restore unsafe positive limits after a
+                // required AC transport/setup failure.
+                degraded.enterPersistentDegradedSafety(
+                    "required AC transport/setup failed", e);
+                try {
+                    event.getServletContext().setAttribute(
+                        "qc45.native.integration", degraded);
+                } catch (Throwable ignored) {}
+            } else {
+                System.err.println("[QC45] native integration failed before safety guard startup: " + e);
             }
-            System.err.println("[QC45] native integration failed to start: " + e);
+            System.err.println("[QC45] native integration startup DEGRADED; safety guard remains active: " + e);
             e.printStackTrace();
         }
     }

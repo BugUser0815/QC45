@@ -85,6 +85,9 @@ und den aktiven DC-Ausgang gleichzeitig:
 und GridFailback. Beim gleichzeitigen Laden erklärt die Fußzeile, ob 50/50
 geteilt oder ungenutzte Leistung bedarfsgerecht umverteilt wird. Ein
 Sicherheitszustand wird rot und mit seiner konkreten Ursache dargestellt.
+Der separate Schutzstatus auf `127.0.0.1:1503` ist fail-visible: Ist die native
+Diagnose nicht erreichbar oder inkompatibel, meldet die Fußzeile den fehlenden
+Sicherheitsstatus, statt einen Normalzustand vorzutäuschen.
 
 Falls die installierte native Integrations-JAR den neuen Block noch nicht
 bereitstellt, fällt die UI automatisch auf den bisherigen DC-Block `120–125`

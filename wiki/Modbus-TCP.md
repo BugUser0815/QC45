@@ -41,7 +41,7 @@ Nur Register **110 und 111** sind beschreibbar. Alle anderen Schreibversuche lie
 | **110** | **R/W** | **dauerhafte evcc-DC-Obergrenze** | **kW** |
 | **111** | **R/W** | **dauerhafte evcc-AC-Obergrenze** | **kW** |
 | 120 | R | Live-DC-Leistung für Lademonitor | kW |
-| 121 | R | DC-Soll/Limit für Lademonitor | kW |
+| 121 | R | logisches DC-Soll für Lademonitor (`0` bei physischem 5-kW-Notladen) | kW |
 | 122 | R | Batterie-SoC aus `SatelliteInfo` | % |
 | 123 | R | Ladezeit | s |
 | 124–125 | R | Sessionenergie U32 high/low | Wh |
@@ -94,7 +94,7 @@ Die Stromwerte 180–185 sind **keine zusätzlichen Messwerte eines internen Pha
 
 ## Aktiver DC-Connector
 
-Connector 1 und 2 sind als logische DC-Ausgänge behandelt. Sind beide Zustände gleichzeitig plausibel, wird der Ausgang mit der höheren aktuellen Leistung gewählt. Ohne Leistung wird zusätzlich geprüft, ob eine Transaktion bzw. ID-Tag-Aktivität vorliegt.
+Connector 1 und 2 sind als logische DC-Ausgänge behandelt. Sind beide Sessions gleichzeitig aktiv, wird der Ausgang mit der höheren aktuellen Leistung gewählt. Ohne Leistung ist die aktive EVCSD-Transaktion maßgeblich; eine ID-Tag-Aktivität dient nur auf älteren Firmwareständen ohne Transaktions-API als Fallback.
 
 ## Schreibpfad
 

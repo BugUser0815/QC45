@@ -20,8 +20,8 @@ AC.cable.detect=false
 #Enable Normal Charger Load Balance
 AC.load.balance.enabled=false
  
-#AC Connector Fixed  Maximum Power 
-AC.maxPower.fixed=120 
+#AC Connector Fixed Maximum Power (QC45 Type2 ceiling)
+AC.maxPower.fixed=43
  
 #Number of AC Outlets
 ACOutlets=1
@@ -38,17 +38,17 @@ CreditCardReaderType=
 #Detect DC Cable After Charging Process
 DC.cable.detect=false
  
-#DC Connectors Fixed  Maximum Power 
-DC.maxPower.fixed=120 
+#DC Connectors Fixed Maximum Power (QC45 hardware ceiling)
+DC.maxPower.fixed=50
  
 #Gateway IP Address
 Gateway=192.168.0.1
  
-#Router ICCID
-ICCID=8935103026110047958
+#Router ICCID (device-specific value intentionally not versioned)
+ICCID=
  
-#Router ISMI
-ISMI=268030227238205
+#Router IMSI (legacy key spelling; device-specific value intentionally not versioned)
+ISMI=
  
 #Level 2 Charge type
 Level2.Charger=false
@@ -263,8 +263,8 @@ maintenance.reboot.enabled=true
 #Automatic reboot interval (minutes)
 maintenance.reboot.interval=20160
  
-#Charger Maximum Power
-max.power=120 
+#Charger Maximum Power (QC45 DC hardware ceiling)
+max.power=50
  
 #Charger Maximum Voltage (OCPP2.0)
 max.voltage=230

@@ -34,6 +34,7 @@ final class SafetyStatusOverlay extends JPanel {
     private static final int STATE_LIMIT_MISMATCH = 6;
     private static final int STATE_CONFIGURATION = 7;
     private static final int STATE_SHUTDOWN = 8;
+    private static final int STATE_DIAGNOSTICS_UNAVAILABLE = 10;
 
     private static final Color BACKGROUND = new Color(13, 15, 15);
     private static final Color PRIMARY = new Color(245, 245, 245);
@@ -111,6 +112,7 @@ final class SafetyStatusOverlay extends JPanel {
             case STATE_LIMIT_MISMATCH: return "LEISTUNGSFEHLER";
             case STATE_CONFIGURATION: return "SICHERHEITSSPERRE";
             case STATE_SHUTDOWN: return "LADESTEUERUNG ABGESCHALTET";
+            case STATE_DIAGNOSTICS_UNAVAILABLE: return "SICHERHEITSSTATUS FEHLT";
             default: return "SICHERHEITSPAUSE";
         }
     }
@@ -139,6 +141,8 @@ final class SafetyStatusOverlay extends JPanel {
                 return "Konfiguration ungültig · Neustart nach Korrektur erforderlich";
             case STATE_SHUTDOWN:
                 return "Notladen bleibt aktiv bis zum nächsten Start";
+            case STATE_DIAGNOSTICS_UNAVAILABLE:
+                return "Native Ladesteuerung oder Diagnose ist nicht erreichbar";
             default:
                 return "Freigabebedingung wird geprüft";
         }
@@ -171,17 +175,17 @@ final class SafetyStatusOverlay extends JPanel {
             readFully(in, header, 0, header.length);
             int length = u16(header, 4);
             if (u16(header, 0) != tx || u16(header, 2) != 0 || length != 13)
-                return Status.normal();
+                return Status.unavailable();
             byte[] pdu = new byte[length - 1];
             readFully(in, pdu, 0, pdu.length);
             if ((pdu[0] & 0xff) != 3 || (pdu[1] & 0xff) != REGISTER_COUNT * 2)
-                return Status.normal();
+                return Status.unavailable();
             int[] value = new int[REGISTER_COUNT];
             for (int i = 0; i < REGISTER_COUNT; i++) value[i] = u16(pdu, 2 + i * 2);
-            if (value[0] != VERSION) return Status.normal();
+            if (value[0] != VERSION) return Status.unavailable();
             return new Status(value[1], value[2], value[3], value[4]);
         } catch (Throwable ignored) {
-            return Status.normal();
+            return Status.unavailable();
         } finally {
             try { socket.close(); } catch (Throwable ignored) {}
         }
@@ -220,5 +224,8 @@ final class SafetyStatusOverlay extends JPanel {
         }
 
         static Status normal() { return new Status(STATE_NORMAL, 0, 0, 0); }
+        static Status unavailable() {
+            return new Status(STATE_DIAGNOSTICS_UNAVAILABLE, 0, 0, 0);
+        }
     }
 }

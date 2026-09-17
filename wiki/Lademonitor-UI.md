@@ -64,7 +64,12 @@ Bei einer ungültigen Sicherheitskonfiguration zeigt die Kopfzeile
 die OCPP-Kommunikation weiterlaufen kann.
 Wird trotz wirksamer 0-kW-Freigabe Leistung gemessen, zeigt die Kopfzeile
 `LEISTUNGSFEHLER`. Die Transaktion wird abgebrochen und die Leistungssperre
-bleibt bis zum Neustart verriegelt.
+bleibt verriegelt, bis der betroffene Anschluss sicher inaktiv gemeldet wird.
+
+Eine zusätzliche Sicherheitsfußzeile liest den Schutzstatus über den
+loopbackgebundenen Diagnose-Port `1503`. Ist diese Diagnose oder die native
+Ladesteuerung nicht erreichbar, wird das ausdrücklich als fehlender
+Sicherheitsstatus angezeigt und nicht als Normalzustand ausgeblendet.
 
 Die QC45-Werte stammen aus einer FC03-Abfrage des lokalen Modbus-Servers auf
 `127.0.0.1:1502`:

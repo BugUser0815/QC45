@@ -9,7 +9,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.StringReader;
-import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.text.SimpleDateFormat;
@@ -46,6 +45,7 @@ public final class Ocpp15BridgeServer {
     private final int timeoutMs;
     private final OcppBridgeClient upstream;
     private final ReflectionQC45 station;
+    private final ChargingLimitCoordinator limits;
     private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private final Map<Integer,String> lastForwardedStatus = new HashMap<Integer,String>();
     private HttpServer server;
@@ -53,10 +53,12 @@ public final class Ocpp15BridgeServer {
 
     public Ocpp15BridgeServer(String bindAddress, int port, String path, int heartbeatInterval,
                               int timeoutMs, OcppBridgeClient upstream,
-                              ReflectionQC45 station) {
+                              ReflectionQC45 station,
+                              ChargingLimitCoordinator limits) {
         if (bindAddress == null || bindAddress.trim().length() == 0
                 || port < 1 || port > 65535 || heartbeatInterval <= 0
-                || timeoutMs <= 0 || upstream == null || station == null) {
+                || timeoutMs <= 0 || upstream == null || station == null
+                || limits == null) {
             throw new IllegalArgumentException("invalid OCPP15 bridge configuration");
         }
         this.bindAddress = bindAddress.trim();
@@ -66,6 +68,7 @@ public final class Ocpp15BridgeServer {
         this.timeoutMs = timeoutMs;
         this.upstream = upstream;
         this.station = station;
+        this.limits = limits;
     }
 
     public synchronized void start() throws Exception {
@@ -242,10 +245,9 @@ public final class Ocpp15BridgeServer {
     private String translatedStatus(int connector, String incoming) {
         if (connector <= 0 || !isNormalChargeStatus(incoming)) return incoming;
         try {
-            if (station.powerKw(connector) > 0) return "Charging";
-            if (!hasActiveTransaction(connector) && !liveTransactionActive(connector)) return incoming;
-            if (station.limitKw(connector) <= 0) return "SuspendedEVSE";
-            return "SuspendedEV";
+            return derivedStatus(incoming, station.powerKw(connector),
+                hasActiveTransaction(connector) || liveTransactionActive(connector),
+                limits.effectiveConnectorKw(connector));
         } catch (Throwable e) {
             System.err.println("[QC45] OCPP status derivation failed connector=" + connector + ": " + e);
             return incoming;
@@ -262,25 +264,17 @@ public final class Ocpp15BridgeServer {
     }
 
     private boolean liveTransactionActive(int connector) {
-        try {
-            Method method = ReflectionQC45.class.getDeclaredMethod("satellite", Integer.TYPE);
-            method.setAccessible(true);
-            Object sat = method.invoke(station, Integer.valueOf(connector));
-            Object tx = sat.getClass().getMethod("getActiveTransaction").invoke(sat);
-            if (tx != null) return true;
-        } catch (Throwable ignored) {}
-        try { return station.idTag(connector).length() > 0; }
+        try { return station.sessionActive(connector); }
         catch (Throwable ignored) { return false; }
     }
 
     private void sendDerivedStatusBestEffort(int connector) {
         if (connector <= 0) return;
         try {
-            String status;
-            if (station.powerKw(connector) > 0) status = "Charging";
-            else if (hasActiveTransaction(connector) || liveTransactionActive(connector)) {
-                status = station.limitKw(connector) <= 0 ? "SuspendedEVSE" : "SuspendedEV";
-            } else return;
+            boolean active = hasActiveTransaction(connector) || liveTransactionActive(connector);
+            if (!active && station.powerKw(connector) <= 0) return;
+            String status = derivedStatus("Available", station.powerKw(connector),
+                active, limits.effectiveConnectorKw(connector));
             synchronized (lastForwardedStatus) {
                 String previous = lastForwardedStatus.get(Integer.valueOf(connector));
                 if (status.equals(previous)) return;
@@ -290,6 +284,14 @@ public final class Ocpp15BridgeServer {
         } catch (Throwable e) {
             System.err.println("[QC45] OCPP derived status failed connector=" + connector + ": " + e);
         }
+    }
+
+    static String derivedStatus(String incoming, int powerKw,
+                                boolean sessionActive, int logicalLimitKw) {
+        if (!isNormalChargeStatus(incoming)) return incoming;
+        if (powerKw > 0) return "Charging";
+        if (!sessionActive) return incoming;
+        return logicalLimitKw <= 0 ? "SuspendedEVSE" : "SuspendedEV";
     }
 
     private void sendStatus(int connector, String status) throws Exception {

@@ -209,11 +209,43 @@ public final class ChargingLimitGuardTest {
         assertTrue(!limits.snapshot().limitMismatchBlocked);
     }
 
+    @Test
+    public void retriesHardStopAtNotladenUntilSessionActuallyEnds() throws Exception {
+        FakeStation station = new FakeStation();
+        station.stopEndsSession = false;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
+            station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        limits.setCcsAvailable(true);
+        limits.setGridTargets(2, false, 5, 0);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[2] = true;
+        station.power[2] = 35;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        guard.runCycle(6100L);
+        assertEquals(1, station.stopCount);
+
+        station.power[2] = 5;
+        guard.runCycle(7000L);
+        assertEquals(1, station.stopCount);
+        guard.runCycle(8200L);
+        assertEquals(2, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+
+        station.session[2] = false;
+        station.power[2] = 0;
+        guard.runCycle(8450L);
+        assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
     private static final class FakeStation implements ChargingLimitIo, ChargingSessionIo {
         final int[] limit = new int[] { 0, 0, 0, 0 };
         final int[] power = new int[] { 0, 0, 0, 0 };
         final boolean[] session = new boolean[] { false, false, false, false };
         int stopCount;
+        boolean stopEndsSession = true;
 
         public int limitKw(int connector) { return limit[connector]; }
 
@@ -233,8 +265,10 @@ public final class ChargingLimitGuardTest {
 
         public void remoteStop(int connector) {
             stopCount++;
-            session[connector] = false;
-            power[connector] = 0;
+            if (stopEndsSession) {
+                session[connector] = false;
+                power[connector] = 0;
+            }
         }
     }
 }

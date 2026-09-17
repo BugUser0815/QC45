@@ -285,7 +285,7 @@ public final class Integration {
                         p.getProperty("ocpp15.loopback.path", "/QC45").trim(),
                         positiveInt(p, "ocpp15.loopback.heartbeatInterval", 60),
                         positiveInt(p, "ocpp15.bridge.timeoutMs", 10000),
-                        ocppBridge, station);
+                        ocppBridge, station, limits);
                     ocpp15Bridge.start();
                 }
             } catch (Throwable e) {
@@ -363,6 +363,10 @@ public final class Integration {
         catch (Throwable ignored) {}
         System.err.println("[QC45] DEGRADED SAFE MODE: " + message + " -> all connectors remain at 0kW: " + error);
         error.printStackTrace();
+    }
+
+    void enterPersistentDegradedSafety(String message, Throwable error) {
+        enterDegradedSafety(limits, message, error);
     }
 
     static void validateFailbackThresholds(double reduceA, double tripA,
@@ -483,6 +487,7 @@ public final class Integration {
         joinQuietly(ocppBridge, 2000L);
         joinQuietly(modbus, 2000L);
         joinQuietly(limitGuard, 2000L);
+        SafetyDiagnostics.stopModbus();
         System.out.println("[QC45] native integration stopped at safe 0kW");
     }
 

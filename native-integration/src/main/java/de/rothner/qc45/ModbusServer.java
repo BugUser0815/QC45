@@ -287,7 +287,10 @@ public final class ModbusServer extends Thread {
             case 110: return snapshot.requestedDcKw;
             case 111: return snapshot.requestedAcKw;
             case 120: chargingScreenDiagnostic(snapshot.activeDc); return snapshot.liveDcPowerKw;
-            case 121: return snapshot.activeDc == 0 ? 0 : snapshot.limit[snapshot.activeDc];
+            // UI target is the coordinator's logical value. QC45's physical
+            // 5 kW Notladen command represents a logical 0 kW pause and must
+            // not be displayed as released charging power.
+            case 121: return snapshot.activeDc == 0 ? 0 : snapshot.balancing.effectiveDcKw;
             case 122: chargingScreenDiagnostic(snapshot.activeDc); return snapshot.socPct;
             case 123: chargingScreenDiagnostic(snapshot.activeDc); return (int)Math.min(65535L, snapshot.chargingSeconds);
             case 124: chargingScreenDiagnostic(snapshot.activeDc); return highWord(snapshot.sessionEnergyWh);
@@ -300,16 +303,30 @@ public final class ModbusServer extends Thread {
 
     private boolean sessionActive(int connector) throws Exception {
         Object sat = satellite(connector);
-        if (activeTransaction(sat) != null) return true;
-        if (station.powerKw(connector) > 0) return true;
-        if (infoInt(connector, "chargingTime", 0) > 0) return true;
-        return station.idTag(connector).length() > 0;
+        int powerKw = station.powerKw(connector);
+        Method transactionMethod = findMethod(sat.getClass(), "getActiveTransaction");
+        if (transactionMethod != null) {
+            try {
+                return ReflectionQC45.sessionEvidence(true,
+                    transactionMethod.invoke(sat) != null, powerKw, false);
+            } catch (Throwable ignored) {
+                // Legacy evidence is only used when the authoritative API
+                // cannot be observed, never merely because its value is null.
+            }
+        }
+        boolean legacy = infoInt(connector, "chargingTime", 0) > 0
+            || station.idTag(connector).length() > 0;
+        return ReflectionQC45.sessionEvidence(false, false, powerKw, legacy);
     }
 
-    private int activeDcConnector() throws Exception {
+    private int activeDcConnector(boolean connector1Active,
+                                  boolean connector2Active) throws Exception {
+        if (!connector1Active && !connector2Active) return 0;
+        if (connector1Active && !connector2Active) return 1;
+        if (!connector1Active) return 2;
+
         int score1 = dcActivityScore(1);
         int score2 = dcActivityScore(2);
-        if (score1 == 0 && score2 == 0) return 0;
         if (score1 == score2) {
             int p1 = livePowerKw(1);
             int p2 = livePowerKw(2);
@@ -673,7 +690,7 @@ public final class ModbusServer extends Thread {
                     energyWh[connector] = safeEnergyWh(connector);
                 }
 
-                activeDc = activeDcConnector();
+                activeDc = activeDcConnector(session[1], session[2]);
                 stationPowerKw = clamp(Math.max(power[1], power[2]) + power[3], 0, 65535);
                 remoteStarted = safeRemoteStarted();
                 globalMaxPower = safeGlobalMaxPower();

@@ -198,10 +198,26 @@ final class AcPowerLimitTransport extends Thread {
     }
 
     private boolean hasSession(Object satellite) {
+        boolean transactionApiObserved = false;
         try {
             Method method = findZeroArgMethod(satellite.getClass(), "getActiveTransaction");
-            if (method != null && method.invoke(satellite) != null) return true;
+            if (method != null) {
+                Object transaction = method.invoke(satellite);
+                transactionApiObserved = true;
+                if (transaction != null) return true;
+            }
         } catch (Throwable ignored) {}
+
+        try {
+            Method power = findZeroArgMethod(satellite.getClass(), "getCurrentPower");
+            Object value = power == null ? null : power.invoke(satellite);
+            if (value instanceof Number && ((Number)value).intValue() > 0) return true;
+        } catch (Throwable ignored) {}
+
+        // A successfully observed null active transaction is authoritative.
+        // Do not keep a finished session alive from a stale cached user tag.
+        if (transactionApiObserved) return false;
+
         String[] userMethods = new String[] { "getSessionUser", "getUser" };
         for (int i = 0; i < userMethods.length; i++) {
             try {

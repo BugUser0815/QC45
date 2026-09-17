@@ -6,6 +6,30 @@ import static org.junit.Assert.assertEquals;
 
 public final class Ocpp15BridgeServerTest {
     @Test
+    public void logicalZeroReportsEvseSuspensionDespitePhysicalNotladen() {
+        assertEquals("SuspendedEVSE",
+            Ocpp15BridgeServer.derivedStatus("Charging", 0, true, 0));
+    }
+
+    @Test
+    public void positiveLogicalLimitReportsVehicleSuspension() {
+        assertEquals("SuspendedEV",
+            Ocpp15BridgeServer.derivedStatus("Charging", 0, true, 5));
+    }
+
+    @Test
+    public void livePowerAlwaysReportsCharging() {
+        assertEquals("Charging",
+            Ocpp15BridgeServer.derivedStatus("SuspendedEVSE", 5, true, 0));
+    }
+
+    @Test
+    public void faultStatusIsNeverOverwritten() {
+        assertEquals("Faulted",
+            Ocpp15BridgeServer.derivedStatus("Faulted", 5, true, 0));
+    }
+
+    @Test
     public void forwardsOnlyFirstEnergySampleLikeWorkingAugustVersion() throws Exception {
         String xml = "<soap:Envelope xmlns:soap=\"http://www.w3.org/2003/05/soap-envelope\" "
             + "xmlns:cs=\"urn://Ocpp/Cs/2012/06/\"><soap:Body><cs:meterValuesRequest>"
