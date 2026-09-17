@@ -23,10 +23,20 @@ public final class CcsRawTracerV2 {
     private static long liveSessionStartMs;
     private static long liveLastIntegrateMs;
     private static double liveEnergyWh;
+    private static final byte[] liveCarry = new byte[11];
+    private static int liveCarryLength;
+    private static Object txOwner;
+    private static Field txField;
+    private static OutputStream txOriginal;
+    private static TraceOutputStream txWrapper;
+    private static Object rxOwner;
+    private static Field rxField;
+    private static InputStream rxOriginal;
+    private static TraceInputStream rxWrapper;
 
     private CcsRawTracerV2() {}
 
-    public static void installFromDefaultConfig() throws Exception {
+    public static synchronized void installFromDefaultConfig() throws Exception {
         Properties p = new Properties();
         String explicit = System.getProperty("qc45.integration.config");
         File file = explicit == null || explicit.trim().length() == 0
@@ -40,6 +50,38 @@ public final class CcsRawTracerV2 {
         // trace logging is enabled. The flag only controls diagnostic logging.
         boolean logging = bool(p, "evcsd.ccsRawTrace.enabled", true);
         install(integer(p, "evcsd.ccsRawTrace.repeatMs", 1000), logging);
+    }
+
+    public static synchronized void shutdown() {
+        try {
+            if (txOwner != null && txField != null && txWrapper != null) {
+                txField.setAccessible(true);
+                if (txField.get(txOwner) == txWrapper) txField.set(txOwner, txOriginal);
+            }
+        } catch (Throwable e) {
+            System.err.println(PREFIX + "TX restore failed: " + e);
+        }
+        try {
+            if (rxOwner != null && rxField != null && rxWrapper != null) {
+                rxField.setAccessible(true);
+                if (rxField.get(rxOwner) == rxWrapper) rxField.set(rxOwner, rxOriginal);
+            }
+        } catch (Throwable e) {
+            System.err.println(PREFIX + "RX restore failed: " + e);
+        }
+        txOwner = null; txField = null; txOriginal = null; txWrapper = null;
+        rxOwner = null; rxField = null; rxOriginal = null; rxWrapper = null;
+        synchronized (LIVE_LOCK) {
+            liveSocPct = 0;
+            livePowerW = 0;
+            liveLastRxMs = 0L;
+            liveLastChargingMs = 0L;
+            liveSessionStartMs = 0L;
+            liveLastIntegrateMs = 0L;
+            liveEnergyWh = 0.0d;
+            liveCarryLength = 0;
+        }
+        System.out.println(PREFIX + "streams restored");
     }
 
     public static boolean hasFreshLiveTelemetry() {
@@ -79,6 +121,10 @@ public final class CcsRawTracerV2 {
     }
 
     private static void install(long repeatMs, boolean logging) throws Exception {
+        if (txWrapper != null || rxWrapper != null) {
+            System.out.println(PREFIX + "already installed");
+            return;
+        }
         Class<?> centralType = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
         Object central = centralType.getMethod("getCurrentModule").invoke(null);
         if (central == null) throw new IllegalStateException("CentralModule unavailable");
@@ -115,7 +161,13 @@ public final class CcsRawTracerV2 {
             }
 
             if (outValue instanceof OutputStream && !(outValue instanceof TraceOutputStream)) {
-                outField.set(channel, new TraceOutputStream((OutputStream)outValue, port, serializer, repeatMs, logging));
+                TraceOutputStream wrapper = new TraceOutputStream(
+                    (OutputStream)outValue, port, serializer, repeatMs, logging);
+                outField.set(channel, wrapper);
+                txOwner = channel;
+                txField = outField;
+                txOriginal = (OutputStream)outValue;
+                txWrapper = wrapper;
                 if (logging) System.out.println(PREFIX + "TX hooked field=out");
                 return 1;
             }
@@ -168,7 +220,13 @@ public final class CcsRawTracerV2 {
             Object inValue = inField.get(reader);
             if (logging) System.out.println(PREFIX + "RX input=" + className(inValue));
             if (inValue instanceof InputStream && !(inValue instanceof TraceInputStream)) {
-                inField.set(reader, new TraceInputStream((InputStream)inValue, port, serializer, repeatMs, logging));
+                TraceInputStream wrapper = new TraceInputStream(
+                    (InputStream)inValue, port, serializer, repeatMs, logging);
+                inField.set(reader, wrapper);
+                rxOwner = reader;
+                rxField = inField;
+                rxOriginal = (InputStream)inValue;
+                rxWrapper = wrapper;
                 if (logging) System.out.println(PREFIX + "RX hooked field=in");
                 return 1;
             }
@@ -178,26 +236,33 @@ public final class CcsRawTracerV2 {
         return 0;
     }
 
-    private static void observeLiveRx(byte[] b, int o, int l) {
+    static void observeLiveRx(byte[] b, int o, int l) {
         if (b == null || l <= 0) return;
-        int end = o + l;
-        for (int p = o; p < end; p++) {
-            if ((b[p] & 0xff) != 0x63) continue;
-            if (end - p < 12) continue;
+        synchronized (LIVE_LOCK) {
+            byte[] data = new byte[liveCarryLength + l];
+            System.arraycopy(liveCarry, 0, data, 0, liveCarryLength);
+            System.arraycopy(b, o, data, liveCarryLength, l);
+            int retained = Math.min(liveCarry.length, data.length);
+            System.arraycopy(data, data.length - retained, liveCarry, 0, retained);
+            liveCarryLength = retained;
 
-            int flags = b[p + 1] & 0xff;
-            int soc = b[p + 2] & 0xff;
-            int voltage = (b[p + 9] & 0xff) | ((b[p + 10] & 0xff) << 8);
-            int current = b[p + 11] & 0xff;
+            int end = data.length;
+            for (int p = 0; p < end; p++) {
+                if ((data[p] & 0xff) != 0x63) continue;
+                if (end - p < 12) continue;
 
-            // Reject obvious false 0x63 matches in an outer/master frame.
-            if (soc > 100 || voltage < 100 || voltage > 1000 || current > 250) continue;
+                int flags = data[p + 1] & 0xff;
+                int soc = data[p + 2] & 0xff;
+                int voltage = (data[p + 9] & 0xff) | ((data[p + 10] & 0xff) << 8);
+                int current = data[p + 11] & 0xff;
 
-            boolean charging = (flags & 0x10) != 0;
-            int powerW = voltage * current;
-            long now = System.currentTimeMillis();
+                // Reject obvious false 0x63 matches in an outer/master frame.
+                if (soc > 100 || voltage < 100 || voltage > 1000 || current > 250) continue;
 
-            synchronized (LIVE_LOCK) {
+                boolean charging = (flags & 0x10) != 0;
+                int powerW = voltage * current;
+                long now = System.currentTimeMillis();
+
                 integrateTo(now);
 
                 boolean newSession = charging &&
@@ -213,8 +278,8 @@ public final class CcsRawTracerV2 {
                 liveLastRxMs = now;
                 if (charging) liveLastChargingMs = now;
                 liveLastIntegrateMs = now;
+                return;
             }
-            return;
         }
     }
 

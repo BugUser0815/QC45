@@ -1,5 +1,6 @@
 package pt.efacec.es.evcsd.ui;
 
+import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -9,6 +10,7 @@ import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.EOFException;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -23,10 +25,12 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
+import javax.imageio.ImageIO;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -34,10 +38,12 @@ import javax.swing.SwingUtilities;
 import pt.efacec.es.evcsd.ui.info.ChargeInfo;
 
 /**
- * Minimal 640x480 charging monitor for the QC45 screen saver.
+ * 640x480 charging monitor for the QC45.
  *
- * The charging values are read exclusively from the native integration's
- * documented Modbus block 120-125. The buffer-battery SoC remains an evcc
+ * The active-session page uses the same reduced dark design language as the
+ * other patched operator pages. Charging values are read exclusively from the
+ * native integration's versioned AC/DC Modbus block 126-145, with a compatible
+ * fallback to the legacy DC block 120-125. The Akkuboost SoC remains an evcc
  * value because it is not part of the QC45/EVCSD state.
  */
 public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<ChargeInfo> {
@@ -47,14 +53,27 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final int HEIGHT = 480;
     private static final int MODBUS_FIRST_REGISTER = 120;
     private static final int MODBUS_REGISTER_COUNT = 6;
+    static final String AKKUBOOST_LABEL = "AKKUBOOST";
+    private static final String AKKUBOOST_URL_PROPERTY = "dashboard.akkuboost.url";
+    private static final String LEGACY_EVCC_URL_PROPERTY = "evcc.url";
+    private static final String INTEGRATION_CONFIG_PROPERTY = "qc45.integration.config";
+    private static final String INTEGRATION_CONFIG_PATH =
+        "/home/mobie/evcsd/qc45-integration.properties";
+    private static final String DASHBOARD_CONFIG_RESOURCE =
+        "/pt/efacec/es/evcsd/ui/qc45-dashboard.properties";
 
     private static final Color BACKGROUND = new Color(13, 15, 15);
+    private static final Color PANEL = new Color(29, 31, 31);
+    private static final Color PANEL_LIGHT = new Color(43, 46, 46);
     private static final Color PRIMARY = new Color(245, 245, 245);
-    private static final Color SECONDARY = new Color(180, 180, 180);
-    private static final Color DIVIDER = new Color(82, 86, 86);
+    private static final Color SECONDARY = new Color(176, 179, 179);
+    private static final Color DIVIDER = new Color(77, 81, 81);
     private static final Color TRACK = new Color(52, 54, 54);
     private static final Color YELLOW = new Color(255, 214, 0);
+    private static final Color READY_GREEN = new Color(72, 184, 106);
     private static final Color STOP_RED = new Color(166, 30, 30);
+    private static final String SGS_LOGO_PATH = "/pt/efacec/es/evcsd/ui/sgs-logo.png";
+    private static final BufferedImage SGS_LOGO = loadLogo();
 
     private static String languagef = "";
     private static int modusf;
@@ -73,8 +92,12 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private long lastBatterySocFetch;
     private int[] lastChargingData;
     private long lastChargingDataFetch;
+    private LoadBalancingTelemetry lastBalancingData;
+    private long lastBalancingDataFetch;
+    private final int displayConnector;
 
     public WaitingForCardChargingTimer() {
+        this.displayConnector = 0;
         this.usescreditcardLocal = false;
         this.barValue = 0;
         this.imageID = "1";
@@ -88,6 +111,13 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     public WaitingForCardChargingTimer(String language, int modus,
                                        boolean usesCreditCard, boolean efacecScreensVisible) {
+        this(language, modus, usesCreditCard, efacecScreensVisible, 0);
+    }
+
+    protected WaitingForCardChargingTimer(String language, int modus,
+                                           boolean usesCreditCard, boolean efacecScreensVisible,
+                                           int connector) {
+        this.displayConnector = connector;
         this.usescreditcardLocal = usesCreditCard;
         this.efacecScreensON = efacecScreensVisible;
         languagef = language == null ? "" : language;
@@ -110,7 +140,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     public void setInfo(ChargeInfo info) {
-        // Values deliberately come from Modbus registers 120-125.
+        // Values deliberately come from the native integration's Modbus UI block.
     }
 
     private synchronized void ensureScreenTimer() {
@@ -177,7 +207,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
             if (!isChargingSession()) return renderIdlePage();
-            if (showStopConfirmation()) return renderStopConfirmationPage();
             refreshBufferSoc(now);
 
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -186,11 +215,16 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             g.setColor(BACKGROUND);
             g.fillRect(0, 0, WIDTH, HEIGHT);
 
-            drawGrid(g);
             drawHeader(g);
-            drawMainValues(g);
-            drawSessionValues(g);
-            drawFooter(g);
+            if (freshBalancingData(now)) {
+                drawLoadBalancingValues(g, lastBalancingData);
+                drawLoadBalancingSessionValues(g, lastBalancingData);
+                drawLoadBalancingFooter(g, lastBalancingData);
+            } else {
+                drawMainValues(g);
+                drawSessionValues(g);
+                drawFooter(g);
+            }
 
             g.dispose();
             return new ImageIcon(image);
@@ -201,15 +235,20 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     /**
-     * The original EVCSD state machine instantiates this class directly while
-     * waiting for the card interaction during an active session. The normal
-     * charging panels subclass this class, so they keep the full monitor.
+     * EVCSD instantiates this class directly while waiting for card interaction
+     * during an active session. The normal charging panels subclass it and keep
+     * the full charging monitor.
      */
     private boolean showStopConfirmation() {
-        return getClass() == WaitingForCardChargingTimer.class;
+        if (getClass() != WaitingForCardChargingTimer.class) return false;
+        long now = System.currentTimeMillis();
+        return !freshBalancingData(now) || !lastBalancingData.remoteStarted();
     }
 
     private boolean isChargingSession() {
+        if (freshBalancingData(System.currentTimeMillis())) {
+            if (lastBalancingData.dcSession() || lastBalancingData.acSession()) return true;
+        }
         int state = AlpitronicSessionState.get();
         if (state != AlpitronicSessionState.UNKNOWN) return state == AlpitronicSessionState.CHARGING;
         ChargeInfo latest = ChargeInfo.getLatest();
@@ -225,9 +264,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.fillRect(0, 0, WIDTH, HEIGHT);
 
         drawHeader(g);
-        g.setColor(DIVIDER);
-        g.drawLine(0, 42, WIDTH, 42);
-
         drawStopSoftKey(g);
 
         g.setColor(PRIMARY);
@@ -243,9 +279,12 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(Font.BOLD, 19));
         centered(g, "Zum Abbrechen oben links drücken.", 360, 329);
 
-        int actualKw = value(0, -1);
-        int vehicleSoc = value(2, -1);
+        LoadBalancingTelemetry balancing = freshBalancingData(System.currentTimeMillis())
+            ? lastBalancingData : null;
+        int actualKw = balancing == null ? value(0, -1) : balancing.totalActualKw();
+        int vehicleSoc = balancing == null ? value(2, -1) : balancing.dcSocPct;
         int seconds = value(3, -1);
+        if (balancing != null) seconds = primarySeconds(balancing);
         String power = actualKw < 0 ? "-- kW" : actualKw + " kW";
         String soc = vehicleSoc < 0 ? "-- %" : vehicleSoc + " %";
         String duration = seconds < 0 ? "--:--:--" : formatDuration(seconds);
@@ -281,7 +320,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int outerX = 5;
         int innerX = 14;
         g.setColor(STOP_RED);
-        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.setStroke(new BasicStroke(4.0f));
         g.drawLine(innerX, centerY - 10, outerX, centerY);
         g.drawLine(outerX, centerY, innerX, centerY + 10);
     }
@@ -296,7 +335,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 18));
         g.drawString("QC45", 18, 28);
-        g.setColor(new Color(72, 184, 106));
+        g.setColor(READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 17));
@@ -313,7 +352,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(Font.PLAIN, 15));
         centered(g, "Fahrzeug verbinden und authentifizieren", 320, 120);
 
-        drawCardSymbol(g, 320, 217);
+        drawSgsLogo(g);
 
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 24));
@@ -321,51 +360,56 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 15));
         centered(g, "Der verfügbare Anschluss wird automatisch erkannt.", 320, 364);
-        drawWakeKeys(g);
-        g.setColor(DIVIDER);
-        g.drawLine(0, 416, WIDTH, 416);
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.PLAIN, 12));
-        centered(g, "Beliebige Gerätetaste öffnet die Anschlussauswahl.", 320, 452);
+
+        g.setColor(YELLOW);
+        g.setFont(font(Font.BOLD, 14));
+        centered(g, "DYNAMISCHES LOAD BALANCING  ·  AC + DC", 320, 400);
+
         g.dispose();
         return new ImageIcon(image);
     }
 
+    private void drawSgsLogo(Graphics2D g) {
+        if (SGS_LOGO != null) {
+            g.drawImage(SGS_LOGO, 110, 141, null);
+            return;
+        }
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 26));
+        centered(g, "SGS Elektrotechnik GbR", 320, 190);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 17));
+        centered(g, "Alexander & Marion Rothner", 320, 218);
+    }
+
+    private static BufferedImage loadLogo() {
+        InputStream in = null;
+        try {
+            in = WaitingForCardChargingTimer.class.getResourceAsStream(SGS_LOGO_PATH);
+            if (in == null) {
+                ClassLoader loader = WaitingForCardChargingTimer.class.getClassLoader();
+                if (loader != null) {
+                    in = loader.getResourceAsStream("pt/efacec/es/evcsd/ui/sgs-logo.png");
+                }
+            }
+            return in == null ? null : ImageIO.read(in);
+        } catch (Exception ignored) {
+            return null;
+        } finally {
+            if (in != null) {
+                try { in.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
     private void drawCardSymbol(Graphics2D g, int centerX, int centerY) {
         g.setColor(YELLOW);
-        g.setStroke(new java.awt.BasicStroke(4.0f));
+        g.setStroke(new BasicStroke(4.0f));
         g.drawRoundRect(centerX - 58, centerY - 38, 78, 76, 8, 8);
         g.drawArc(centerX + 3, centerY - 28, 42, 56, -55, 110);
         g.drawArc(centerX + 13, centerY - 19, 28, 38, -55, 110);
         g.drawArc(centerX + 23, centerY - 10, 14, 20, -55, 110);
-    }
-
-    private void drawWakeKeys(Graphics2D g) {
-        drawWakeKey(g, true, 159);
-        drawWakeKey(g, false, 159);
-        drawWakeKey(g, true, 375);
-        drawWakeKey(g, false, 375);
-    }
-
-    private void drawWakeKey(Graphics2D g, boolean left, int centerY) {
-        int outerX = left ? 5 : 635;
-        int innerX = left ? 14 : 626;
-        g.setColor(YELLOW);
-        g.setStroke(new java.awt.BasicStroke(4.0f));
-        g.drawLine(innerX, centerY - 10, outerX, centerY);
-        g.drawLine(outerX, centerY, innerX, centerY + 10);
-        if (left) g.fillRect(18, centerY - 1, 24, 3);
-        else g.fillRect(598, centerY - 1, 24, 3);
-    }
-
-    private void drawGrid(Graphics2D g) {
-        g.setColor(DIVIDER);
-        g.drawLine(0, 42, WIDTH, 42);
-        g.drawLine(320, 42, 320, 308);
-        g.drawLine(0, 308, WIDTH, 308);
-        g.drawLine(210, 308, 210, 416);
-        g.drawLine(430, 308, 430, 416);
-        g.drawLine(0, 416, WIDTH, 416);
     }
 
     private void drawHeader(Graphics2D g) {
@@ -373,14 +417,214 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.setFont(font(Font.BOLD, 18));
         g.drawString("QC45", 18, 28);
 
-        g.setColor(YELLOW);
+        long now = System.currentTimeMillis();
+        LoadBalancingTelemetry balancing = freshBalancingData(now) ? lastBalancingData : null;
+        int actualKw = value(0, -1);
+        boolean hasFreshPower = balancing != null
+            ? balancing.totalActualKw() > 0
+            : actualKw > 0 && lastChargingData != null && now - lastChargingDataFetch <= 2500L;
+        boolean blocked = balancing != null && balancing.blocked();
+        g.setColor(blocked ? STOP_RED : hasFreshPower ? YELLOW : READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
-        g.setFont(font(Font.BOLD, 17));
-        g.drawString("LÄDT", 176, 29);
+        g.setFont(font(Font.BOLD, 16));
+        g.drawString(balancing == null
+            ? hasFreshPower ? "LÄDT" : "LADEBEREIT"
+            : headerStatus(balancing), 176, 29);
 
         g.setFont(font(Font.BOLD, 18));
         rightAligned(g, new SimpleDateFormat("HH:mm").format(new Date()), 622, 28);
+        g.setColor(DIVIDER);
+        g.drawLine(0, 42, WIDTH, 42);
+    }
+
+    private String headerStatus(LoadBalancingTelemetry data) {
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "LEISTUNGSFEHLER";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION";
+        if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ";
+        if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM WARTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
+        if (data.blocked()) return "LADEPAUSE";
+        if (data.dcActualKw > 0 && data.acActualKw > 0) return "AC + DC LÄDT";
+        if (data.dcActualKw > 0) return "DC LÄDT";
+        if (data.acActualKw > 0) return "AC LÄDT";
+        return "LADEBEREIT";
+    }
+
+    private void drawLoadBalancingValues(Graphics2D g, LoadBalancingTelemetry data) {
+        drawLoadCard(g, 18, "DC", dcConnectorName(data.activeDcConnector),
+            data.dcSession(), data.dcActualKw, data.dcRequestedKw,
+            data.dcGridKw, data.dcStageCapKw, data.dcEffectiveKw,
+            data.dcSocPct, data.dcSeconds, data.evccControlsDc(), data);
+        drawLoadCard(g, 330, "AC", "TYPE 2",
+            data.acSession(), data.acActualKw, data.acRequestedKw,
+            data.acGridKw, data.acStageCapKw, data.acEffectiveKw,
+            -1, data.acSeconds, data.evccControlsAc(), data);
+    }
+
+    private void drawLoadCard(Graphics2D g, int x, String channel, String connector,
+                              boolean session, int actualKw, int requestedKw,
+                              int gridKw, int stageCapKw, int effectiveKw,
+                              int socPct, int seconds, boolean evccControlled,
+                              LoadBalancingTelemetry data) {
+        int y = 60;
+        int width = 292;
+        int height = 188;
+        Color accent = data.blocked() ? STOP_RED
+            : actualKw > 0 ? YELLOW : session && effectiveKw > 0 ? READY_GREEN : DIVIDER;
+        drawPanel(g, x, y, width, height, accent);
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 17));
+        g.drawString(channel, x + 20, y + 29);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, 11));
+        g.drawString("·  " + connector, x + 48, y + 29);
+
+        if (socPct >= 0 && data.dcSession()) {
+            g.setColor(SECONDARY);
+            g.setFont(font(Font.BOLD, 11));
+            rightAligned(g, "FZ-SOC  " + socPct + " %", x + width - 18, y + 29);
+        }
+
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, 11));
+        g.drawString("IST", x + 20, y + 55);
+        drawLargeValue(g, Integer.toString(Math.max(0, actualKw)), "kW",
+            x + width / 2, y + 115, 52, 25);
+
+        int barX = x + 20;
+        int barY = y + 128;
+        int barWidth = width - 40;
+        g.setColor(TRACK);
+        g.fillRect(barX, barY, barWidth, 7);
+        if (effectiveKw > 0 && actualKw > 0) {
+            int filled = (int)Math.round(barWidth
+                * Math.min(1.0d, actualKw / (double)effectiveKw));
+            g.setColor(YELLOW);
+            g.fillRect(barX, barY, filled, 7);
+        }
+
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 12));
+        g.drawString("FREIGABE  " + effectiveKw + " kW", x + 20, y + 155);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 11));
+        rightAligned(g, (evccControlled ? "EVCC " : "AUTO ") + requestedKw + "  ·  NETZ "
+            + gridKw, x + width - 18, y + 155);
+
+        g.setColor(accent);
+        g.setFont(font(Font.BOLD, 11));
+        g.drawString(loadState(session, actualKw, requestedKw, gridKw,
+            stageCapKw, effectiveKw, data), x + 20, y + 177);
+        if (session) {
+            g.setColor(SECONDARY);
+            g.setFont(font(Font.PLAIN, 10));
+            rightAligned(g, formatDuration(seconds), x + width - 18, y + 177);
+        }
+    }
+
+    private String loadState(boolean session, int actualKw, int requestedKw,
+                             int gridKw, int stageCapKw, int effectiveKw,
+                             LoadBalancingTelemetry data) {
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "NOTABSCHALTUNG";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION PRÜFEN";
+        if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ AKTIV";
+        if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM-MESSUNG FEHLT";
+        if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
+        if (data.blocked()) return "GESPERRT";
+        if (!session) return "KEINE AKTIVE SESSION";
+        if (requestedKw <= 0) return "EVCC-PAUSE";
+        if (effectiveKw <= 0 || gridKw <= 0) return "NETZ-PAUSE";
+        if (stageCapKw < gridKw) return "SCHUTZKAPPE AKTIV";
+        if (actualKw > 0 && data.demandTransfer()) return "LÄDT · BEDARFSGERECHT";
+        if (actualKw > 0) return "LÄDT";
+        return "FREIGEGEBEN";
+    }
+
+    private String dcConnectorName(int connector) {
+        if (connector == 1) return "CHAdeMO";
+        if (connector == 2) return "CCS";
+        return "BEREIT";
+    }
+
+    private void drawLoadBalancingSessionValues(Graphics2D g, LoadBalancingTelemetry data) {
+        String energyLabel = data.dcSession() && data.acSession() ? "GESAMTENERGIE" : "ENERGIE";
+        String timeLabel = displayConnector == 3 ? "AC-LADEZEIT"
+            : displayConnector == 1 || displayConnector == 2 ? "DC-LADEZEIT" : "LADEZEIT";
+
+        drawCompactMetricPanel(g, 18, "GESAMTLEISTUNG",
+            data.totalActualKw() + " kW", "AC + DC");
+        drawCompactMetricPanel(g, 173, energyLabel,
+            formatEnergy(data.totalEnergyWh()), "SEIT LADEBEGINN");
+        drawCompactMetricPanel(g, 328, timeLabel,
+            formatDuration(primarySeconds(data)), "STUNDEN : MIN : SEK");
+        drawCompactMetricPanel(g, 483, AKKUBOOST_LABEL,
+            lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", "STATION");
+    }
+
+    private void drawCompactMetricPanel(Graphics2D g, int x, String label,
+                                        String value, String detail) {
+        int y = 266;
+        int width = 139;
+        int height = 126;
+        drawPanel(g, x, y, width, height, DIVIDER);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, label.length() > 12 ? 9 : 10));
+        centered(g, label, x + width / 2, y + 27);
+        g.setColor(PRIMARY);
+        int size = value.length() > 8 ? 21 : 25;
+        g.setFont(font(Font.PLAIN, size));
+        centered(g, value, x + width / 2, y + 73);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 8));
+        centered(g, detail, x + width / 2, y + 104);
+    }
+
+    private int primarySeconds(LoadBalancingTelemetry data) {
+        if (displayConnector == 3) return data.acSeconds;
+        if (displayConnector == 1 || displayConnector == 2) return data.dcSeconds;
+        return Math.max(data.dcSeconds, data.acSeconds);
+    }
+
+    private void drawLoadBalancingFooter(Graphics2D g, LoadBalancingTelemetry data) {
+        g.setColor(DIVIDER);
+        g.drawLine(0, 416, WIDTH, 416);
+        g.setColor(data.blocked() ? STOP_RED : SECONDARY);
+        g.setFont(font(data.blocked() ? Font.BOLD : Font.PLAIN, 11));
+        centered(g, loadBalancingExplanation(data), 320, 438);
+
+        boolean remoteStarted = data.remoteStarted();
+        g.setColor(remoteStarted ? SECONDARY : STOP_RED);
+        g.fillOval(104, 450, 8, 8);
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 12));
+        g.drawString(remoteStarted ? "Zum Beenden App benutzen."
+            : "Zum Beenden Karte vorhalten oder App benutzen.", 122, 459);
+    }
+
+    private String loadBalancingExplanation(LoadBalancingTelemetry data) {
+        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH))
+            return "0-kW-Freigabe verletzt: Transaktion gestoppt; Neustart erforderlich.";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION))
+            return "Sicherheitskonfiguration ungültig: AC und DC bleiben auf 0 kW.";
+        if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK))
+            return "Netzschutz aktiv: AC und DC sind auf 0 kW begrenzt.";
+        if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER))
+            return "KSEM-Messung fehlt: AC und DC bleiben sicher pausiert.";
+        if (data.has(LoadBalancingTelemetry.FLAG_STARTUP))
+            return "Freigabe nach fünf gültigen KSEM-Messungen.";
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN))
+            return "Ladesteuerung ist sicher abgeschaltet.";
+        if (data.has(LoadBalancingTelemetry.FLAG_STAGE_LIMIT))
+            return "Die Schutzkappe reduziert die AC/DC-Freigabe am Netzlimit.";
+        if (data.demandTransfer())
+            return "Ungenutzte Leistung wird bedarfsgerecht zwischen AC und DC verteilt.";
+        if (data.dcSession() && data.acSession())
+            return "AC und DC teilen das sichere Netzbudget gleichberechtigt.";
+        return "Der LoadManager hält die zulässige Netzlast ein.";
     }
 
     private void drawMainValues(Graphics2D g) {
@@ -388,27 +632,31 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int targetKw = value(1, -1);
         int vehicleSoc = value(2, -1);
 
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 14));
-        g.drawString("LADELEISTUNG", 30, 87);
-        g.drawString("FAHRZEUG", 355, 87);
+        drawPanel(g, 18, 60, 292, 186, actualKw > 0 ? YELLOW : DIVIDER);
+        drawPanel(g, 330, 60, 292, 186, vehicleSoc >= 0 ? YELLOW : DIVIDER);
 
-        drawLargeValue(g, actualKw < 0 ? "--" : Integer.toString(actualKw), "kW", 160, 207, 78, 43);
-        drawLargeValue(g, vehicleSoc < 0 ? "--" : Integer.toString(vehicleSoc), "%", 480, 207, 82, 47);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, 13));
+        g.drawString("LADELEISTUNG", 38, 90);
+        g.drawString("FAHRZEUG", 350, 90);
+
+        drawLargeValue(g, actualKw < 0 ? "--" : Integer.toString(actualKw), "kW", 164, 170, 66, 34);
+        drawLargeValue(g, vehicleSoc < 0 ? "--" : Integer.toString(vehicleSoc), "%", 476, 170, 70, 38);
 
         drawPowerBar(g, actualKw, targetKw);
         drawSocBar(g, vehicleSoc);
 
         g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 17));
-        g.drawString(targetKw < 0 ? "SOLL -- kW" : "SOLL " + targetKw + " kW", 30, 282);
+        g.setFont(font(Font.BOLD, 13));
+        g.drawString(targetKw < 0 ? "SOLLLEISTUNG  -- kW" : "SOLLLEISTUNG  " + targetKw + " kW", 38, 231);
+        g.drawString("FAHRZEUG-SOC", 350, 231);
     }
 
     private void drawPowerBar(Graphics2D g, int actualKw, int targetKw) {
-        int x = 30;
-        int y = 245;
-        int width = 260;
-        int height = 7;
+        int x = 38;
+        int y = 197;
+        int width = 252;
+        int height = 8;
         g.setColor(TRACK);
         g.fillRect(x, y, width, height);
         if (actualKw < 0 || targetKw <= 0) return;
@@ -418,11 +666,11 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private void drawSocBar(Graphics2D g, int soc) {
-        int x = 355;
-        int y = 245;
+        int x = 350;
+        int y = 197;
         int width = 252;
-        int height = 7;
-        int segments = 7;
+        int height = 8;
+        int segments = 10;
         int gap = 3;
         int segmentWidth = (width - gap * (segments - 1)) / segments;
         int filled = soc < 0 ? 0 : (int)Math.ceil(clamp(soc, 0, 100) * segments / 100.0d);
@@ -438,40 +686,66 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int seconds = value(3, -1);
         long energyWh = energyWh();
 
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 13));
-        centered(g, "ENERGIE", 105, 341);
-        centered(g, "LADEZEIT", 320, 341);
-        centered(g, "PUFFERBATTERIE", 535, 341);
+        drawMetricPanel(g, 18, 264, 190, "ENERGIE",
+            energyWh < 0L ? "-- kWh" : formatEnergy(energyWh), "SEIT LADEBEGINN");
+        drawMetricPanel(g, 225, 264, 190, "LADEZEIT",
+            seconds < 0 ? "--:--:--" : formatDuration(seconds), "STUNDEN : MIN : SEK");
+        drawMetricPanel(g, 432, 264, 190, AKKUBOOST_LABEL,
+            lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", "STATION");
 
-        g.setColor(PRIMARY);
-        g.setFont(font(Font.PLAIN, 31));
-        centered(g, energyWh < 0L ? "-- kWh" : formatEnergy(energyWh), 105, 386);
-        centered(g, seconds < 0 ? "--:--:--" : formatDuration(seconds), 320, 386);
-
-        g.setColor(SECONDARY);
-        g.setFont(font(Font.PLAIN, 38));
-        centered(g, lastBatterySoc == null ? "-- %" : lastBatterySoc + " %", 535, 386);
-
-        g.setColor(TRACK);
-        g.fillRect(460, 398, 150, 6);
         if (lastBatterySoc != null) {
+            int x = 452;
+            int y = 379;
+            int width = 150;
+            g.setColor(TRACK);
+            g.fillRect(x, y, width, 6);
             g.setColor(SECONDARY);
-            g.fillRect(460, 398, (int)Math.round(150 * lastBatterySoc.intValue() / 100.0d), 6);
+            g.fillRect(x, y, (int)Math.round(width * lastBatterySoc.intValue() / 100.0d), 6);
         }
     }
 
-    private void drawFooter(Graphics2D g) {
+    private void drawMetricPanel(Graphics2D g, int x, int y, int width,
+                                 String label, String value, String detail) {
+        drawPanel(g, x, y, width, 128, DIVIDER);
         g.setColor(SECONDARY);
-        g.setFont(font(Font.BOLD, 11));
-        centered(g, "Das Fahrzeug bestimmt die mögliche Ladeleistung.", 185, 454);
+        g.setFont(font(Font.BOLD, 12));
+        centered(g, label, x + width / 2, y + 28);
+
+        g.setColor(PRIMARY);
+        int valueSize = value != null && value.length() > 9 ? 25 : 30;
+        g.setFont(font(Font.PLAIN, valueSize));
+        centered(g, value, x + width / 2, y + 76);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 10));
+        centered(g, detail, x + width / 2, y + 105);
+    }
+
+    private void drawPanel(Graphics2D g, int x, int y, int width, int height, Color accent) {
+        g.setColor(PANEL);
+        g.fillRect(x, y, width, height);
+        g.setColor(DIVIDER);
+        g.setStroke(new BasicStroke(1.0f));
+        g.drawRect(x, y, width, height);
+        g.setColor(accent == null ? DIVIDER : accent);
+        g.fillRect(x, y, 4, height);
+        g.setColor(PANEL_LIGHT);
+        g.fillRect(x + 4, y, width - 4, 2);
+    }
+
+    private void drawFooter(Graphics2D g) {
+        g.setColor(DIVIDER);
+        g.drawLine(0, 416, WIDTH, 416);
+
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 11));
+        centered(g, "Das Fahrzeug bestimmt die mögliche Ladeleistung.", 320, 438);
 
         g.setColor(STOP_RED);
-        g.fillRect(370, 422, 252, 50);
+        g.fillOval(104, 450, 8, 8);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 12));
-        centered(g, "zum beenden Karte vorhalten", 496, 446);
-        centered(g, "oder App benutzen.", 496, 463);
+        g.drawString("Zum Beenden Karte vorhalten oder App benutzen.", 122, 459);
     }
 
     private void drawLargeValue(Graphics2D g, String value, String unit,
@@ -482,7 +756,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         int valueWidth = g.getFontMetrics().stringWidth(value);
         g.setFont(unitFont);
         int unitWidth = g.getFontMetrics().stringWidth(unit);
-        int gap = 10;
+        int gap = 9;
         int x = centerX - (valueWidth + gap + unitWidth) / 2;
 
         g.setColor(PRIMARY);
@@ -494,12 +768,26 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private void refreshChargingData(long now) {
         try {
+            int[] values = readRegisters(LoadBalancingTelemetry.FIRST_REGISTER,
+                LoadBalancingTelemetry.REGISTER_COUNT);
+            lastBalancingData = LoadBalancingTelemetry.decode(values);
+            lastBalancingDataFetch = now;
+            return;
+        } catch (Throwable ignored) {
+            if (now - lastBalancingDataFetch > 5000L) lastBalancingData = null;
+        }
+
+        try {
             int[] values = readRegisters(MODBUS_FIRST_REGISTER, MODBUS_REGISTER_COUNT);
             lastChargingData = values;
             lastChargingDataFetch = now;
         } catch (Throwable ignored) {
             if (now - lastChargingDataFetch > 5000L) lastChargingData = null;
         }
+    }
+
+    private boolean freshBalancingData(long now) {
+        return lastBalancingData != null && now - lastBalancingDataFetch <= 2500L;
     }
 
     private void refreshBufferSoc(long now) {
@@ -568,7 +856,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private Double evccNumber(String jq) throws Exception {
-        String base = System.getProperty("evcc.url", "http://10.0.0.179:7070");
+        String base = configuredAkkuboostUrl();
+        if (base == null) throw new IllegalStateException(
+            "Missing configuration property " + AKKUBOOST_URL_PROPERTY);
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
         URL url = new URL(base + "/api/state?jq=" + URLEncoder.encode(jq, "UTF-8"));
         HttpURLConnection connection = (HttpURLConnection)url.openConnection();
@@ -585,6 +875,49 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             reader.close();
             connection.disconnect();
         }
+    }
+
+    static String configuredAkkuboostUrl() {
+        String value = nonBlank(System.getProperty(AKKUBOOST_URL_PROPERTY));
+        if (value != null) return value;
+
+        value = nonBlank(System.getProperty(LEGACY_EVCC_URL_PROPERTY));
+        if (value != null) return value;
+
+        String configPath = nonBlank(System.getProperty(INTEGRATION_CONFIG_PROPERTY));
+        if (configPath == null) configPath = INTEGRATION_CONFIG_PATH;
+        InputStream input = null;
+        try {
+            input = new FileInputStream(configPath);
+            value = property(input, AKKUBOOST_URL_PROPERTY);
+            if (value != null) return value;
+        } catch (Throwable ignored) {
+            // The bundled dashboard configuration remains a safe default.
+        } finally {
+            if (input != null) try { input.close(); } catch (Throwable ignored) {}
+        }
+
+        input = WaitingForCardChargingTimer.class.getResourceAsStream(DASHBOARD_CONFIG_RESOURCE);
+        if (input == null) return null;
+        try {
+            return property(input, AKKUBOOST_URL_PROPERTY);
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            try { input.close(); } catch (Throwable ignored) {}
+        }
+    }
+
+    private static String property(InputStream input, String key) throws Exception {
+        Properties properties = new Properties();
+        properties.load(input);
+        return nonBlank(properties.getProperty(key));
+    }
+
+    private static String nonBlank(String value) {
+        if (value == null) return null;
+        value = value.trim();
+        return value.length() == 0 ? null : value;
     }
 
     private static String formatEnergy(long wh) {

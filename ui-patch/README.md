@@ -1,8 +1,8 @@
 # QC45 Oberfläche im reduzierten Schnelllader-Design
 
 Dieser Patch ersetzt die operativen Ansichten der vorhandenen EVCSD-UI-JAR
-durch eine einheitliche, codegerenderte Oberfläche für das 640×480-Display der
-QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
+durch eine einheitliche Oberfläche für das 640×480-Display der QC45. Die
+proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 
 ## Gestaltungsprinzipien
 
@@ -10,12 +10,15 @@ QC45. Die proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - Weiß und Grau für Inhalte; Gelb nur für Auswahl, Status und Fortschritt
 - einheitliche Kopfzeile mit Gerätestatus und lokaler Uhrzeit
 - vier feste Softkey-Felder passend zu den physischen QC45-Gerätetasten
+- freigestellte Produktbilder für CCS2, CHAdeMO und Type 2 statt gezeichneter Stecker-Symbole
 - Bereitschaftsseite mit dem originalen SGS-Elektrotechnik-Logo samt Schriftzug `Alexander & Marion Rothner`
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
 - normaler Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
-- nach RFID-Erkennung während einer laufenden Ladung reduzierte Abbruchansicht mit `LADEVORGANG ABBRECHEN` oben links
-- Beenden-Hinweis im normalen Ladebildschirm: `zum beenden Karte vorhalten oder App benutzen.`
+- RFID-gestartete Sessions bleiben dauerhaft auf der vollständigen Ladeübersicht
+- Beenden-Hinweis im normalen Ladebildschirm: `Zum Beenden Karte vorhalten oder App benutzen.`
+- RemoteStart-Sessions bleiben ebenfalls auf der vollständigen Ladeübersicht und zeigen
+  `Zum Beenden App benutzen.`
 
 ## Ersetzte Betriebsansichten
 
@@ -41,23 +44,25 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 | Einstellungen/Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
 | Diagnose | – | – | Zurück | – |
 | Bereitschaft | keine Funktion | keine Funktion | keine Funktion | keine Funktion |
-| Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
-| RFID während aktivem Ladevorgang | Ladevorgang abbrechen | – | – | – |
+| Aktiver Ladevorgang, auch RFID | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
 
 Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
 Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
 Während des normalen Ladebildschirms bleiben alle vier Gerätetasten ohne Stop-/
 Fortsetzen-Beschriftung; die Session wird entsprechend dem angezeigten Hinweis
-zunächst per Karte oder App angesprochen.
+per Karte oder App beendet.
 
-Wird während einer laufenden Session die Kartenansicht `WaitingForCardChargingTimer`
-direkt geöffnet, zeigt sie statt des vollständigen Lademonitors eine reduzierte
-Bestätigungsansicht. Oben links erscheint ein rotes Softkey-Feld
-`LADEVORGANG ABBRECHEN`, ausgerichtet auf die obere linke physische Gerätetaste.
-In der Mitte bleiben nur `KARTE ERKANNT`, die Beenden-Frage und eine kompakte
-Statuszeile aus Ladeleistung, Fahrzeug-SoC und Ladezeit sichtbar. Die normalen
-AC-/CCS-/CHAdeMO-Ladepanels sind Unterklassen von `WaitingForCardChargingTimer`
-und behalten deshalb unverändert die vollständige Ladeansicht.
+Auch wenn EVCSD während einer per RFID gestarteten laufenden Session die Klasse
+`WaitingForCardChargingTimer` direkt öffnet, rendert sie weiterhin den vollständigen
+AC/DC-Lademonitor. Die frühere dauerhafte Ansicht `KARTE ERKANNT` mit rotem
+`LADEVORGANG ABBRECHEN`-Softkey wird nicht mehr eingeblendet. Damit bleibt die
+Übersicht mit Ladeleistung, Freigabe, Fahrzeug-SoC, Energie, Ladezeit und
+Akkuboost während des gesamten Ladevorgangs sichtbar.
+
+Bei einer über OCPP gestarteten Session bleibt dieselbe Ladeübersicht sichtbar.
+Das RemoteStart-Flag aus dem nativen Telemetrieblock beeinflusst nur den Hinweis
+in der Fußzeile: RemoteStart zeigt `Zum Beenden App benutzen.`, lokale bzw.
+RFID-gestartete Sessions zeigen `Zum Beenden Karte vorhalten oder App benutzen.`
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
 verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung der
@@ -65,27 +70,57 @@ bestehenden Zustände.
 
 ## Datenquellen des Ladebildschirms
 
-Die Ladeanzeige liest einmal pro Sekunde den dokumentierten lokalen Modbus-Block
-auf `127.0.0.1:1502`:
+Die Ladeanzeige liest einmal pro Sekunde den versionierten lokalen
+Load-Balancing-Block `126–145` auf `127.0.0.1:1502`. Der Bildschirm zeigt AC
+und den aktiven DC-Ausgang gleichzeitig:
 
-| Register | Inhalt |
-|---:|---|
-| 120 | aktuelle DC-Leistung in kW |
-| 121 | freigegebene DC-Sollleistung in kW |
-| 122 | Fahrzeug-SoC in % |
-| 123 | Ladezeit in Sekunden |
-| 124–125 | Sessionenergie als U32 in Wh |
+- gemessene Leistung (`IST`)
+- dauerhafte evcc-Anforderung
+- netzsichere LoadManager-Zuteilung (`NETZ`)
+- Schutzkappe und tatsächlich wirksame `FREIGABE`
+- aktive Sessions, Bedarfstransfer sowie Start-, KSEM-, Failback- und Konfigurationssperren
+- DC-Fahrzeug-SoC, AC/DC-Sessionenergie und Ladezeiten
 
-Nur der Pufferbatterie-SoC kommt weiterhin aus evcc. Standardmäßig wird
-`http://10.0.0.179:7070/api/state?jq=.battery.soc` verwendet.
+`FREIGABE` ist damit sichtbar das Minimum aus evcc-Wunsch, LoadManager-Zuteilung
+und GridFailback. Beim gleichzeitigen Laden erklärt die Fußzeile, ob 50/50
+geteilt oder ungenutzte Leistung bedarfsgerecht umverteilt wird. Ein
+Sicherheitszustand wird rot und mit seiner konkreten Ursache dargestellt.
+Der separate Schutzstatus auf `127.0.0.1:1503` ist fail-visible: Ist die native
+Diagnose nicht erreichbar oder inkompatibel, meldet die Fußzeile den fehlenden
+Sicherheitsstatus, statt einen Normalzustand vorzutäuschen.
+
+Falls die installierte native Integrations-JAR den neuen Block noch nicht
+bereitstellt, fällt die UI automatisch auf den bisherigen DC-Block `120–125`
+zurück. Dadurch kann das UI-Overlay gefahrlos vor der Integrations-JAR
+aktualisiert werden.
+
+Der Status in der Kopfzeile folgt dabei bewusst der tatsächlich gemessenen
+Ladeleistung und nicht nur dem EVCSD-Sitzungszustand. Sie unterscheidet
+`AC LÄDT`, `DC LÄDT`, `AC + DC LÄDT`, `LADEBEREIT`, `KSEM WARTET`,
+`NETZSCHUTZ`, `KONFIGURATION` und `SICHERER START`.
+
+Nur der Akkuboost-SoC kommt weiterhin aus evcc. Der Endpunkt wird über die
+gemeinsam genutzte Datei `/home/mobie/evcsd/qc45-integration.properties`
+konfiguriert:
+
+```properties
+dashboard.akkuboost.url=http://10.0.20.131:7070
+```
+
+Die UI-JAR enthält denselben Wert als Auslieferungsstandard. Dadurch greift die
+neue Adresse auch dann, wenn die produktive Datei den Schlüssel noch nicht
+enthält. Ein dort gesetzter Wert hat Vorrang.
 
 Optionale Java-Systemparameter:
 
 ```text
 -Dqc45.modbus.host=127.0.0.1
 -Dqc45.modbus.port=1502
--Devcc.url=http://10.0.0.179:7070
+-Ddashboard.akkuboost.url=http://10.0.20.131:7070
+-Dqc45.integration.config=/home/mobie/evcsd/qc45-integration.properties
 ```
+
+Der bisherige Parameter `-Devcc.url` bleibt als kompatibler Override erhalten.
 
 ## Build
 
@@ -109,3 +144,13 @@ in eine Kopie der Basis-JAR eingesetzt. Ressourcen unter `src/main/resources`,
 insbesondere das SGS-Logo der Bereitschaftsseite, werden ebenfalls in die JAR
 übernommen und beim Build geprüft. Für das automatische, abgesicherte Deployment
 siehe [`deploy/qc45-ui`](../deploy/qc45-ui/README.md).
+
+Ein eigenständiger Headless-Test kompiliert das komplette Overlay gegen
+minimal nachgebildete EVCSD-Verträge, prüft Java-7-Bytecode und rendert dreizehn
+640×480-Vorschaubilder einschließlich Auswahl, Vorbereitung, AC/DC-Laden,
+Failback, RemoteStart und beider Bereitschaftspfade. Das eingebettete SGS-Logo muss sich dabei tatsächlich
+decodieren lassen und in beiden Bereitschaftsbildern sichtbar sein:
+
+```bash
+./test.sh
+```

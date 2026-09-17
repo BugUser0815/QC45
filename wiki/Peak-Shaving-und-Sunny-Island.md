@@ -4,13 +4,13 @@ Das Sunny-Island-Peak-Shaving ist **kein Bestandteil des QC45-JARs**, sondern ei
 
 ## Zweck
 
-Der Prozess liest die reale Netzsituation am KOSTAL KSEM und erzeugt daraus ein **virtuelles SMA Energy Meter** per Speedwire Multicast. Der Sunny-Island-Cluster reagiert auf diese künstliche Netzleistung und lädt bzw. entlädt die Pufferbatterie.
+Der Prozess liest die reale Netzsituation am KOSTAL KSEM und erzeugt daraus ein **virtuelles SMA Energy Meter** per Speedwire Multicast. Der Sunny-Island-Cluster reagiert auf diese künstliche Netzleistung und lädt bzw. entlädt den Akkuboost.
 
 ```mermaid
 flowchart LR
   K[KOSTAL KSEM] -->|Modbus TCP| P[peakshaving]
   P -->|SMA Speedwire Multicast| S[Sunny Island Cluster]
-  S --> B[BYD / Pufferbatterie]
+  S --> B[BYD / Akkuboost]
   S -->|SoC Modbus optional| P
 ```
 

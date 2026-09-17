@@ -1,2 +1,3 @@
 ../jre2/bin/java -cp "DBUpdate.jar:lib/derby.jar" dbupdate.DBUpdate
-UPDATE MOBIE.CPUSER SET PASS = 'Baum' WHERE UNAME = 'efacec'
+# Example only. Choose the replacement locally and never commit a real password:
+# UPDATE MOBIE.CPUSER SET PASS = '<REPLACE_LOCALLY>' WHERE UNAME = 'efacec'

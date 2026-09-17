@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+if [[ -x "$script_dir/qc45-ui-deploy" ]]; then
+    deployer="$script_dir/qc45-ui-deploy"
+elif command -v qc45-ui-deploy >/dev/null 2>&1; then
+    deployer=$(command -v qc45-ui-deploy)
+else
+    echo "qc45-ui-deploy not found. Run deploy/qc45-ui/install.sh first." >&2
+    exit 2
+fi
+
+echo "Forcing a complete QC45 UI rebuild and redeploy from native-integration..."
+QC45_FORCE_DEPLOY=1 exec "$deployer"

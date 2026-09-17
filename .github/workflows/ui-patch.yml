@@ -1,0 +1,31 @@
+name: qc45-ui-patch
+
+on:
+  push:
+    branches: [native-integration]
+    paths:
+      - 'ui-patch/**'
+      - 'native-integration/src/main/java/de/rothner/qc45/ModbusServer.java'
+      - '.github/workflows/ui-patch.yml'
+  pull_request:
+    paths:
+      - 'ui-patch/**'
+      - 'native-integration/src/main/java/de/rothner/qc45/ModbusServer.java'
+      - '.github/workflows/ui-patch.yml'
+
+jobs:
+  build-and-render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java 7 overlay and render 640x480 previews
+        working-directory: ui-patch
+        run: ./test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qc45-ui-previews
+          path: ui-patch/target/test/previews/*.png
