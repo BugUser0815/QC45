@@ -96,6 +96,15 @@ final class AcPowerLimitTransport extends Thread {
                 } else {
                     int targetKw = limits.effectiveConnectorKw(AC_CONNECTOR);
                     if (targetKw <= 0) {
+                        if (lastTargetKw != 0) {
+                            ChargingLimitCoordinator.Snapshot state = limits.snapshot();
+                            System.out.println("[QC45] AC held at 0kW"
+                                + " loadManagerActive=" + state.acActive
+                                + " gridTarget=" + state.gridAcKw + "kW"
+                                + " requested=" + state.requestedAcKw + "kW"
+                                + " stageCap=" + state.stageAcCapKw + "kW"
+                                + " blockers=" + limits.blockReason());
+                        }
                         if (!suspended || now - lastSuspendMs >= SUSPEND_REASSERT_MS) {
                             send(satellite, "SUSPEND_CHARGE", 0, false, false, 300L);
                             suspended = true;
