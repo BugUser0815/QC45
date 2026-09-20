@@ -47,7 +47,8 @@ final class ChargingLimitGuard extends Thread {
     public void run() {
         SafetyDiagnostics.startModbus(limits);
         System.out.println("[QC45] charging-limit guard started interval=" + intervalMs
-            + "ms Notladen=" + ChargingLimitCoordinator.NOTLADEN_KW + "kW"
+            + "ms Notladen DC=" + ChargingLimitCoordinator.NOTLADEN_KW
+            + "kW AC=" + ChargingLimitCoordinator.AC_NOTLADEN_KW + "kW"
             + " mismatch-stall=" + POSITIVE_LIMIT_STALL_MS + "ms");
         while (running) {
             try {
@@ -76,7 +77,8 @@ final class ChargingLimitGuard extends Thread {
         for (int connector = 1; connector <= 3; connector++) {
             int logicalEffectiveKw = limits.effectiveConnectorKw(connector);
             int enforcedKw = logicalEffectiveKw <= 0
-                ? ChargingLimitCoordinator.NOTLADEN_KW : logicalEffectiveKw;
+                ? (connector == 3 ? ChargingLimitCoordinator.AC_NOTLADEN_KW
+                    : ChargingLimitCoordinator.NOTLADEN_KW) : logicalEffectiveKw;
             boolean active = station.sessionActive(connector);
             if (!active) {
                 resetTracking(connector);
@@ -90,7 +92,7 @@ final class ChargingLimitGuard extends Thread {
                 // A successful RemoteStop request is not proof that the
                 // transaction ended. Keep retrying until the firmware reports
                 // the connector inactive, even after power has fallen back to
-                // the physical 5 kW Notladen value.
+                // the physical Notladen value.
                 retryLatchedStop(connector, enforcedKw, actualKw, now);
                 continue;
             }
