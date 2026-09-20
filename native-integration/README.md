@@ -59,7 +59,7 @@ effective connector limit is always the minimum of evcc request, grid-safe
 LoadManager allocation and GridFailback cap/block.
 
 After a JVM/webapp start both outputs use their configured maximum as an
-autonomous request cap. Startup, KSEM and failback blockers still keep the
+autonomous request cap. Startup, KSEM and failback blockers keep
 AC suspended until the LoadManager has prepared a grid-safe target. The
 first evcc write takes control of only the addressed output; an explicit 0 kW
 retains 5 kW physical DC Notladen or permits 2 kW physical AC Notladen only
@@ -141,8 +141,8 @@ Expected log lines:
 At process/webapp start the physical limits are set to 5 kW DC and 2 kW AC;
 Type 2 is suspended. AC can be released only after five valid KSEM reads and
 a freshly calculated grid-safe target. evcc is optional until it explicitly writes a channel budget.
-Missing/invalid configuration starts a persistent degraded safe mode which
-continues to reassert 0 kW.
+Missing/invalid configuration starts a persistent degraded mode that
+reasserts the physical connector floors and suspends Type 2.
 
 During a DC session, charging-screen diagnostics are emitted at most every ten seconds, for example:
 
