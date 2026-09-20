@@ -22,6 +22,7 @@ public final class UiPatchTest {
         verifyLogoResource();
         verifyAkkuboostConfiguration();
         verifyDecoder();
+        verifySessionEnd();
         render(args[0], 0);
         render(args[1], 1);
         render(args[2], 2);
@@ -137,6 +138,53 @@ public final class UiPatchTest {
             throw new AssertionError("unknown schema version accepted");
         } catch (IllegalArgumentException expected) {
             // expected
+        }
+    }
+
+    private static void verifySessionEnd() throws Exception {
+        InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
+        panel.stop();
+        try {
+            // Both legacy sources still say charging after a remote session ends.
+            AlpitronicSessionState.markCharging();
+            new pt.efacec.es.evcsd.ui.info.ChargeInfo(true);
+            Method session = WaitingForCardChargingTimer.class.getDeclaredMethod("isChargingSession");
+            session.setAccessible(true);
+            int[] raw = new int[LoadBalancingTelemetry.REGISTER_COUNT];
+            raw[0] = LoadBalancingTelemetry.VERSION;
+            raw[2] = 2;
+            raw[11] = 20100; // Finished session energy from the reported screen.
+            raw[1] = LoadBalancingTelemetry.FLAG_REMOTE_START;
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(raw));
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
+            require(!((Boolean)session.invoke(panel)).booleanValue(),
+                "fresh idle telemetry must override stale charging markers and retained energy");
+
+            // A zero-power pause and a remaining AC session must keep the monitor.
+            int[] activeFlags = new int[] {
+                LoadBalancingTelemetry.FLAG_DC_SESSION,
+                LoadBalancingTelemetry.FLAG_AC_SESSION,
+                LoadBalancingTelemetry.FLAG_DC_SESSION | LoadBalancingTelemetry.FLAG_AC_SESSION
+            };
+            AlpitronicSessionState.markIdle();
+            for (int i = 0; i < activeFlags.length; i++) {
+                raw[1] = activeFlags[i] | LoadBalancingTelemetry.FLAG_BLOCKED;
+                set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(raw));
+                setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
+                require(((Boolean)session.invoke(panel)).booleanValue(),
+                    "active session at zero power must keep the charging monitor");
+            }
+
+            raw[1] = 0;
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(raw));
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis() - 10000L);
+            AlpitronicSessionState.markCharging();
+            require(((Boolean)session.invoke(panel)).booleanValue(),
+                "expired telemetry must retain the legacy session fallback");
+        } finally {
+            panel.stop();
+            AlpitronicSessionState.markIdle();
+            new pt.efacec.es.evcsd.ui.info.ChargeInfo(false);
         }
     }
 
