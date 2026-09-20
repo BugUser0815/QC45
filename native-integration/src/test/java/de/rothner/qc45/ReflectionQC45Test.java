@@ -36,6 +36,31 @@ public final class ReflectionQC45Test {
     }
 
     @Test
+    public void type2SessionUserIsRecognizedByLegacyFallback() {
+        boolean userPresent = ReflectionQC45.hasSessionUser(
+            new Type2SessionUser("card-authorized"));
+        assertTrue(userPresent);
+        assertTrue(ReflectionQC45.sessionEvidence(false, false, 0, userPresent));
+    }
+
+    @Test
+    public void blankType2SessionUserDoesNotStartCharging() {
+        assertTrue(!ReflectionQC45.hasSessionUser(new Type2SessionUser("  ")));
+    }
+
+    @Test
+    public void observedNullTransactionStillOverridesType2SessionUser() {
+        assertTrue(!ReflectionQC45.sessionEvidence(true, false, 0,
+            ReflectionQC45.hasSessionUser(new Type2SessionUser("old-card"))));
+    }
+
+    private static final class Type2SessionUser {
+        private final String value;
+        Type2SessionUser(String value) { this.value = value; }
+        public String getSessionUser() { return value; }
+    }
+
+    @Test
     public void remoteMarkerSurvivesPendingStartGrace() {
         assertTrue(ReflectionQC45.shouldKeepRemoteMarker(false, false, 1000L, 2000L));
     }
