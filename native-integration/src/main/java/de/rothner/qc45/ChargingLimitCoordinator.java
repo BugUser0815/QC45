@@ -22,9 +22,10 @@ public final class ChargingLimitCoordinator {
     /**
      * QC45 hardware safety floor. On this charger a native 0 kW limit can be
      * interpreted as "no limit". Logical zero therefore remains an internal
-     * pause/block value only; every native hardware write uses 5 kW instead.
+     * pause/block value only; native writes use a connector-specific floor.
      */
     public static final int NOTLADEN_KW = 5;
+    public static final int AC_NOTLADEN_KW = 2;
 
     private final ChargingLimitIo io;
     private final int minDcKw;
@@ -45,6 +46,9 @@ public final class ChargingLimitCoordinator {
     private int stageAcCapKw;
     private int activeDcConnector;
     private boolean acActive;
+    // A fresh LoadManager reading may approve physical AC Notladen even when
+    // the logical AC target is zero. Blockers always revoke that permission.
+    private boolean acNotladenApproved;
     private boolean ccsAvailable;
     private boolean demandTransfer;
     private final int[] applied = new int[] { -1, -1, -1, -1 };
@@ -73,7 +77,7 @@ public final class ChargingLimitCoordinator {
         blockers.add(STARTUP);
     }
 
-    /** Establish the persistent 5 kW QC45 safety floor ("Notladen"). */
+    /** Establish physical Notladen: 5 kW DC, 2 kW AC. */
     public synchronized void initializeNotladen() throws Exception {
         applyTargets(new int[] { 0, 0, 0, 0 }, true);
     }
@@ -138,11 +142,23 @@ public final class ChargingLimitCoordinator {
                                             int dcKw, int acKw,
                                             int idleDcKw, int idleAcKw,
                                             boolean transferringDemand) throws Exception {
+        setGridTargetsAndPrearm(dcConnector, acIsActive, dcKw, acKw,
+            idleDcKw, idleAcKw, transferringDemand, false);
+    }
+
+    /** Approve 2 kW Type2 only from a fresh, phase-safe LoadManager reading. */
+    public synchronized void setGridTargetsAndPrearm(
+                                            int dcConnector, boolean acIsActive,
+                                            int dcKw, int acKw,
+                                            int idleDcKw, int idleAcKw,
+                                            boolean transferringDemand,
+                                            boolean approveAcNotladen) throws Exception {
         if (dcConnector < 0 || dcConnector > 2) throw new IllegalArgumentException("DC connector must be 0..2");
         int oldDcConnector = activeDcConnector;
         boolean oldAcActive = acActive;
         activeDcConnector = dcConnector;
         acActive = acIsActive;
+        acNotladenApproved = acIsActive && approveAcNotladen;
         gridDcKw = dcConnector == 0 ? 0 : normalize(dcKw, minDcKw, maxDcKw);
         gridAcKw = acIsActive ? normalize(acKw, minAcKw, maxAcKw) : 0;
         prearmDcKw = dcConnector == 0
@@ -218,6 +234,14 @@ public final class ChargingLimitCoordinator {
     }
     public synchronized int effectiveAcKw() { return acActive ? targets()[3] : 0; }
 
+    /** Actual AC MobiBus target; zero means SUSPEND_CHARGE. */
+    public synchronized int acMobiBusTargetKw() {
+        int logicalKw = targets()[3];
+        if (logicalKw > 0) return logicalKw;
+        return acActive && acNotladenApproved && blockers.isEmpty()
+            && stageAcCapKw >= AC_NOTLADEN_KW ? AC_NOTLADEN_KW : 0;
+    }
+
     public synchronized int effectiveConnectorKw(int connector) {
         if (connector < 1 || connector > 3) {
             throw new IllegalArgumentException("connector must be 1..3");
@@ -231,7 +255,7 @@ public final class ChargingLimitCoordinator {
             throw new IllegalArgumentException("connector must be 1..3");
         }
         int target = targets()[connector];
-        io.setConnectorLimitKw(connector, hardwareTargetKw(target));
+        io.setConnectorLimitKw(connector, hardwareTargetKw(connector, target));
         applied[connector] = target;
     }
 
@@ -265,7 +289,7 @@ public final class ChargingLimitCoordinator {
             try {
                 int observed = clamp(io.limitKw(connector), 0,
                     connector == 3 ? maxAcKw : maxDcKw);
-                applied[connector] = logicalAppliedTarget(observed, expectedTargets[connector]);
+                applied[connector] = logicalAppliedTarget(connector, observed, expectedTargets[connector]);
             } catch (Exception e) {
                 // Unknown must force a write. In particular, one broken getter
                 // must not prevent Notladen from being reasserted on the other
@@ -312,7 +336,7 @@ public final class ChargingLimitCoordinator {
         Exception first = null;
 
         // Unknown values are treated as potentially high. Safety paths always
-        // reassert logical zero as physical 5 kW Notladen. A native 0 kW write
+        // reassert logical zero as physical Notladen. A native 0 kW write
         // is never emitted because this QC45 may interpret it as unlimited.
         for (int connector = 1; connector <= 3; connector++) {
             if (target[connector] < applied[connector]
@@ -342,7 +366,7 @@ public final class ChargingLimitCoordinator {
     }
 
     private void writeTarget(int connector, int targetKw) throws Exception {
-        int hardwareKw = hardwareTargetKw(targetKw);
+        int hardwareKw = hardwareTargetKw(connector, targetKw);
         if (connector == 3) {
             // AC owns a separate configuration value and its full writer does
             // not authorize a charge. Prime it even while idle so EVCSD cannot
@@ -371,13 +395,14 @@ public final class ChargingLimitCoordinator {
         io.preArmConnectorLimitKw(connector, hardwareKw);
     }
 
-    private static int hardwareTargetKw(int logicalKw) {
-        return logicalKw <= 0 ? NOTLADEN_KW : logicalKw;
+    private static int hardwareTargetKw(int connector, int logicalKw) {
+        return logicalKw <= 0
+            ? (connector == 3 ? AC_NOTLADEN_KW : NOTLADEN_KW) : logicalKw;
     }
 
-    private static int logicalAppliedTarget(int observedKw, int expectedLogicalKw) {
+    private static int logicalAppliedTarget(int connector, int observedKw, int expectedLogicalKw) {
         if (expectedLogicalKw == 0) {
-            if (observedKw == NOTLADEN_KW) return 0;
+            if (observedKw == hardwareTargetKw(connector, 0)) return 0;
             // Native zero is unsafe/ambiguous on the QC45. Force a Notladen write.
             if (observedKw == 0) return -1;
         }

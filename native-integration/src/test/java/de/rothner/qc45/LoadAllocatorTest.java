@@ -173,12 +173,54 @@ public final class LoadAllocatorTest {
     }
 
     @Test
+    public void recognizedAcSessionStartsAtGridApprovedMinimum() {
+        LoadAllocator.Targets start = LoadAllocator.plan(
+            false, true, 0, 0, 0, 0,
+            4.3d, 33.4d, 35.0d, 0.8d,
+            5, 50, 5, 43, 1);
+        assertEquals(0, start.dcKw);
+        assertEquals(5, start.acKw);
+    }
+
+    @Test
+    public void recognizedAcSessionCannotStartWithoutGridHeadroom() {
+        LoadAllocator.Targets blocked = LoadAllocator.plan(
+            false, true, 0, 0, 0, 0,
+            12.0d, 33.4d, 35.0d, 0.8d,
+            5, 50, 5, 43, 1);
+        assertEquals(0, blocked.acKw);
+    }
+
+    @Test
     public void simultaneousIdlePrearmIsRejectedWhenBothMinimumsDoNotFit() {
         LoadAllocator.Targets prearm = LoadAllocator.safePrearm(
             false, false, 0, 0, 0, 0,
             true, true, 5, 5, 4.3d, 34.0d);
         assertEquals(0, prearm.dcKw);
         assertEquals(0, prearm.acKw);
+    }
+
+    @Test
+    public void acNotladenRequiresSinglePhaseHeadroomAndAnActiveSession() {
+        LoadAllocator.Targets zero = new LoadAllocator.Targets(0, 0);
+        assertEquals(true, LoadAllocator.canReleaseAcNotladen(
+            true, false, zero, 0, 0, 4.3d, 35.0d));
+        assertEquals(false, LoadAllocator.canReleaseAcNotladen(
+            false, false, zero, 0, 0, 4.3d, 35.0d));
+        assertEquals(false, LoadAllocator.canReleaseAcNotladen(
+            true, false, zero, 0, 0, 26.0d, 35.0d));
+    }
+
+    @Test
+    public void acNotladenReservesConcurrentDcFloorAndUnreachedDcTarget() {
+        LoadAllocator.Targets zero = new LoadAllocator.Targets(0, 0);
+        assertEquals(false, LoadAllocator.canReleaseAcNotladen(
+            true, true, zero, 0, 0, 18.0d, 35.0d));
+        assertEquals(true, LoadAllocator.canReleaseAcNotladen(
+            true, true, zero, 0, 0, 4.3d, 35.0d));
+        assertEquals(false, LoadAllocator.canReleaseAcNotladen(
+            true, true, new LoadAllocator.Targets(16, 0), 0, 0,
+            1.0d, 35.0d));
     }
 
     @Test

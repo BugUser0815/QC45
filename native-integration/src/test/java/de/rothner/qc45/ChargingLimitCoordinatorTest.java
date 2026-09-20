@@ -37,7 +37,7 @@ public final class ChargingLimitCoordinatorTest {
         limits.initializeNotladen();
         limits.setCcsAvailable(true);
         limits.setGridTargets(2, true, 15, 15);
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
 
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         assertLimits(io, 5, 15, 15);
@@ -56,13 +56,13 @@ public final class ChargingLimitCoordinatorTest {
         limits.setCcsAvailable(true);
         limits.setGridTargets(1, true, 30, 20);
         limits.requestBudgets(50, 43);
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
 
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         assertLimits(io, 30, 5, 20);
         limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
         limits.requestBudgets(50, 43);
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
     }
 
     @Test
@@ -91,7 +91,7 @@ public final class ChargingLimitCoordinatorTest {
         limits.requestBudgets(4, 1);
         assertEquals(0, limits.requestedDcKw());
         assertEquals(0, limits.requestedAcKw());
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
     }
 
     @Test
@@ -142,7 +142,7 @@ public final class ChargingLimitCoordinatorTest {
         } catch (Exception expected) {
             assertEquals("read failed", expected.getMessage());
         }
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
     }
 
     @Test
@@ -162,7 +162,7 @@ public final class ChargingLimitCoordinatorTest {
         assertEquals(50, blocked.requestedDcKw);
         assertEquals(17, blocked.gridDcKw);
         assertEquals(0, blocked.effectiveDcKw);
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
 
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setStageCaps(15, 12);
@@ -179,7 +179,7 @@ public final class ChargingLimitCoordinatorTest {
         assertTrue(configurationBlocked.configurationBlocked);
         assertEquals(0, configurationBlocked.effectiveDcKw);
         assertEquals(0, configurationBlocked.effectiveAcKw);
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
     }
 
     @Test
@@ -191,7 +191,7 @@ public final class ChargingLimitCoordinatorTest {
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
 
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
         assertTrue(io.operations.contains("set1=5"));
         assertTrue(io.operations.contains("prearm2=5"));
         assertTrue(!io.operations.contains("set2=5"));
@@ -210,7 +210,7 @@ public final class ChargingLimitCoordinatorTest {
 
         limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
 
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
         assertTrue(io.operations.contains("set1=5"));
         assertTrue(io.operations.contains("prearm2=5"));
         assertTrue(!containsNativeZero(io.operations));
@@ -228,7 +228,7 @@ public final class ChargingLimitCoordinatorTest {
 
         limits.setGridTargetsAndPrearm(2, false, 5, 0, 0, 0, false);
 
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
         assertTrue(io.operations.contains("prearm1=5"));
         assertTrue(io.operations.contains("set2=5"));
         assertTrue(!containsNativeZero(io.operations));
@@ -247,7 +247,7 @@ public final class ChargingLimitCoordinatorTest {
 
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
 
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
         int sharedPrime = io.operations.indexOf("set1=5");
         int ccsPrearm = io.operations.indexOf("prearm2=5");
         assertTrue(sharedPrime >= 0);
@@ -268,8 +268,45 @@ public final class ChargingLimitCoordinatorTest {
 
         limits.reconcile();
 
-        assertLimits(io, 5, 5, 5);
+        assertLimits(io, 5, 5, 2);
         assertTrue(!containsNativeZero(io.operations));
+    }
+
+    @Test
+    public void acNotladenRequiresFreshApprovalAndStopsOnSafetyBlocks() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeNotladen();
+        limits.requestAcBudget(0);
+        limits.setGridTargetsAndPrearm(0, true, 0, 0, 0, 0, false, true);
+        assertEquals("startup block prevents a MobiBus start", 0, limits.acMobiBusTargetKw());
+
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        assertEquals("logical zero stays available to evcc", 0, limits.effectiveAcKw());
+        assertEquals(2, limits.acMobiBusTargetKw());
+        assertEquals(2, io.value[3]);
+
+        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
+        assertEquals(0, limits.acMobiBusTargetKw());
+        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
+        assertEquals(2, limits.acMobiBusTargetKw());
+
+        limits.setStageCaps(5, 0);
+        assertEquals("stage AC zero also forbids emergency charge", 0, limits.acMobiBusTargetKw());
+        limits.clearStageCaps();
+        limits.setGridTargetsAndPrearm(0, true, 0, 0, 0, 0, false);
+        assertEquals("loss of a fresh grid approval suspends", 0, limits.acMobiBusTargetKw());
+    }
+
+    @Test
+    public void acNotladenPermissionNeverPrearmsAnIdleConnector() throws Exception {
+        ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        limits.initializeNotladen();
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 0, 0, false, true);
+        assertEquals(0, limits.acMobiBusTargetKw());
+        limits.setGridTargetsAndPrearm(0, true, 0, 8, 0, 0, false);
+        assertEquals(8, limits.acMobiBusTargetKw());
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {

@@ -11,9 +11,9 @@ import java.util.List;
  * transported in START_CHARGE/ENERGY packets as deci-kW. Zero is special: the
  * stock load-shed code deliberately converts a computed 0 to 1, so a 0 power
  * payload cannot be treated as a physical pause. The satellite protocol has a
- * dedicated SUSPEND_CHARGE request; this helper uses it whenever the
- * coordinator's effective AC target is zero and sends an explicit START_CHARGE
- * when power is released again.
+ * dedicated SUSPEND_CHARGE request. A logical zero is sent as 2 kW Notladen
+ * only if LoadManager has approved a fresh single-phase grid projection;
+ * otherwise this helper suspends and resumes explicitly when power returns.
  */
 final class AcPowerLimitTransport extends Thread {
     private static final int AC_CONNECTOR = 3;
@@ -79,7 +79,7 @@ final class AcPowerLimitTransport extends Thread {
 
     public void run() {
         System.out.println("[QC45] AC MobiBus power-limit transport started"
-            + " zero=SUSPEND_CHARGE positive=ENERGY resume=START_CHARGE"
+            + " unsafe-zero=SUSPEND_CHARGE safe-zero=2kW positive=ENERGY resume=START_CHARGE"
             + " power=energy-delta");
         while (running) {
             long now = System.currentTimeMillis();
@@ -94,8 +94,17 @@ final class AcPowerLimitTransport extends Thread {
                     lastSuspendMs = 0L;
                     resetPowerEstimate(satellite);
                 } else {
-                    int targetKw = limits.effectiveConnectorKw(AC_CONNECTOR);
+                    int targetKw = limits.acMobiBusTargetKw();
                     if (targetKw <= 0) {
+                        if (lastTargetKw != 0) {
+                            ChargingLimitCoordinator.Snapshot state = limits.snapshot();
+                            System.out.println("[QC45] AC held at 0kW"
+                                + " loadManagerActive=" + state.acActive
+                                + " gridTarget=" + state.gridAcKw + "kW"
+                                + " requested=" + state.requestedAcKw + "kW"
+                                + " stageCap=" + state.stageAcCapKw + "kW"
+                                + " blockers=" + limits.blockReason());
+                        }
                         if (!suspended || now - lastSuspendMs >= SUSPEND_REASSERT_MS) {
                             send(satellite, "SUSPEND_CHARGE", 0, false, false, 300L);
                             suspended = true;
@@ -197,37 +206,11 @@ final class AcPowerLimitTransport extends Thread {
         throw new IllegalStateException("Type2 satellite unavailable");
     }
 
-    private boolean hasSession(Object satellite) {
-        boolean transactionApiObserved = false;
-        try {
-            Method method = findZeroArgMethod(satellite.getClass(), "getActiveTransaction");
-            if (method != null) {
-                Object transaction = method.invoke(satellite);
-                transactionApiObserved = true;
-                if (transaction != null) return true;
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            Method power = findZeroArgMethod(satellite.getClass(), "getCurrentPower");
-            Object value = power == null ? null : power.invoke(satellite);
-            if (value instanceof Number && ((Number)value).intValue() > 0) return true;
-        } catch (Throwable ignored) {}
-
-        // A successfully observed null active transaction is authoritative.
-        // Do not keep a finished session alive from a stale cached user tag.
-        if (transactionApiObserved) return false;
-
-        String[] userMethods = new String[] { "getSessionUser", "getUser" };
-        for (int i = 0; i < userMethods.length; i++) {
-            try {
-                Method method = findZeroArgMethod(satellite.getClass(), userMethods[i]);
-                if (method == null) continue;
-                Object value = method.invoke(satellite);
-                if (value != null && String.valueOf(value).trim().length() > 0) return true;
-            } catch (Throwable ignored) {}
-        }
-        return false;
+    private boolean hasSession(Object satellite) throws Exception {
+        // LoadManager must see the same authorized Type2 session before this
+        // transport can release a positive grid-approved target. Divergent
+        // legacy-user fallbacks caused SUSPEND_CHARGE to loop at 0 kW.
+        return station.sessionActive(AC_CONNECTOR);
     }
 
     /**
@@ -325,21 +308,6 @@ final class AcPowerLimitTransport extends Thread {
         throw new NoSuchMethodException("waitForAnswer");
     }
 
-    private static Method findZeroArgMethod(Class<?> type, String name) {
-        Class<?> current = type;
-        while (current != null) {
-            try {
-                Method method = current.getDeclaredMethod(name);
-                method.setAccessible(true);
-                return method;
-            } catch (NoSuchMethodException ignored) {
-                current = current.getSuperclass();
-            } catch (Throwable ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
 
     private static Object fieldValue(Object owner, String name) throws Exception {
         Field field = findField(owner.getClass(), name);
