@@ -197,37 +197,11 @@ final class AcPowerLimitTransport extends Thread {
         throw new IllegalStateException("Type2 satellite unavailable");
     }
 
-    private boolean hasSession(Object satellite) {
-        boolean transactionApiObserved = false;
-        try {
-            Method method = findZeroArgMethod(satellite.getClass(), "getActiveTransaction");
-            if (method != null) {
-                Object transaction = method.invoke(satellite);
-                transactionApiObserved = true;
-                if (transaction != null) return true;
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            Method power = findZeroArgMethod(satellite.getClass(), "getCurrentPower");
-            Object value = power == null ? null : power.invoke(satellite);
-            if (value instanceof Number && ((Number)value).intValue() > 0) return true;
-        } catch (Throwable ignored) {}
-
-        // A successfully observed null active transaction is authoritative.
-        // Do not keep a finished session alive from a stale cached user tag.
-        if (transactionApiObserved) return false;
-
-        String[] userMethods = new String[] { "getSessionUser", "getUser" };
-        for (int i = 0; i < userMethods.length; i++) {
-            try {
-                Method method = findZeroArgMethod(satellite.getClass(), userMethods[i]);
-                if (method == null) continue;
-                Object value = method.invoke(satellite);
-                if (value != null && String.valueOf(value).trim().length() > 0) return true;
-            } catch (Throwable ignored) {}
-        }
-        return false;
+    private boolean hasSession(Object satellite) throws Exception {
+        // LoadManager must see the same authorized Type2 session before this
+        // transport can release a positive grid-approved target. Divergent
+        // legacy-user fallbacks caused SUSPEND_CHARGE to loop at 0 kW.
+        return station.sessionActive(AC_CONNECTOR);
     }
 
     /**
@@ -325,21 +299,6 @@ final class AcPowerLimitTransport extends Thread {
         throw new NoSuchMethodException("waitForAnswer");
     }
 
-    private static Method findZeroArgMethod(Class<?> type, String name) {
-        Class<?> current = type;
-        while (current != null) {
-            try {
-                Method method = current.getDeclaredMethod(name);
-                method.setAccessible(true);
-                return method;
-            } catch (NoSuchMethodException ignored) {
-                current = current.getSuperclass();
-            } catch (Throwable ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
 
     private static Object fieldValue(Object owner, String name) throws Exception {
         Field field = findField(owner.getClass(), name);
