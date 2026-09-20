@@ -46,9 +46,6 @@ public final class ChargingLimitCoordinator {
     private int stageAcCapKw;
     private int activeDcConnector;
     private boolean acActive;
-    // A fresh LoadManager reading may approve physical AC Notladen even when
-    // the logical AC target is zero. Blockers always revoke that permission.
-    private boolean acNotladenApproved;
     private boolean ccsAvailable;
     private boolean demandTransfer;
     private final int[] applied = new int[] { -1, -1, -1, -1 };
@@ -142,23 +139,11 @@ public final class ChargingLimitCoordinator {
                                             int dcKw, int acKw,
                                             int idleDcKw, int idleAcKw,
                                             boolean transferringDemand) throws Exception {
-        setGridTargetsAndPrearm(dcConnector, acIsActive, dcKw, acKw,
-            idleDcKw, idleAcKw, transferringDemand, false);
-    }
-
-    /** Approve 5 kW Type2 only from a fresh, phase-safe LoadManager reading. */
-    public synchronized void setGridTargetsAndPrearm(
-                                            int dcConnector, boolean acIsActive,
-                                            int dcKw, int acKw,
-                                            int idleDcKw, int idleAcKw,
-                                            boolean transferringDemand,
-                                            boolean approveAcNotladen) throws Exception {
         if (dcConnector < 0 || dcConnector > 2) throw new IllegalArgumentException("DC connector must be 0..2");
         int oldDcConnector = activeDcConnector;
         boolean oldAcActive = acActive;
         activeDcConnector = dcConnector;
         acActive = acIsActive;
-        acNotladenApproved = acIsActive && approveAcNotladen;
         gridDcKw = dcConnector == 0 ? 0 : normalize(dcKw, minDcKw, maxDcKw);
         gridAcKw = acIsActive ? normalize(acKw, minAcKw, maxAcKw) : 0;
         prearmDcKw = dcConnector == 0
@@ -234,12 +219,10 @@ public final class ChargingLimitCoordinator {
     }
     public synchronized int effectiveAcKw() { return acActive ? targets()[3] : 0; }
 
-    /** Actual AC MobiBus target; zero means SUSPEND_CHARGE. */
+    /** Physical AC target, with the same logical-zero Notladen policy as DC.
+     * Session authorization and hard-trip RemoteStop remain independent. */
     public synchronized int acMobiBusTargetKw() {
-        int logicalKw = targets()[3];
-        if (logicalKw > 0) return logicalKw;
-        return acActive && acNotladenApproved && blockers.isEmpty()
-            && stageAcCapKw >= AC_NOTLADEN_KW ? AC_NOTLADEN_KW : 0;
+        return hardwareTargetKw(3, targets()[3]);
     }
 
     public synchronized int effectiveConnectorKw(int connector) {

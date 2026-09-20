@@ -273,40 +273,44 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     @Test
-    public void acNotladenRequiresFreshApprovalAndStopsOnSafetyBlocks() throws Exception {
+    public void acAndDcKeepFiveKwNotladenForEveryLogicalBlock() throws Exception {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeNotladen();
-        limits.requestAcBudget(0);
-        limits.setGridTargetsAndPrearm(0, true, 0, 0, 0, 0, false, true);
-        assertEquals("startup block prevents a MobiBus start", 0, limits.acMobiBusTargetKw());
-
-        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
-        assertEquals("logical zero stays available to evcc", 0, limits.effectiveAcKw());
-        assertEquals(5, limits.acMobiBusTargetKw());
-        assertEquals(5, io.value[3]);
-
-        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
-        assertEquals(0, limits.acMobiBusTargetKw());
-        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
-        assertEquals(5, limits.acMobiBusTargetKw());
-
-        limits.setStageCaps(5, 0);
-        assertEquals("stage AC zero also forbids emergency charge", 0, limits.acMobiBusTargetKw());
-        limits.clearStageCaps();
-        limits.setGridTargetsAndPrearm(0, true, 0, 0, 0, 0, false);
-        assertEquals("loss of a fresh grid approval suspends", 0, limits.acMobiBusTargetKw());
+        limits.setGridTargets(1, true, 20, 20);
+        String[] sources = { ChargingLimitCoordinator.STARTUP,
+            ChargingLimitCoordinator.LOAD_METER, ChargingLimitCoordinator.FAILBACK,
+            ChargingLimitCoordinator.CONFIGURATION, ChargingLimitCoordinator.LIMIT_MISMATCH,
+            ChargingLimitCoordinator.SHUTDOWN };
+        for (String source : sources) {
+            limits.setBlocked(source, true);
+            assertEquals(0, limits.effectiveDcKw());
+            assertEquals(0, limits.effectiveAcKw());
+            assertLimits(io, 5, 5, 5);
+            assertEquals(io.value[1], limits.acMobiBusTargetKw());
+            limits.setBlocked(source, false);
+        }
     }
 
     @Test
-    public void acNotladenPermissionNeverPrearmsAnIdleConnector() throws Exception {
-        ChargingLimitCoordinator limits = coordinator(new FakeIo());
-        limits.initializeNotladen();
+    public void acAndDcUseNotladenForZeroBudgetGridAndStageCaps() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
-        limits.setGridTargetsAndPrearm(0, false, 0, 0, 0, 0, false, true);
-        assertEquals(0, limits.acMobiBusTargetKw());
-        limits.setGridTargetsAndPrearm(0, true, 0, 8, 0, 0, false);
-        assertEquals(8, limits.acMobiBusTargetKw());
+        limits.setGridTargets(1, true, 20, 20);
+        assertEquals(20, limits.acMobiBusTargetKw());
+        limits.requestBudgets(0, 0);
+        assertLimits(io, 5, 5, 5);
+        assertEquals(5, limits.acMobiBusTargetKw());
+        limits.requestBudgets(50, 43);
+        limits.setGridTargets(1, true, 0, 0);
+        assertEquals(5, limits.acMobiBusTargetKw());
+        limits.setGridTargets(1, true, 20, 20);
+        limits.setStageCaps(0, 0);
+        assertLimits(io, 5, 5, 5);
+        assertEquals(5, limits.acMobiBusTargetKw());
+        limits.clearStageCaps();
+        assertEquals(20, limits.acMobiBusTargetKw());
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {

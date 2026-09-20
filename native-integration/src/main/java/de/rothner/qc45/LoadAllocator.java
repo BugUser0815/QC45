@@ -246,21 +246,6 @@ final class LoadAllocator {
         return new Targets(0, 0);
     }
 
-    /** Reserve up to 25 A for Type2 Notladen, plus the DC hardware floor
-     * whenever a DC session is active, even if its logical target is zero. */
-    static boolean canReleaseAcNotladen(boolean acActive, boolean dcActive,
-                                       Targets released, int creditedDcKw,
-                                       int creditedAcKw, double criticalA,
-                                       double commandCeilingA) {
-        if (!acActive || criticalA >= commandCeilingA) return false;
-        int dcKw = dcActive
-            ? Math.max(ChargingLimitCoordinator.NOTLADEN_KW, released.dcKw) : 0;
-        Targets physical = new Targets(dcKw,
-            Math.max(ChargingLimitCoordinator.AC_NOTLADEN_KW, released.acKw));
-        return projectedCurrentA(criticalA, physical,
-            dcActive ? creditedDcKw : 0, creditedAcKw) <= commandCeilingA;
-    }
-
     /** Keep a newly observed session at its technical minimum while it settles. */
     static Targets constrainStartupSettling(Targets target,
                                             boolean dcSettling,

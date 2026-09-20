@@ -59,11 +59,11 @@ effective connector limit is always the minimum of evcc request, grid-safe
 LoadManager allocation and GridFailback cap/block.
 
 After a JVM/webapp start both outputs use their configured maximum as an
-autonomous request cap. Startup, KSEM and failback blockers keep
-AC suspended until the LoadManager has prepared a grid-safe target. The
-first evcc write takes control of only the addressed output; an explicit 0 kW
-retains 5 kW physical DC Notladen or permits 5 kW physical AC Notladen only
-while KSEM readings confirm single-phase grid headroom. Unsafe AC is suspended.
+autonomous request cap. Startup, KSEM and failback blockers set the logical
+targets to zero while both AC and DC retain physical 5 kW Notladen.
+The first evcc write takes control of only the addressed output. An explicit
+0 kW request also retains 5 kW Notladen; it does not stop the session.
+Hard trips terminate sessions through RemoteStop.
 
 Modbus access is restricted by `modbus.allowedClients` (exact IP addresses or
 CIDR networks); loopback is always permitted. Multi-register writes of 110/111
@@ -138,11 +138,10 @@ Expected log lines:
 [QC45] OCPP15 SOAP RX op=bootNotification ...
 ```
 
-At process/webapp start the physical limits are set to 5 kW DC and 5 kW AC;
-Type 2 is suspended. AC can be released only after five valid KSEM reads and
-a freshly calculated grid-safe target. evcc is optional until it explicitly writes a channel budget.
-Missing/invalid configuration starts a persistent degraded mode that
-reasserts the physical connector floors and suspends Type 2.
+At process/webapp start the physical limits are set to 5 kW for both AC and DC.
+Power above Notladen requires five valid KSEM reads and a freshly calculated
+grid-safe target. evcc is optional until it explicitly writes a channel budget.
+Missing/invalid configuration reasserts the physical connector floors.
 
 During a DC session, charging-screen diagnostics are emitted at most every ten seconds, for example:
 
@@ -192,16 +191,19 @@ reassembled.
   a preloaded SLS, every tolerance uses the lower current boundary; the instant
   threshold is therefore fixed at 5 x In (175 A). Historical 38 A and 218.75 A
   configurations are migrated automatically.
-- KSEM failure suspends AC and keeps DC at its native 5 kW safety floor while
-  transactions remain alive. Neither connector receives a native zero limit.
+- KSEM failure keeps both AC and DC at 5 kW Notladen while transactions remain
+  alive. Neither connector receives a native zero limit. This floor is retained
+  even without measured grid headroom; current-based overload detection cannot
+  detect a new overload while KSEM measurements are unavailable.
 - The limit mismatch guard checks actual power against the physical connector
   floor (5 kW DC or 5 kW AC) when the logical target is zero.
 - AC Notladen uses 5 kW to exceed 6 A per phase at three-phase 230 V
   (3 x 230 V x 6 A = 4.14 kW); the single-phase safety projection is retained.
-- With a fresh, safe KSEM reading and an active Type 2 session, logical AC zero
-  sends 5 kW through MobiBus; the projection reserves 25 A for single-phase AC
-  and the physical DC minimum if DC is active. A safety block or insufficient
-  headroom uses SUSPEND_CHARGE; recovery sends START_CHARGE.
+- During an authorized Type 2 session, logical zero sends 5 kW through MobiBus
+  ENERGY, including during KSEM/failback blocks or insufficient headroom.
+  This is the same Notladen policy as DC. The transport does not start new
+  sessions; hard-trip and limit-mismatch RemoteStop remain independent.
+  SUSPEND_CHARGE is reserved for transport shutdown.
 - After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe
   5 kW minimum without authorization or a start command. A detected session sends
   that target through the full CCS path and holds it for three seconds before ramping.

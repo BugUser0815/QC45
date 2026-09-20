@@ -11,14 +11,14 @@ import java.util.List;
  * transported in START_CHARGE/ENERGY packets as deci-kW. Zero is special: the
  * stock load-shed code deliberately converts a computed 0 to 1, so a 0 power
  * payload cannot be treated as a physical pause. The satellite protocol has a
- * dedicated SUSPEND_CHARGE request. A logical zero is sent as 5 kW Notladen
- * only if LoadManager has approved a fresh single-phase grid projection;
- * otherwise this helper suspends and resumes explicitly when power returns.
+ * dedicated SUSPEND_CHARGE request used on transport shutdown. During an
+ * authorized session, logical zero is sent as 5 kW Notladen, exactly as on DC.
+ * KSEM/failback blocks cap power at Notladen; hard trips end the transaction
+ * through GridFailback's independent RemoteStop path.
  */
 final class AcPowerLimitTransport extends Thread {
     private static final int AC_CONNECTOR = 3;
     private static final int LOOP_MS = 250;
-    private static final long SUSPEND_REASSERT_MS = 1000L;
     private static final long POWER_SAMPLE_MS = 1500L;
     private static final long POWER_STALE_MS = 3500L;
     private static final long ERROR_LOG_MS = 5000L;
@@ -35,9 +35,7 @@ final class AcPowerLimitTransport extends Thread {
     private final Object satRequestLock;
 
     private volatile boolean running = true;
-    private boolean suspended;
     private int lastTargetKw = -1;
-    private long lastSuspendMs;
     private long lastErrorLogMs;
 
     private long lastEnergyWh = -1L;
@@ -79,7 +77,7 @@ final class AcPowerLimitTransport extends Thread {
 
     public void run() {
         System.out.println("[QC45] AC MobiBus power-limit transport started"
-            + " unsafe-zero=SUSPEND_CHARGE safe-zero=5kW positive=ENERGY resume=START_CHARGE"
+            + " logical-zero=5kW limits=ENERGY hard-trip=RemoteStop"
             + " power=energy-delta");
         while (running) {
             long now = System.currentTimeMillis();
@@ -89,42 +87,16 @@ final class AcPowerLimitTransport extends Thread {
                 int actualKw = updateLivePowerEstimate(satellite, session, now);
 
                 if (!session) {
-                    suspended = false;
                     lastTargetKw = -1;
-                    lastSuspendMs = 0L;
                     resetPowerEstimate(satellite);
                 } else {
                     int targetKw = limits.acMobiBusTargetKw();
-                    if (targetKw <= 0) {
-                        if (lastTargetKw != 0) {
-                            ChargingLimitCoordinator.Snapshot state = limits.snapshot();
-                            System.out.println("[QC45] AC held at 0kW"
-                                + " loadManagerActive=" + state.acActive
-                                + " gridTarget=" + state.gridAcKw + "kW"
-                                + " requested=" + state.requestedAcKw + "kW"
-                                + " stageCap=" + state.stageAcCapKw + "kW"
-                                + " blockers=" + limits.blockReason());
-                        }
-                        if (!suspended || now - lastSuspendMs >= SUSPEND_REASSERT_MS) {
-                            send(satellite, "SUSPEND_CHARGE", 0, false, false, 300L);
-                            suspended = true;
-                            lastSuspendMs = now;
-                            System.out.println("[QC45] AC MobiBus SUSPEND target=0kW"
-                                + " actual=" + actualKw + "kW reassert="
-                                + (lastTargetKw == 0));
-                        }
-                        lastTargetKw = 0;
-                    } else {
-                        if (suspended) {
-                            send(satellite, "START_CHARGE", targetKw, true, true, 300L);
-                            suspended = false;
-                            System.out.println("[QC45] AC MobiBus RESUME target="
-                                + targetKw + "kW packet=" + (targetKw * 10) + " deci-kW");
-                        } else if (targetKw != lastTargetKw) {
-                            send(satellite, "ENERGY", targetKw, true, false, 400L);
-                            System.out.println("[QC45] AC MobiBus LIMIT target="
-                                + targetKw + "kW packet=" + (targetKw * 10) + " deci-kW");
-                        }
+                    if (targetKw != lastTargetKw) {
+                        send(satellite, "ENERGY", targetKw, true, false, 400L);
+                        System.out.println("[QC45] AC MobiBus LIMIT target="
+                            + targetKw + "kW packet=" + (targetKw * 10)
+                            + " deci-kW actual=" + actualKw + "kW"
+                            + " blockers=" + limits.blockReason());
                         lastTargetKw = targetKw;
                     }
                 }

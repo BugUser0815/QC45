@@ -231,13 +231,9 @@ public final class LoadManager extends Thread {
                     requestedDcMax >= minDcKw,
                     requestedAcMax >= minAcKw,
                     minDcKw, minAcKw, criticalA, commandCeilingA);
-                boolean acNotladenSafe = LoadAllocator.canReleaseAcNotladen(
-                    active.ac, active.dcConnector > 0, target,
-                    safetyCreditedDcKw, safetyCreditedAcKw,
-                    criticalA, commandCeilingA);
                 limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
                     target.dcKw, target.acKw,
-                    prearm.dcKw, prearm.acKw, demandTransfer, acNotladenSafe);
+                    prearm.dcKw, prearm.acKw, demandTransfer);
                 releasePreparedMeterBlocks();
                 logPrearm(prearm, criticalA);
                 previousActualDcKw = actualDcKw;
