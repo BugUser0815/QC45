@@ -381,7 +381,24 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
             }
         }
         return sessionEvidence(false, false, powerKw(connector),
-            idTag(connector).length() > 0);
+            idTag(connector).length() > 0 || hasSessionUser(sat));
+    }
+
+    /**
+     * Some Type2 firmware exposes a pending local authorization only through
+     * getSessionUser(). Use it solely when the transaction API is unavailable;
+     * an observed null active transaction remains authoritative.
+     */
+    static boolean hasSessionUser(Object satellite) {
+        if (satellite == null) return false;
+        try {
+            Method method = findMethod(satellite.getClass(), "getSessionUser");
+            if (method == null) return false;
+            Object value = method.invoke(satellite);
+            return value != null && String.valueOf(value).trim().length() > 0;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     static boolean sessionEvidence(boolean transactionApiAvailable,
