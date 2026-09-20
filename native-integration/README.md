@@ -62,7 +62,7 @@ After a JVM/webapp start both outputs use their configured maximum as an
 autonomous request cap. Startup, KSEM and failback blockers keep
 AC suspended until the LoadManager has prepared a grid-safe target. The
 first evcc write takes control of only the addressed output; an explicit 0 kW
-retains 5 kW physical DC Notladen or permits 2 kW physical AC Notladen only
+retains 5 kW physical DC Notladen or permits 5 kW physical AC Notladen only
 while KSEM readings confirm single-phase grid headroom. Unsafe AC is suspended.
 
 Modbus access is restricted by `modbus.allowedClients` (exact IP addresses or
@@ -138,7 +138,7 @@ Expected log lines:
 [QC45] OCPP15 SOAP RX op=bootNotification ...
 ```
 
-At process/webapp start the physical limits are set to 5 kW DC and 2 kW AC;
+At process/webapp start the physical limits are set to 5 kW DC and 5 kW AC;
 Type 2 is suspended. AC can be released only after five valid KSEM reads and
 a freshly calculated grid-safe target. evcc is optional until it explicitly writes a channel budget.
 Missing/invalid configuration starts a persistent degraded mode that
@@ -195,9 +195,11 @@ reassembled.
 - KSEM failure suspends AC and keeps DC at its native 5 kW safety floor while
   transactions remain alive. Neither connector receives a native zero limit.
 - The limit mismatch guard checks actual power against the physical connector
-  floor (5 kW DC or 2 kW AC) when the logical target is zero.
+  floor (5 kW DC or 5 kW AC) when the logical target is zero.
+- AC Notladen uses 5 kW to exceed 6 A per phase at three-phase 230 V
+  (3 x 230 V x 6 A = 4.14 kW); the single-phase safety projection is retained.
 - With a fresh, safe KSEM reading and an active Type 2 session, logical AC zero
-  sends 2 kW through MobiBus; the projection reserves 10 A for single-phase AC
+  sends 5 kW through MobiBus; the projection reserves 25 A for single-phase AC
   and the physical DC minimum if DC is active. A safety block or insufficient
   headroom uses SUSPEND_CHARGE; recovery sends START_CHARGE.
 - After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe

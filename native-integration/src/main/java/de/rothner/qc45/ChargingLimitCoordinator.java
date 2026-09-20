@@ -25,7 +25,7 @@ public final class ChargingLimitCoordinator {
      * pause/block value only; native writes use a connector-specific floor.
      */
     public static final int NOTLADEN_KW = 5;
-    public static final int AC_NOTLADEN_KW = 2;
+    public static final int AC_NOTLADEN_KW = 5;
 
     private final ChargingLimitIo io;
     private final int minDcKw;
@@ -77,7 +77,7 @@ public final class ChargingLimitCoordinator {
         blockers.add(STARTUP);
     }
 
-    /** Establish physical Notladen: 5 kW DC, 2 kW AC. */
+    /** Establish physical Notladen: 5 kW DC, 5 kW AC. */
     public synchronized void initializeNotladen() throws Exception {
         applyTargets(new int[] { 0, 0, 0, 0 }, true);
     }
@@ -146,7 +146,7 @@ public final class ChargingLimitCoordinator {
             idleDcKw, idleAcKw, transferringDemand, false);
     }
 
-    /** Approve 2 kW Type2 only from a fresh, phase-safe LoadManager reading. */
+    /** Approve 5 kW Type2 only from a fresh, phase-safe LoadManager reading. */
     public synchronized void setGridTargetsAndPrearm(
                                             int dcConnector, boolean acIsActive,
                                             int dcKw, int acKw,

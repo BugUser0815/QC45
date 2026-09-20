@@ -208,16 +208,16 @@ public final class LoadAllocatorTest {
         assertEquals(false, LoadAllocator.canReleaseAcNotladen(
             false, false, zero, 0, 0, 4.3d, 35.0d));
         assertEquals(false, LoadAllocator.canReleaseAcNotladen(
-            true, false, zero, 0, 0, 26.0d, 35.0d));
+            true, false, zero, 0, 0, 12.0d, 35.0d));
     }
 
     @Test
     public void acNotladenReservesConcurrentDcFloorAndUnreachedDcTarget() {
         LoadAllocator.Targets zero = new LoadAllocator.Targets(0, 0);
         assertEquals(false, LoadAllocator.canReleaseAcNotladen(
-            true, true, zero, 0, 0, 18.0d, 35.0d));
-        assertEquals(true, LoadAllocator.canReleaseAcNotladen(
             true, true, zero, 0, 0, 4.3d, 35.0d));
+        assertEquals(true, LoadAllocator.canReleaseAcNotladen(
+            true, true, zero, 0, 0, 1.0d, 35.0d));
         assertEquals(false, LoadAllocator.canReleaseAcNotladen(
             true, true, new LoadAllocator.Targets(16, 0), 0, 0,
             1.0d, 35.0d));

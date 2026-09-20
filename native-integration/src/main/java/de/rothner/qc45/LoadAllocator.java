@@ -246,7 +246,7 @@ final class LoadAllocator {
         return new Targets(0, 0);
     }
 
-    /** Reserve up to 10 A for Type2 Notladen, plus the DC hardware floor
+    /** Reserve up to 25 A for Type2 Notladen, plus the DC hardware floor
      * whenever a DC session is active, even if its logical target is zero. */
     static boolean canReleaseAcNotladen(boolean acActive, boolean dcActive,
                                        Targets released, int creditedDcKw,

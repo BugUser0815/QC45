@@ -28,24 +28,24 @@ public final class ChargingLimitGuardTest {
         assertTrue(limits.snapshot().limitMismatchBlocked);
         assertEquals(5, station.limit[1]);
         assertEquals(5, station.limit[2]);
-        assertEquals(2, station.limit[3]);
+        assertEquals(5, station.limit[3]);
     }
 
     @Test
-    public void guardsPhysicalTwoKwAcNotladenWithoutStoppingIt() throws Exception {
+    public void guardsPhysicalFiveKwAcNotladenWithoutStoppingIt() throws Exception {
         FakeStation station = new FakeStation();
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, 5, 50, 5, 43);
         limits.initializeNotladen();
         station.session[3] = true;
-        station.power[3] = 2;
+        station.power[3] = 5;
 
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6100L);
 
         assertEquals(0, station.stopCount);
-        assertEquals(2, station.limit[3]);
+        assertEquals(5, station.limit[3]);
     }
 
     @Test

@@ -11,7 +11,7 @@ import java.util.List;
  * transported in START_CHARGE/ENERGY packets as deci-kW. Zero is special: the
  * stock load-shed code deliberately converts a computed 0 to 1, so a 0 power
  * payload cannot be treated as a physical pause. The satellite protocol has a
- * dedicated SUSPEND_CHARGE request. A logical zero is sent as 2 kW Notladen
+ * dedicated SUSPEND_CHARGE request. A logical zero is sent as 5 kW Notladen
  * only if LoadManager has approved a fresh single-phase grid projection;
  * otherwise this helper suspends and resumes explicitly when power returns.
  */
@@ -79,7 +79,7 @@ final class AcPowerLimitTransport extends Thread {
 
     public void run() {
         System.out.println("[QC45] AC MobiBus power-limit transport started"
-            + " unsafe-zero=SUSPEND_CHARGE safe-zero=2kW positive=ENERGY resume=START_CHARGE"
+            + " unsafe-zero=SUSPEND_CHARGE safe-zero=5kW positive=ENERGY resume=START_CHARGE"
             + " power=energy-delta");
         while (running) {
             long now = System.currentTimeMillis();
