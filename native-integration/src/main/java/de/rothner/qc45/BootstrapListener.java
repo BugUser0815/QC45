@@ -28,6 +28,12 @@ public final class BootstrapListener implements ServletContextListener {
             // the native satellite setpoint state without our own ENERGY packet.
             AcLoadBalanceMode.enableRequired();
 
+            // Inventory the stock Efacec AC implementation without invoking any
+            // candidate methods. The log gives us the exact runtime method/field
+            // surface and the source JAR locations for the next reverse-engineering
+            // step while leaving charging behaviour unchanged.
+            AcNativeIntrospector.dumpOnce();
+
             // Keep the former MobiBus writer disabled. Its explicit ENERGY
             // request reproducibly stopped the BMW i3. We still need the
             // read-only energy-delta sampler, because the old EVCSD leaves the
