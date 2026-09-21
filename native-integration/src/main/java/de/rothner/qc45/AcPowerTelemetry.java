@@ -32,7 +32,11 @@ final class AcPowerTelemetry extends Thread {
     private long energyAnchorWh = -1L;
     private long energyAnchorMs;
     private int derivedPowerKw;
+    private int lastRawPowerKw;
     private long derivedPowerMs;
+    private final int[] rawPowerWindow = new int[3];
+    private int rawPowerWindowCount;
+    private int rawPowerWindowIndex;
 
     static AcPowerTelemetry startRequired() throws Exception {
         AcPowerTelemetry telemetry = new AcPowerTelemetry(new ReflectionQC45());
@@ -49,7 +53,7 @@ final class AcPowerTelemetry extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] AC power telemetry started mode=energy-delta-1s read-only no-MobiBus-writes");
+        System.out.println("[QC45] AC power telemetry started mode=energy-delta-1s-median3 read-only no-MobiBus-writes");
         while (running) {
             long now = System.currentTimeMillis();
             try {
@@ -78,7 +82,8 @@ final class AcPowerTelemetry extends Thread {
                     if (now - lastDiagnosticLogMs >= DIAGNOSTIC_LOG_MS) {
                         System.out.println("[QC45] AC telemetry age="
                             + Math.max(0L, now - sessionStartedMs)
-                            + "ms actual=" + actualKw + "kW limit="
+                            + "ms actual=" + actualKw + "kW raw="
+                            + lastRawPowerKw + "kW limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
                             + currentEnergyWh(satellite));
                         lastDiagnosticLogMs = now;
@@ -105,11 +110,12 @@ final class AcPowerTelemetry extends Thread {
     /**
      * Build a near-live value from the cumulative Wh counter.
      *
-     * We intentionally do not move the energy/time anchor on every 250 ms poll.
-     * Instead we accumulate counter changes for roughly one second and calculate
-     * one fresh slope from that short interval. This avoids the old 1.5 s sample
-     * lag and also avoids treating a single poll with no new Wh tick as 0 kW.
-     * The most recent valid value is held briefly until a new energy delta arrives.
+     * The counter has only whole-Wh resolution. A roughly one-second slope can
+     * therefore jump several kW even when the real AC load is steady. Keep the
+     * fast one-second raw sampling, but publish a median over the three latest
+     * valid samples. A single quantisation outlier (for example 7/14/21 kW)
+     * cannot move the value seen by LoadManager and the dashboard. Real step
+     * changes become authoritative after at most two additional samples.
      */
     private int updateLivePowerEstimate(Object satellite, boolean session, long now) {
         if (!session) return 0;
@@ -126,8 +132,10 @@ final class AcPowerTelemetry extends Thread {
                 long deltaWh = energyWh - energyAnchorWh;
                 if (deltaWh > 0L && elapsedMs >= POWER_WINDOW_MS) {
                     long watts = (deltaWh * 3600000L + elapsedMs / 2L) / elapsedMs;
-                    derivedPowerKw = (int)Math.min(43L,
+                    int rawKw = (int)Math.min(43L,
                         Math.max(0L, (watts + 500L) / 1000L));
+                    lastRawPowerKw = rawKw;
+                    derivedPowerKw = pushRawPowerSample(rawKw);
                     derivedPowerMs = now;
                     writeInfoPower(satellite, derivedPowerKw);
                     energyAnchorWh = energyWh;
@@ -137,6 +145,8 @@ final class AcPowerTelemetry extends Thread {
 
             if (derivedPowerMs > 0L && now - derivedPowerMs > POWER_STALE_MS) {
                 derivedPowerKw = 0;
+                lastRawPowerKw = 0;
+                clearRawPowerWindow();
                 writeInfoPower(satellite, 0);
                 // Re-anchor at the current counter so a later restart is based
                 // only on newly delivered energy, not on the stale interval.
@@ -149,11 +159,40 @@ final class AcPowerTelemetry extends Thread {
         }
     }
 
+    private int pushRawPowerSample(int kw) {
+        rawPowerWindow[rawPowerWindowIndex] = kw;
+        rawPowerWindowIndex = (rawPowerWindowIndex + 1) % rawPowerWindow.length;
+        if (rawPowerWindowCount < rawPowerWindow.length) rawPowerWindowCount++;
+
+        if (rawPowerWindowCount == 1) return rawPowerWindow[0];
+        if (rawPowerWindowCount == 2) {
+            return (rawPowerWindow[0] + rawPowerWindow[1] + 1) / 2;
+        }
+        return median3(rawPowerWindow[0], rawPowerWindow[1], rawPowerWindow[2]);
+    }
+
+    static int median3(int a, int b, int c) {
+        if (a > b) { int t = a; a = b; b = t; }
+        if (b > c) { int t = b; b = c; c = t; }
+        if (a > b) { int t = a; a = b; b = t; }
+        return b;
+    }
+
+    private void clearRawPowerWindow() {
+        rawPowerWindow[0] = 0;
+        rawPowerWindow[1] = 0;
+        rawPowerWindow[2] = 0;
+        rawPowerWindowCount = 0;
+        rawPowerWindowIndex = 0;
+    }
+
     private void resetPowerEstimate(Object satellite) {
         energyAnchorWh = -1L;
         energyAnchorMs = 0L;
         derivedPowerKw = 0;
+        lastRawPowerKw = 0;
         derivedPowerMs = 0L;
+        clearRawPowerWindow();
         try { writeInfoPower(satellite, 0); } catch (Throwable ignored) {}
     }
 
