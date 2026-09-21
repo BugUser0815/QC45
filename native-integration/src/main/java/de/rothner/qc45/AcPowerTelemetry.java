@@ -15,8 +15,8 @@ import java.lang.reflect.Method;
 final class AcPowerTelemetry extends Thread {
     private static final int AC_CONNECTOR = 3;
     private static final int LOOP_MS = 250;
-    private static final long POWER_SAMPLE_MS = 1500L;
-    private static final long POWER_STALE_MS = 3500L;
+    private static final long POWER_WINDOW_MS = 1000L;
+    private static final long POWER_STALE_MS = 2500L;
     private static final long DIAGNOSTIC_LOG_MS = 5000L;
     private static final long ERROR_LOG_MS = 5000L;
     private static final String CENTRAL =
@@ -29,8 +29,8 @@ final class AcPowerTelemetry extends Thread {
     private long sessionStartedMs;
     private long lastDiagnosticLogMs;
     private long lastErrorLogMs;
-    private long lastEnergyWh = -1L;
-    private long lastEnergySampleMs;
+    private long energyAnchorWh = -1L;
+    private long energyAnchorMs;
     private int derivedPowerKw;
     private long derivedPowerMs;
 
@@ -49,7 +49,7 @@ final class AcPowerTelemetry extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] AC power telemetry started mode=energy-delta read-only no-MobiBus-writes");
+        System.out.println("[QC45] AC power telemetry started mode=energy-delta-1s read-only no-MobiBus-writes");
         while (running) {
             long now = System.currentTimeMillis();
             try {
@@ -102,6 +102,15 @@ final class AcPowerTelemetry extends Thread {
         interrupt();
     }
 
+    /**
+     * Build a near-live value from the cumulative Wh counter.
+     *
+     * We intentionally do not move the energy/time anchor on every 250 ms poll.
+     * Instead we accumulate counter changes for roughly one second and calculate
+     * one fresh slope from that short interval. This avoids the old 1.5 s sample
+     * lag and also avoids treating a single poll with no new Wh tick as 0 kW.
+     * The most recent valid value is held briefly until a new energy delta arrives.
+     */
     private int updateLivePowerEstimate(Object satellite, boolean session, long now) {
         if (!session) return 0;
         try {
@@ -109,27 +118,30 @@ final class AcPowerTelemetry extends Thread {
             int directKw = direct instanceof Number ? ((Number)direct).intValue() : 0;
             long energyWh = currentEnergyWh(satellite);
 
-            if (lastEnergyWh < 0L) {
-                lastEnergyWh = energyWh;
-                lastEnergySampleMs = now;
-            } else if (now - lastEnergySampleMs >= POWER_SAMPLE_MS) {
-                long elapsedMs = now - lastEnergySampleMs;
-                long deltaWh = energyWh >= lastEnergyWh ? energyWh - lastEnergyWh : -1L;
-                if (deltaWh >= 0L) {
-                    long watts = elapsedMs <= 0L ? 0L
-                        : (deltaWh * 3600000L + elapsedMs / 2L) / elapsedMs;
+            if (energyAnchorWh < 0L || energyWh < energyAnchorWh) {
+                energyAnchorWh = energyWh;
+                energyAnchorMs = now;
+            } else {
+                long elapsedMs = now - energyAnchorMs;
+                long deltaWh = energyWh - energyAnchorWh;
+                if (deltaWh > 0L && elapsedMs >= POWER_WINDOW_MS) {
+                    long watts = (deltaWh * 3600000L + elapsedMs / 2L) / elapsedMs;
                     derivedPowerKw = (int)Math.min(43L,
                         Math.max(0L, (watts + 500L) / 1000L));
                     derivedPowerMs = now;
                     writeInfoPower(satellite, derivedPowerKw);
+                    energyAnchorWh = energyWh;
+                    energyAnchorMs = now;
                 }
-                lastEnergyWh = energyWh;
-                lastEnergySampleMs = now;
             }
 
-            if (now - derivedPowerMs > POWER_STALE_MS) {
+            if (derivedPowerMs > 0L && now - derivedPowerMs > POWER_STALE_MS) {
                 derivedPowerKw = 0;
                 writeInfoPower(satellite, 0);
+                // Re-anchor at the current counter so a later restart is based
+                // only on newly delivered energy, not on the stale interval.
+                energyAnchorWh = energyWh;
+                energyAnchorMs = now;
             }
             return derivedPowerKw > 0 ? derivedPowerKw : Math.max(0, directKw);
         } catch (Throwable ignored) {
@@ -138,8 +150,8 @@ final class AcPowerTelemetry extends Thread {
     }
 
     private void resetPowerEstimate(Object satellite) {
-        lastEnergyWh = -1L;
-        lastEnergySampleMs = 0L;
+        energyAnchorWh = -1L;
+        energyAnchorMs = 0L;
         derivedPowerKw = 0;
         derivedPowerMs = 0L;
         try { writeInfoPower(satellite, 0); } catch (Throwable ignored) {}
