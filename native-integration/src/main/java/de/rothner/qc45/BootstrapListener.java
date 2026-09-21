@@ -7,6 +7,7 @@ import javax.servlet.ServletContextListener;
 public final class BootstrapListener implements ServletContextListener {
     private volatile Integration integration;
     private volatile AcPowerTelemetry acPowerTelemetry;
+    private volatile AcFixedPowerBridge acFixedPowerBridge;
 
     public void contextInitialized(ServletContextEvent event) {
         try {
@@ -21,26 +22,26 @@ public final class BootstrapListener implements ServletContextListener {
         try {
             integration = Integration.start();
 
-            // The stock configuration has AC.load.balance.enabled=false. In
-            // that mode EVCSD accepts maxPowerAC / satelliteMaxPower changes in
-            // Java but does not serialize the normal Type2 power limit. Enable
-            // the original Efacec AC load-balance path so LoadManager can use
-            // the native satellite setpoint state without our own ENERGY packet.
-            AcLoadBalanceMode.enableRequired();
+            // The original Efacec build has two normal-AC limit paths. Its
+            // AC-load-balance path divides maxPowerAC by getSatsInCharge()
+            // without a zero guard. On this old Type2 satellite that status can
+            // remain IDLE while a transaction is physically charging, so the
+            // divisor path can effectively remove the limit. Mirror our dynamic
+            // satellite target into ACMaxPowerFixed instead; stock EVCSD then
+            // carries it in START_CHARGE and its periodic ENERGY requests.
+            acFixedPowerBridge = AcFixedPowerBridge.startRequired();
 
             // Inventory the stock Efacec AC implementation without invoking any
             // candidate methods. The log gives us the exact runtime method/field
-            // surface and the source JAR locations for the next reverse-engineering
-            // step while leaving charging behaviour unchanged.
+            // surface and the source JAR locations for further diagnostics while
+            // leaving charging behaviour unchanged.
             AcNativeIntrospector.dumpOnce();
 
-            // Keep the former MobiBus writer disabled. Its explicit ENERGY
-            // request reproducibly stopped the BMW i3. We still need the
-            // read-only energy-delta sampler, because the old EVCSD leaves the
-            // Type2 infoState.power field at zero while charging. Without that
-            // telemetry LoadManager/UI incorrectly report Netz-Pause / 0 kW.
+            // Keep the former custom MobiBus writer disabled. Stock EVCSD owns
+            // START_CHARGE/ENERGY serialization. We only derive live AC power
+            // from the energy counter for LoadManager/UI telemetry.
             acPowerTelemetry = AcPowerTelemetry.startRequired();
-            System.out.println("[QC45] AC native setpoint mode active: dynamic satelliteMaxPower/maxPowerAC, own ENERGY transport disabled, telemetry=energy-delta");
+            System.out.println("[QC45] AC native setpoint mode active: dynamic satelliteMaxPower -> ACMaxPowerFixed, stock ENERGY transport, own ENERGY transport disabled, telemetry=energy-delta");
 
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
@@ -64,6 +65,17 @@ public final class BootstrapListener implements ServletContextListener {
                     telemetry.join(1000L);
                 } catch (Throwable stopError) {
                     System.err.println("[QC45] failed AC telemetry cleanup: " + stopError);
+                }
+            }
+
+            AcFixedPowerBridge bridge = acFixedPowerBridge;
+            acFixedPowerBridge = null;
+            if (bridge != null) {
+                try {
+                    bridge.shutdown();
+                    bridge.join(1000L);
+                } catch (Throwable stopError) {
+                    System.err.println("[QC45] failed AC fixed-limit bridge cleanup: " + stopError);
                 }
             }
 
@@ -93,6 +105,14 @@ public final class BootstrapListener implements ServletContextListener {
         if (telemetry != null) {
             telemetry.shutdown();
             try { telemetry.join(1000L); }
+            catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        }
+
+        AcFixedPowerBridge bridge = acFixedPowerBridge;
+        acFixedPowerBridge = null;
+        if (bridge != null) {
+            bridge.shutdown();
+            try { bridge.join(1000L); }
             catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
         }
 
