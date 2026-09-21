@@ -1,5 +1,6 @@
 package de.rothner.qc45;
 
+import java.lang.reflect.Field;
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
 
@@ -21,19 +22,25 @@ public final class BootstrapListener implements ServletContextListener {
         try {
             integration = Integration.start();
 
+            // Diagnostic isolation for the current Type2 problem: keep AC at
+            // the proven 5 kW start value so LoadManager cannot request a later
+            // 6/7/8 kW step while we verify the stock EVCSD start path.
+            forceAcDiagnosticBudget(integration);
+
             // The stock configuration has AC.load.balance.enabled=false. In
             // that mode EVCSD accepts maxPowerAC changes in Java but omits the
             // actual max-power payload from normal AC MobiBus messages. Enable
-            // the firmware's own positive-limit transport after Integration has
-            // established its fail-closed initial targets.
+            // it so the original START_CHARGE contains the 5 kW pre-armed limit.
             AcLoadBalanceMode.enableRequired();
 
-            // Zero has different semantics on the original Type2 protocol. The
-            // stock load-shed code never sends a 0 kW limit and the satellite
-            // has an explicit SUSPEND_CHARGE command. Keep a dedicated transport
-            // alongside EVCSD so 0 kW really pauses AC and a later positive
-            // release resumes through the native START_CHARGE packet.
-            acPowerLimitTransport = AcPowerLimitTransport.startRequired(integration);
+            // Do NOT start AcPowerLimitTransport in this diagnostic build.
+            // The BMW i3 trace showed that charging collapsed immediately after
+            // our first explicit ENERGY update. Keeping this transport stopped
+            // guarantees that the integration sends no own ENERGY power-limit
+            // packet during an active AC session. GridFailback/HardTrip remain
+            // inside Integration and can still stop a transaction independently.
+            acPowerLimitTransport = null;
+            System.out.println("[QC45] AC DIAGNOSTIC MODE active: fixed 5kW, own ENERGY transport disabled");
 
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
@@ -65,9 +72,9 @@ public final class BootstrapListener implements ServletContextListener {
                 // Integration.start() has already installed the independent
                 // limit guard. Keep it alive: stopping the integration here
                 // would let stock EVCSD restore unsafe positive limits after a
-                // required AC transport/setup failure.
+                // required AC setup failure.
                 degraded.enterPersistentDegradedSafety(
-                    "required AC transport/setup failed", e);
+                    "required AC diagnostic setup failed", e);
                 try {
                     event.getServletContext().setAttribute(
                         "qc45.native.integration", degraded);
@@ -78,6 +85,19 @@ public final class BootstrapListener implements ServletContextListener {
             System.err.println("[QC45] native integration startup DEGRADED; safety guard remains active: " + e);
             e.printStackTrace();
         }
+    }
+
+    private static void forceAcDiagnosticBudget(Integration integration) throws Exception {
+        Field field = Integration.class.getDeclaredField("limits");
+        field.setAccessible(true);
+        Object value = field.get(integration);
+        if (!(value instanceof ChargingLimitCoordinator)) {
+            throw new IllegalStateException("ChargingLimitCoordinator unavailable");
+        }
+        ChargingLimitCoordinator limits = (ChargingLimitCoordinator)value;
+        limits.requestAcBudget(ChargingLimitCoordinator.AC_NOTLADEN_KW);
+        System.out.println("[QC45] AC diagnostic cap="
+            + ChargingLimitCoordinator.AC_NOTLADEN_KW + "kW");
     }
 
     public void contextDestroyed(ServletContextEvent event) {
