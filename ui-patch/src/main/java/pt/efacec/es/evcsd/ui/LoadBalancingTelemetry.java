@@ -60,9 +60,11 @@ final class LoadBalancingTelemetry {
 
         int nativeAcKw = value[12];
         int directAcKw = nativeAcKw > 0 ? 0 : liveType2PowerKw();
-        acActualKw = nativeAcKw > 0 ? nativeAcKw
-            : directAcKw > 0 ? directAcKw
-            : averagePowerKw(acEnergyWh, acSeconds);
+        // Never use energy-since-start / session-duration as an "actual" power
+        // value. That is a whole-session average and visibly trails every real
+        // power change. A missing live value must remain 0 until fresh telemetry
+        // arrives rather than being disguised as a stale average.
+        acActualKw = nativeAcKw > 0 ? nativeAcKw : Math.max(0, directAcKw);
 
         acRequestedKw = value[13];
         acGridKw = value[14];
@@ -207,13 +209,6 @@ final class LoadBalancingTelemetry {
             catch (NoSuchFieldException ignored) { current = current.getSuperclass(); }
         }
         return null;
-    }
-
-    private static int averagePowerKw(long energyWh, int seconds) {
-        if (energyWh <= 0L || seconds <= 0) return 0;
-        long watts = (energyWh * 3600L + seconds / 2L) / seconds;
-        long kw = (watts + 500L) / 1000L;
-        return (int)Math.min(65535L, Math.max(0L, kw));
     }
 
     private static long words(int high, int low) {
