@@ -247,7 +247,10 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
     private boolean isChargingSession() {
         if (freshBalancingData(System.currentTimeMillis())) {
-            if (lastBalancingData.dcSession() || lastBalancingData.acSession()) return true;
+            // Fresh native session flags are authoritative in both directions.
+            // Falling through on idle revives stale ChargeInfo/UI markers and
+            // leaves the display on "Ladung freigegeben" after StopTransaction.
+            return lastBalancingData.dcSession() || lastBalancingData.acSession();
         }
         int state = AlpitronicSessionState.get();
         if (state != AlpitronicSessionState.UNKNOWN) return state == AlpitronicSessionState.CHARGING;

@@ -1,5 +1,6 @@
 package de.rothner.qc45;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -19,6 +20,8 @@ import java.util.List;
 final class AcPowerLimitTransport extends Thread {
     private static final int AC_CONNECTOR = 3;
     private static final int LOOP_MS = 250;
+    private static final long SESSION_START_GRACE_MS = 5000L;
+    private static final long DIAGNOSTIC_LOG_MS = 5000L;
     private static final long POWER_SAMPLE_MS = 1500L;
     private static final long POWER_STALE_MS = 3500L;
     private static final long ERROR_LOG_MS = 5000L;
@@ -37,6 +40,9 @@ final class AcPowerLimitTransport extends Thread {
     private volatile boolean running = true;
     private int lastTargetKw = -1;
     private long lastErrorLogMs;
+    private boolean sessionObserved;
+    private long sessionStartedMs;
+    private long lastDiagnosticLogMs;
 
     private long lastEnergyWh = -1L;
     private long lastEnergySampleMs;
@@ -87,17 +93,47 @@ final class AcPowerLimitTransport extends Thread {
                 int actualKw = updateLivePowerEstimate(satellite, session, now);
 
                 if (!session) {
+                    if (sessionObserved) {
+                        System.out.println("[QC45] AC session ended age="
+                            + Math.max(0L, now - sessionStartedMs) + "ms "
+                            + diagnostics(satellite, actualKw));
+                    }
+                    sessionObserved = false;
+                    sessionStartedMs = 0L;
+                    lastDiagnosticLogMs = 0L;
                     lastTargetKw = -1;
                     resetPowerEstimate(satellite);
                 } else {
                     int targetKw = limits.acMobiBusTargetKw();
-                    if (targetKw != lastTargetKw) {
+                    if (!sessionObserved) {
+                        sessionObserved = true;
+                        sessionStartedMs = now;
+                        lastDiagnosticLogMs = now;
+                        // The stock EVCSD START_CHARGE already contains the
+                        // pre-armed maxPower value. Do not race that handshake
+                        // with our own ENERGY request. The BMW i3 trace showed
+                        // this duplicate request immediately after START_CHARGE,
+                        // followed by a no-power timeout after 30 seconds.
+                        lastTargetKw = station.limitKw(AC_CONNECTOR);
+                        System.out.println("[QC45] AC session started native-start-limit="
+                            + lastTargetKw + "kW requested=" + targetKw
+                            + "kW energy-update-deferred=" + SESSION_START_GRACE_MS
+                            + "ms " + diagnostics(satellite, actualKw));
+                    } else if (shouldSendEnergy(now, sessionStartedMs,
+                                                targetKw, lastTargetKw)) {
                         send(satellite, "ENERGY", targetKw, true, false, 400L);
                         System.out.println("[QC45] AC MobiBus LIMIT target="
                             + targetKw + "kW packet=" + (targetKw * 10)
                             + " deci-kW actual=" + actualKw + "kW"
                             + " blockers=" + limits.blockReason());
                         lastTargetKw = targetKw;
+                    }
+                    if (now - lastDiagnosticLogMs >= DIAGNOSTIC_LOG_MS) {
+                        System.out.println("[QC45] AC session trace age="
+                            + Math.max(0L, now - sessionStartedMs) + "ms target="
+                            + targetKw + "kW applied=" + lastTargetKw + "kW "
+                            + diagnostics(satellite, actualKw));
+                        lastDiagnosticLogMs = now;
                     }
                 }
             } catch (Throwable error) {
@@ -124,6 +160,13 @@ final class AcPowerLimitTransport extends Thread {
     void shutdown() {
         running = false;
         interrupt();
+    }
+
+    static boolean shouldSendEnergy(long now, long sessionStarted,
+                                    int targetKw, int appliedTargetKw) {
+        return sessionStarted > 0L
+            && now - sessionStarted >= SESSION_START_GRACE_MS
+            && targetKw != appliedTargetKw;
     }
 
     /**
@@ -156,6 +199,9 @@ final class AcPowerLimitTransport extends Thread {
             if (!(result instanceof List) || ((List<?>)result).isEmpty()) {
                 throw new IllegalStateException(actionName + " returned no MobiBus reply");
             }
+            System.out.println("[QC45] AC MobiBus reply action=" + actionName
+                + " entries=" + ((List<?>)result).size()
+                + " first=" + compact(((List<?>)result).get(0)));
         }
     }
 
@@ -183,6 +229,87 @@ final class AcPowerLimitTransport extends Thread {
         // transport can release a positive grid-approved target. Divergent
         // legacy-user fallbacks caused SUSPEND_CHARGE to loop at 0 kW.
         return station.sessionActive(AC_CONNECTOR);
+    }
+
+    private String diagnostics(Object satellite, int actualKw) {
+        StringBuilder out = new StringBuilder(192);
+        out.append("activeTx=").append(call(satellite, "getActiveTransaction"));
+        out.append(" status=").append(firstCall(satellite,
+            new String[] { "getStatus", "getCurrentStatus", "getState" }));
+        out.append(" charging=").append(firstCall(satellite,
+            new String[] { "isCharging", "getCharging" }));
+        out.append(" inUse=").append(firstCall(satellite,
+            new String[] { "isInUse", "getInUse" }));
+        out.append(" cable=").append(firstCall(satellite,
+            new String[] { "isCableConnected", "getCableConnected", "getCableStatus" }));
+        out.append(" power=").append(actualKw).append("kW");
+        out.append(" energy=").append(call(satellite, "getCurrentEnergy"));
+        Object info = null;
+        try { info = fieldValue(satellite, "infoState"); } catch (Throwable ignored) {}
+        out.append(" acDTC=").append(field(info, "acDTC"));
+        out.append(" infoStatus=").append(firstField(info,
+            new String[] { "status", "state", "chargingStatus" }));
+        out.append(" infoCharging=").append(firstField(info,
+            new String[] { "charging", "isCharging" }));
+        out.append(" infoCable=").append(firstField(info,
+            new String[] { "cableConnected", "cable", "plugged" }));
+        return out.toString();
+    }
+
+    private static String firstCall(Object owner, String[] names) {
+        for (int i = 0; i < names.length; i++) {
+            String value = call(owner, names[i]);
+            if (!"n/a".equals(value)) return names[i] + "=" + value;
+        }
+        return "n/a";
+    }
+
+    private static String call(Object owner, String name) {
+        if (owner == null) return "n/a";
+        try {
+            Method method = findZeroArgMethod(owner.getClass(), name);
+            if (method == null) return "n/a";
+            return compact(method.invoke(owner));
+        } catch (Throwable ignored) {
+            return "n/a";
+        }
+    }
+
+    private static String firstField(Object owner, String[] names) {
+        for (int i = 0; i < names.length; i++) {
+            String value = field(owner, names[i]);
+            if (!"n/a".equals(value)) return names[i] + "=" + value;
+        }
+        return "n/a";
+    }
+
+    private static String field(Object owner, String name) {
+        if (owner == null) return "n/a";
+        try {
+            Field value = findField(owner.getClass(), name);
+            if (value == null) return "n/a";
+            value.setAccessible(true);
+            return compact(value.get(owner));
+        } catch (Throwable ignored) {
+            return "n/a";
+        }
+    }
+
+    private static String compact(Object value) {
+        if (value == null) return "null";
+        Class<?> type = value.getClass();
+        if (type.isArray()) {
+            StringBuilder out = new StringBuilder("[");
+            int length = Math.min(Array.getLength(value), 6);
+            for (int i = 0; i < length; i++) {
+                if (i > 0) out.append(',');
+                out.append(String.valueOf(Array.get(value, i)));
+            }
+            if (Array.getLength(value) > length) out.append(",...");
+            return out.append(']').toString();
+        }
+        String text = String.valueOf(value).replace('\n', ' ').replace('\r', ' ');
+        return text.length() <= 80 ? text : text.substring(0, 77) + "...";
     }
 
     /**
@@ -278,6 +405,22 @@ final class AcPowerLimitTransport extends Thread {
             current = current.getSuperclass();
         }
         throw new NoSuchMethodException("waitForAnswer");
+    }
+
+    private static Method findZeroArgMethod(Class<?> type, String name) {
+        Class<?> current = type;
+        while (current != null) {
+            try {
+                Method method = current.getDeclaredMethod(name);
+                method.setAccessible(true);
+                return method;
+            } catch (NoSuchMethodException ignored) {
+                current = current.getSuperclass();
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
 

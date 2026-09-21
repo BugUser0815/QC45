@@ -49,24 +49,32 @@ SUSPEND_CHARGE
 
 Daraus folgt für die native Integration:
 
-- `> 0 kW`: Leistungsgrenze per `ENERGY` bzw. beim Wiederanlauf per `START_CHARGE`
-- `0 kW`: **nicht** als normales `maxPower=0` behandeln, sondern `SUSPEND_CHARGE` senden
+- `> 0 kW`: Leistungsgrenze per `ENERGY`
+- logisch `0 kW`: während einer autorisierten Sitzung physisch `5 kW`
+  Notladen; der Hard-Trip beendet die Transaktion unabhängig per RemoteStop
 
 ## Implementierung
 
 `AcPowerLimitTransport` läuft innerhalb der EVCSD-Webapp und beobachtet den wirksamen AC-Sollwert des `ChargingLimitCoordinator`.
 
-### Freigabe 0 kW
+### Logische Freigabe 0 kW
 
-Bei aktiver Type2-Sitzung und effektivem Sollwert `0 kW` wird sofort ein natives MobiBus-`SUSPEND_CHARGE` an Satellit 3 gesendet. Solange die Freigabe 0 bleibt, wird der Suspend-Befehl jede Sekunde erneut bestätigt.
-
-Damit können weder ein alter Java-Cached-Wert noch ein späterer Legacy-EVCSD-Schreibzugriff die Nullfreigabe nur scheinbar erfüllen.
+Bei aktiver Type2-Sitzung wird ein logischer Sollwert von `0 kW` als `5 kW`
+Notladen übertragen. Das entspricht der DC-Regelung und hält für ein
+dreiphasiges Fahrzeug mindestens 6 A je Phase bereit. Netzschutz-Hard-Trips
+enden die Sitzung per RemoteStop. Beim Beenden der Integration bleibt
+`SUSPEND_CHARGE` als zusätzlicher Abschaltpfad erhalten.
 
 ### Positive Freigabe
 
-Ändert sich ein positiver Sollwert während einer laufenden Sitzung, sendet der Transport sofort ein `ENERGY`-Paket mit dem Sollwert in 0,1-kW-Einheiten.
+Ändert sich ein positiver Sollwert während einer laufenden Sitzung, sendet der Transport ein `ENERGY`-Paket mit dem Sollwert in 0,1-kW-Einheiten.
 
-Nach einer echten Suspend-Phase wird mit einem nativen `START_CHARGE` wieder freigegeben. Dabei wird derselbe Kredit-/Schlüsselmechanismus wie im Original-EVCSD verwendet; die bestehende Transaktion wird nicht neu angelegt und die Sitzungsenergie wird nicht zurückgesetzt.
+Beim Sitzungsstart enthält bereits das originale `START_CHARGE`-Telegramm die
+vorab gesetzte Leistungsgrenze. Die Integration lässt diesem nativen Handshake
+fünf Sekunden Zeit und sendet in diesem Fenster kein zusätzliches `ENERGY`-
+Telegramm. Das verhindert eine parallele MobiBus-Anfrage während der
+Schütz-/CP-Freigabe. Nach dem Startfenster werden geänderte Sollwerte weiterhin
+sofort per `ENERGY` übertragen.
 
 ### Aktuelle AC-Leistung
 
@@ -82,7 +90,7 @@ einen brauchbaren aktuellen AC-Leistungswert statt dauerhaft `0 kW` oder eines D
 
 ## Sicherheitsverhalten
 
-Der bestehende `ChargingLimitGuard` bleibt unverändert aktiv. Er reassertiert Nullfreigaben ohnehin regelmäßig. Durch die neue Type2-Leistungsermittlung kann er jetzt zusätzlich erkennen, wenn trotz `0 kW` physisch noch Leistung fließt, und bei anhaltender Abweichung den vorhandenen `LIMIT_MISMATCH`-Hard-Stop auslösen.
+Der bestehende `ChargingLimitGuard` bleibt aktiv. Durch die Type2-Leistungsermittlung kann er erkennen, wenn die gemessene Leistung vom wirksamen Notlade- oder Regelsollwert abweicht, und bei anhaltender Abweichung den vorhandenen `LIMIT_MISMATCH`-Hard-Stop auslösen.
 
 Beim Beenden bzw. Neuladen der nativen Integration wird eine noch aktive AC-Sitzung vorsorglich per `SUSPEND_CHARGE` pausiert.
 
@@ -91,19 +99,17 @@ Beim Beenden bzw. Neuladen der nativen Integration wird eine noch aktive AC-Sitz
 Beim Start:
 
 ```text
-[QC45] AC MobiBus power-limit transport started zero=SUSPEND_CHARGE positive=ENERGY resume=START_CHARGE power=energy-delta
+[QC45] AC MobiBus power-limit transport started logical-zero=5kW limits=ENERGY hard-trip=RemoteStop power=energy-delta
 ```
 
-Bei 0-kW-Freigabe:
+Beim Erkennen und während einer AC-Sitzung werden zusätzlich der native
+Transaktionszustand, Kabel-/Ladestatus, Energiezähler und `acDTC` protokolliert.
+Damit ist ein erneuter Abbruch ohne separates Debug-Build auswertbar.
+
+Beim nativen Sitzungsstart:
 
 ```text
-[QC45] AC MobiBus SUSPEND target=0kW actual=11kW reassert=false
-```
-
-Bei erneuter positiver Freigabe:
-
-```text
-[QC45] AC MobiBus RESUME target=11kW packet=110 deci-kW
+[QC45] AC session started native-start-limit=5kW requested=5kW energy-update-deferred=5000ms ...
 ```
 
 Bei einer Änderung einer positiven Grenze:

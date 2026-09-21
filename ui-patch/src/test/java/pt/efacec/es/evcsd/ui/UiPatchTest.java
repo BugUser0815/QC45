@@ -22,6 +22,7 @@ public final class UiPatchTest {
         verifyLogoResource();
         verifyAkkuboostConfiguration();
         verifyDecoder();
+        verifyFreshIdleEndsSession();
         render(args[0], 0);
         render(args[1], 1);
         render(args[2], 2);
@@ -137,6 +138,27 @@ public final class UiPatchTest {
             throw new AssertionError("unknown schema version accepted");
         } catch (IllegalArgumentException expected) {
             // expected
+        }
+    }
+
+    private static void verifyFreshIdleEndsSession() throws Exception {
+        InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
+        try {
+            AlpitronicSessionState.markCharging();
+            new pt.efacec.es.evcsd.ui.info.ChargeInfo(true);
+            int[] raw = telemetry(0, true);
+            raw[1] = LoadBalancingTelemetry.FLAG_REMOTE_START;
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(raw));
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
+            Method session = WaitingForCardChargingTimer.class.getDeclaredMethod(
+                "isChargingSession");
+            session.setAccessible(true);
+            require(!((Boolean)session.invoke(panel)).booleanValue(),
+                "fresh idle telemetry must override stale charging markers");
+        } finally {
+            panel.stop();
+            AlpitronicSessionState.markIdle();
+            new pt.efacec.es.evcsd.ui.info.ChargeInfo(false);
         }
     }
 

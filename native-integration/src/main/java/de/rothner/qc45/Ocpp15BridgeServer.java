@@ -14,10 +14,12 @@ import java.net.InetSocketAddress;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,6 +50,7 @@ public final class Ocpp15BridgeServer {
     private final ChargingLimitCoordinator limits;
     private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private final Map<Integer,String> lastForwardedStatus = new HashMap<Integer,String>();
+    private final Set<Integer> endingConnectors = new HashSet<Integer>();
     private HttpServer server;
     private ExecutorService executor;
 
@@ -192,6 +195,9 @@ public final class Ocpp15BridgeServer {
                 synchronized (activeTransactions) {
                     activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector));
                 }
+                synchronized (endingConnectors) {
+                    endingConnectors.remove(Integer.valueOf(connector));
+                }
                 sendDerivedStatusBestEffort(connector);
             }
             return soapEnvelope("<startTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
@@ -206,15 +212,26 @@ public final class Ocpp15BridgeServer {
         }
         if ("stopTransaction".equals(op)) {
             int tx = intText(xml, "transactionId", 0);
+            // EVCSD can post the following Available status on another bridge
+            // worker while the upstream StopTransaction call is still waiting.
+            // Clear the local mapping first so that concurrent status cannot be
+            // rewritten to SuspendedEV from a transaction that has already ended.
+            Integer connector;
+            synchronized (activeTransactions) {
+                connector = activeTransactions.remove(Integer.valueOf(tx));
+            }
+            if (connector != null && connector.intValue() > 0) {
+                synchronized (endingConnectors) {
+                    endingConnectors.add(connector);
+                }
+            }
+            upstream.forgetTransaction(tx);
             String ts = elementText(xml, "timestamp"); if (ts.length() == 0) ts = utcNow();
             String json = "{" + n("transactionId", tx) + "," + n("meterStop", longText(xml, "meterStop", 0)) + "," + q("timestamp", ts);
             String id = elementText(xml, "idTag"); if (id.length() > 0) json += "," + q("idTag", id);
             String reason = elementText(xml, "reason"); if (reason.length() > 0) json += "," + q("reason", reason);
             json += "}";
             String result = upstream.call("StopTransaction", json, timeoutMs);
-            Integer connector;
-            synchronized (activeTransactions) { connector = activeTransactions.remove(Integer.valueOf(tx)); }
-            upstream.forgetTransaction(tx);
             if (connector != null && connector.intValue() > 0) sendFinishingBestEffort(connector.intValue());
             if (result.indexOf("idTagInfo") >= 0) {
                 return soapEnvelope("<stopTransactionResponse xmlns=\"" + OCPP15_NS + "\">" + idTagInfoXml(result, "Accepted") + "</stopTransactionResponse>");
@@ -244,6 +261,7 @@ public final class Ocpp15BridgeServer {
 
     private String translatedStatus(int connector, String incoming) {
         if (connector <= 0 || !isNormalChargeStatus(incoming)) return incoming;
+        if (isEnding(connector)) return incoming;
         try {
             return derivedStatus(incoming, station.powerKw(connector),
                 hasActiveTransaction(connector) || liveTransactionActive(connector),
@@ -270,6 +288,7 @@ public final class Ocpp15BridgeServer {
 
     private void sendDerivedStatusBestEffort(int connector) {
         if (connector <= 0) return;
+        if (isEnding(connector)) return;
         try {
             boolean active = hasActiveTransaction(connector) || liveTransactionActive(connector);
             if (!active && station.powerKw(connector) <= 0) return;
@@ -283,6 +302,12 @@ public final class Ocpp15BridgeServer {
             System.out.println("[QC45] OCPP derived status connector=" + connector + " status=" + status);
         } catch (Throwable e) {
             System.err.println("[QC45] OCPP derived status failed connector=" + connector + ": " + e);
+        }
+    }
+
+    private boolean isEnding(int connector) {
+        synchronized (endingConnectors) {
+            return endingConnectors.contains(Integer.valueOf(connector));
         }
     }
 
