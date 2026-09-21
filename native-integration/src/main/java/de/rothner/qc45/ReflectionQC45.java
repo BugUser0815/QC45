@@ -129,7 +129,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         if (f == null) return fallback;
         f.setAccessible(true);
         Object value = f.get(owner);
-        return value instanceof Boolean ? ((Boolean)value).booleanValue() : fallback;
+        return value instanceof Boolean && ((Boolean)value).booleanValue();
     }
 
     public int quickChargeMaxCurrentA(int connector) throws Exception {
@@ -315,8 +315,10 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
 
         if (connector == 3) {
+            // maxPowerAC is the runtime Type2 setpoint. ACMaxPowerFixed is the
+            // configured hardware ceiling (43 kW on this QC45) and must not be
+            // collapsed to the dynamic 5 kW Notladen target.
             bestEffortSetMaxPowerACField(conf, kw);
-            bestEffortSetAcMaxPowerFixed(conf, kw);
         } else {
             bestEffortSetDcMaxPowerFixed(conf, kw);
         }
