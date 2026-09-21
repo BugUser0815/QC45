@@ -6,6 +6,7 @@ import javax.servlet.ServletContextListener;
 /** Starts/stops the native integration with the existing EVCSD web application. */
 public final class BootstrapListener implements ServletContextListener {
     private volatile Integration integration;
+    private volatile AcPowerTelemetry acPowerTelemetry;
 
     public void contextInitialized(ServletContextEvent event) {
         try {
@@ -24,16 +25,16 @@ public final class BootstrapListener implements ServletContextListener {
             // that mode EVCSD accepts maxPowerAC / satelliteMaxPower changes in
             // Java but does not serialize the normal Type2 power limit. Enable
             // the original Efacec AC load-balance path so LoadManager can use
-            // the same native satellite setpoint approach as DC.
+            // the native satellite setpoint state without our own ENERGY packet.
             AcLoadBalanceMode.enableRequired();
 
-            // Intentionally do not start AcPowerLimitTransport. LoadManager and
-            // ChargingLimitCoordinator already write each dynamic AC target to
-            // Configuration.maxPowerAC and SatelliteModule.setMaxPower(). The
-            // stock EVCSD owns MobiBus serialization. Our reverse-engineered
-            // explicit ENERGY packet caused the BMW i3 to stop charging as soon
-            // as the first live power update was sent.
-            System.out.println("[QC45] AC native setpoint mode active: dynamic satelliteMaxPower/maxPowerAC, own ENERGY transport disabled");
+            // Keep the former MobiBus writer disabled. Its explicit ENERGY
+            // request reproducibly stopped the BMW i3. We still need the
+            // read-only energy-delta sampler, because the old EVCSD leaves the
+            // Type2 infoState.power field at zero while charging. Without that
+            // telemetry LoadManager/UI incorrectly report Netz-Pause / 0 kW.
+            acPowerTelemetry = AcPowerTelemetry.startRequired();
+            System.out.println("[QC45] AC native setpoint mode active: dynamic satelliteMaxPower/maxPowerAC, own ENERGY transport disabled, telemetry=energy-delta");
 
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {
@@ -49,6 +50,17 @@ public final class BootstrapListener implements ServletContextListener {
                 traceError.printStackTrace();
             }
         } catch (Throwable e) {
+            AcPowerTelemetry telemetry = acPowerTelemetry;
+            acPowerTelemetry = null;
+            if (telemetry != null) {
+                try {
+                    telemetry.shutdown();
+                    telemetry.join(1000L);
+                } catch (Throwable stopError) {
+                    System.err.println("[QC45] failed AC telemetry cleanup: " + stopError);
+                }
+            }
+
             Integration degraded = integration;
             if (degraded != null) {
                 // Integration.start() has already installed the independent
@@ -70,6 +82,14 @@ public final class BootstrapListener implements ServletContextListener {
     }
 
     public void contextDestroyed(ServletContextEvent event) {
+        AcPowerTelemetry telemetry = acPowerTelemetry;
+        acPowerTelemetry = null;
+        if (telemetry != null) {
+            telemetry.shutdown();
+            try { telemetry.join(1000L); }
+            catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        }
+
         Integration current = integration;
         integration = null;
         if (current != null) current.stop();
