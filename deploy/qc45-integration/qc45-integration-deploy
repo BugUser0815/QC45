@@ -17,6 +17,7 @@ source "$config_file"
 : "${QC45_SSH_PORT:=22}"
 : "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
 : "${QC45_FORCE_DEPLOY:=0}"
+: "${QC45_JAVA_HOME:=}"
 
 readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
 readonly QC45_BRANCH="native-integration"
@@ -30,13 +31,33 @@ readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-integration-deployer"
 # the same time.
 readonly QC45_DEPLOY_LOCK="${HOME}/.local/state/qc45-ui-deployer/deploy.lock"
 
-required_commands=(git tar ssh scp mvn jar javap sha256sum mktemp awk grep flock sed)
+required_commands=(git tar ssh scp mvn sha256sum mktemp awk grep flock sed)
 for command_name in "${required_commands[@]}"; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         exit 2
     fi
 done
+
+if [[ -z "$QC45_JAVA_HOME" ]]; then
+    for java_home_candidate in /usr/lib/jvm/java-17-openjdk-*; do
+        if [[ -x "$java_home_candidate/bin/java" && -x "$java_home_candidate/bin/jar" && -x "$java_home_candidate/bin/javap" ]]; then
+            QC45_JAVA_HOME=$java_home_candidate
+            break
+        fi
+    done
+fi
+
+if [[ -z "$QC45_JAVA_HOME" || ! -x "$QC45_JAVA_HOME/bin/java" || ! -x "$QC45_JAVA_HOME/bin/jar" || ! -x "$QC45_JAVA_HOME/bin/javap" ]]; then
+    echo "OpenJDK 17 not found. Install openjdk-17-jdk-headless or set QC45_JAVA_HOME." >&2
+    exit 2
+fi
+
+java_version=$("$QC45_JAVA_HOME/bin/java" -version 2>&1 | awk -F'[\".]' '/version/{print $2; exit}')
+if [[ "$java_version" != 17 ]]; then
+    echo "QC45_JAVA_HOME must point to OpenJDK 17, got version ${java_version:-unknown}" >&2
+    exit 2
+fi
 
 if [[ ! "$QC45_SSH_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]]; then
     echo "Invalid QC45_SSH_TARGET: $QC45_SSH_TARGET" >&2
@@ -108,7 +129,8 @@ project_dir="$work_dir/native-integration"
 output_jar="$project_dir/target/qc45-integration-0.1.0.jar"
 
 echo "Building and testing the native integration..."
-mvn -B -f "$project_dir/pom.xml" clean verify
+JAVA_HOME="$QC45_JAVA_HOME" PATH="$QC45_JAVA_HOME/bin:$PATH" \
+    mvn -B -f "$project_dir/pom.xml" clean verify
 
 if [[ ! -s "$output_jar" ]]; then
     echo "Expected integration JAR was not produced: $output_jar" >&2
@@ -116,7 +138,7 @@ if [[ ! -s "$output_jar" ]]; then
 fi
 
 jar_listing="$work_dir/integration-jar.list"
-jar tf "$output_jar" >"$jar_listing"
+"$QC45_JAVA_HOME/bin/jar" tf "$output_jar" >"$jar_listing"
 required_classes=(
     de/rothner/qc45/BootstrapListener.class
     de/rothner/qc45/ChargingLimitCoordinator.class
@@ -131,7 +153,7 @@ for class_path in "${required_classes[@]}"; do
 done
 
 bootstrap_javap="$work_dir/bootstrap-javap.txt"
-javap -verbose -classpath "$output_jar" de.rothner.qc45.BootstrapListener >"$bootstrap_javap"
+"$QC45_JAVA_HOME/bin/javap" -verbose -classpath "$output_jar" de.rothner.qc45.BootstrapListener >"$bootstrap_javap"
 if ! grep -Fq 'major version: 51' "$bootstrap_javap"; then
     echo "Integration JAR is not Java 7 bytecode (major version 51)" >&2
     exit 1

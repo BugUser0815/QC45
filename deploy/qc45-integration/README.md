@@ -36,6 +36,11 @@ sudo apt update
 sudo apt install -y openjdk-17-jdk-headless maven
 ```
 
+Der Deployer sucht OpenJDK 17 unabhängig vom systemweiten Standard-Java unter
+`/usr/lib/jvm/java-17-openjdk-*`. Damit kann der vorhandene UI-Deployer weiter
+Java 21 verwenden. Bei einer abweichenden Installation kann `QC45_JAVA_HOME`
+in der lokalen Konfiguration gesetzt werden.
+
 Der vorhandene QC45-Deployschlüssel wird weiterverwendet. Die Konfiguration
 enthält standardmäßig:
 
