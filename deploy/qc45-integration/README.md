@@ -17,6 +17,8 @@ gestartet**. Ein reiner Prüflauf ohne Quelländerung löst keinen Reboot aus.
 - Prüfung auf Java-7-Bytecode und zentrale Integrationsklassen
 - SHA-256-Prüfung nach der Übertragung
 - Prüfung des `BootstrapListener` in `smartgrid/WEB-INF/web.xml`
+- gemeinsamer Lock mit dem vorhandenen UI-Deployer; beide Deployments können
+  die Station nicht gleichzeitig verändern oder neu starten
 - Sicherung der vorhandenen JAR und atomarer Austausch
 - vollständiger Systemneustart der QC45
 - Prüfung einer geänderten Kernel-Boot-ID

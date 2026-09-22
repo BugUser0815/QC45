@@ -25,6 +25,10 @@ readonly QC45_REMOTE_WEB_XML="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xm
 readonly QC45_REMOTE_LOG="/home/mobie/evcsd/qc45-integration.log"
 readonly QC45_REMOTE_MARKER="/home/mobie/evcsd/.qc45-integration-deploy-pending"
 readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-integration-deployer"
+# Keep using the UI deployer's established lock path so already-installed UI
+# deployers and this integration deployer cannot touch or reboot the QC45 at
+# the same time.
+readonly QC45_DEPLOY_LOCK="${HOME}/.local/state/qc45-ui-deployer/deploy.lock"
 
 required_commands=(git tar ssh scp mvn jar javap sha256sum mktemp awk grep flock sed)
 for command_name in "${required_commands[@]}"; do
@@ -54,10 +58,10 @@ if [[ "$QC45_FORCE_DEPLOY" != 0 && "$QC45_FORCE_DEPLOY" != 1 ]]; then
     exit 2
 fi
 
-mkdir -p "$QC45_STATE_DIR"
-exec 9>"$QC45_STATE_DIR/deploy.lock"
+mkdir -p "$QC45_STATE_DIR" "${QC45_DEPLOY_LOCK%/*}"
+exec 9>"$QC45_DEPLOY_LOCK"
 if ! flock -n 9; then
-    echo "Another QC45 integration deployment is already running."
+    echo "Another QC45 deployment is already running."
     exit 0
 fi
 
