@@ -29,17 +29,19 @@ gestartet**. Ein reiner Prüflauf ohne Quelländerung löst keinen Reboot aus.
 
 ## Voraussetzungen
 
-Auf dem Deploy-Rechner werden Git, Maven und OpenJDK 17 benötigt:
+Auf dem Deploy-Rechner werden Git, Maven und OpenJDK 21 benötigt. Diese Pakete
+sind direkt in Debian 13 (Trixie) verfügbar, auch auf dem Raspberry Pi:
 
 ```bash
 sudo apt update
-sudo apt install -y openjdk-17-jdk-headless maven
+sudo apt install -y openjdk-21-jdk-headless maven
 ```
 
-Der Deployer sucht OpenJDK 17 unabhängig vom systemweiten Standard-Java unter
-`/usr/lib/jvm/java-17-openjdk-*`. Damit kann der vorhandene UI-Deployer weiter
-Java 21 verwenden. Bei einer abweichenden Installation kann `QC45_JAVA_HOME`
-in der lokalen Konfiguration gesetzt werden.
+Der Deployer sucht OpenJDK 21 unter `/usr/lib/jvm/java-21-openjdk-*`. Maven
+verwendet den fest konfigurierten Eclipse-Compiler statt `javac`, damit trotz
+Java 21 weiterhin echten Java-7-Bytecode für die alte QC45-Laufzeit erzeugt
+werden kann. Bei einer abweichenden Installation kann `QC45_JAVA_HOME` in der
+lokalen Konfiguration gesetzt werden.
 
 Der vorhandene QC45-Deployschlüssel wird weiterverwendet. Die Konfiguration
 enthält standardmäßig:

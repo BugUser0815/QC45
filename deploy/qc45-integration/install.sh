@@ -9,30 +9,30 @@ systemd_dir="${HOME}/.config/systemd/user"
 for command_name in install systemctl git ssh scp mvn sha256sum awk grep; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
-        echo "Install Maven and a JDK capable of compiling Java 7 bytecode, preferably OpenJDK 17:" >&2
-        echo "  sudo apt update && sudo apt install -y openjdk-17-jdk-headless maven" >&2
+        echo "Install Maven and OpenJDK 21:" >&2
+        echo "  sudo apt update && sudo apt install -y openjdk-21-jdk-headless maven" >&2
         exit 2
     fi
 done
 
-java17_home=""
-for java_home_candidate in /usr/lib/jvm/java-17-openjdk-*; do
+java21_home=""
+for java_home_candidate in /usr/lib/jvm/java-21-openjdk-*; do
     if [[ -x "$java_home_candidate/bin/java" && -x "$java_home_candidate/bin/jar" && -x "$java_home_candidate/bin/javap" ]]; then
-        java17_home=$java_home_candidate
+        java21_home=$java_home_candidate
         break
     fi
 done
 
-if [[ -z "$java17_home" ]]; then
-    echo "OpenJDK 17 was not found below /usr/lib/jvm." >&2
+if [[ -z "$java21_home" ]]; then
+    echo "OpenJDK 21 was not found below /usr/lib/jvm." >&2
     echo "Install it with:" >&2
-    echo "  sudo apt update && sudo apt install -y openjdk-17-jdk-headless maven" >&2
+    echo "  sudo apt update && sudo apt install -y openjdk-21-jdk-headless maven" >&2
     exit 2
 fi
 
-java_version=$("$java17_home/bin/java" -version 2>&1 | awk -F'[\".]' '/version/{print $2; exit}')
-if [[ "$java_version" != 17 ]]; then
-    echo "Expected OpenJDK 17 at $java17_home, got version ${java_version:-unknown}" >&2
+java_version=$("$java21_home/bin/java" -version 2>&1 | awk -F'[\".]' '/version/{print $2; exit}')
+if [[ "$java_version" != 21 ]]; then
+    echo "Expected OpenJDK 21 at $java21_home, got version ${java_version:-unknown}" >&2
     exit 2
 fi
 
@@ -53,7 +53,7 @@ systemctl --user daemon-reload
 
 echo
 echo "Installed the QC45 integration deployer."
-echo "Using OpenJDK 17 from $java17_home"
+echo "Using OpenJDK 21 from $java21_home"
 echo "Normal manual deployment:"
 echo "  $bin_dir/qc45-integration-deploy"
 echo

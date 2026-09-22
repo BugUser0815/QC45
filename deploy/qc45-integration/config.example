@@ -3,4 +3,4 @@ QC45_SSH_PORT="22"
 QC45_IDENTITY_FILE="${HOME}/.ssh/qc45_deploy"
 
 # Usually detected automatically on Debian/Ubuntu. Set only for a custom path.
-# QC45_JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+# QC45_JAVA_HOME="/usr/lib/jvm/java-21-openjdk-arm64"

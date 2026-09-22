@@ -95,10 +95,11 @@ Output:
 target/qc45-integration-0.1.0.jar
 ```
 
-The project targets the Java 7 API and has no runtime dependencies outside the
-servlet API already provided by Tomcat. Allocator, demand tracking, central
-limit coordination, 32-bit KSEM decoding and OCPP meter translation are covered
-by unit tests during the Maven build.
+The project uses the Eclipse compiler under OpenJDK 21 to emit Java 7 bytecode
+and has no runtime dependencies outside the servlet API already provided by
+Tomcat. Allocator, demand tracking, central limit coordination, 32-bit KSEM
+decoding and OCPP meter translation are covered by unit tests during the Maven
+build.
 
 ## Install on QC45
 

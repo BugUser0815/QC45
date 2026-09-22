@@ -40,7 +40,7 @@ for command_name in "${required_commands[@]}"; do
 done
 
 if [[ -z "$QC45_JAVA_HOME" ]]; then
-    for java_home_candidate in /usr/lib/jvm/java-17-openjdk-*; do
+    for java_home_candidate in /usr/lib/jvm/java-21-openjdk-*; do
         if [[ -x "$java_home_candidate/bin/java" && -x "$java_home_candidate/bin/jar" && -x "$java_home_candidate/bin/javap" ]]; then
             QC45_JAVA_HOME=$java_home_candidate
             break
@@ -49,13 +49,13 @@ if [[ -z "$QC45_JAVA_HOME" ]]; then
 fi
 
 if [[ -z "$QC45_JAVA_HOME" || ! -x "$QC45_JAVA_HOME/bin/java" || ! -x "$QC45_JAVA_HOME/bin/jar" || ! -x "$QC45_JAVA_HOME/bin/javap" ]]; then
-    echo "OpenJDK 17 not found. Install openjdk-17-jdk-headless or set QC45_JAVA_HOME." >&2
+    echo "OpenJDK 21 not found. Install openjdk-21-jdk-headless or set QC45_JAVA_HOME." >&2
     exit 2
 fi
 
 java_version=$("$QC45_JAVA_HOME/bin/java" -version 2>&1 | awk -F'[\".]' '/version/{print $2; exit}')
-if [[ "$java_version" != 17 ]]; then
-    echo "QC45_JAVA_HOME must point to OpenJDK 17, got version ${java_version:-unknown}" >&2
+if [[ "$java_version" != 21 ]]; then
+    echo "QC45_JAVA_HOME must point to OpenJDK 21, got version ${java_version:-unknown}" >&2
     exit 2
 fi
 
