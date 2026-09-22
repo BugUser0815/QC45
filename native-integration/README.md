@@ -107,7 +107,7 @@ by unit tests during the Maven build.
 
 ```bash
 cp target/qc45-integration-0.1.0.jar \
-  /home/mobie/evcsd/webapps/ROOT/WEB-INF/lib/qc45-integration.jar
+  /home/mobie/evcsd/webapps/smartgrid/WEB-INF/lib/qc45-integration.jar
 ```
 
 3. Create the local configuration (do not commit credentials):
@@ -118,7 +118,7 @@ cp qc45-integration.properties.example \
 vi /home/mobie/evcsd/qc45-integration.properties
 ```
 
-4. Add this listener inside the existing `<web-app>` element in `/home/mobie/evcsd/webapps/ROOT/WEB-INF/web.xml`:
+4. Add this listener inside the existing `<web-app>` element in `/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xml`:
 
 ```xml
 <listener>
@@ -126,7 +126,13 @@ vi /home/mobie/evcsd/qc45-integration.properties
 </listener>
 ```
 
-5. Restart EVCSD/Tomcat.
+5. Reboot the complete QC45 so EVCSD, Tomcat, the native integration and all
+   station services start from one consistent state.
+
+For repeatable deployments use [`deploy/qc45-integration`](../deploy/qc45-integration/README.md).
+It builds and tests the JAR, installs it in `smartgrid`, performs the full reboot,
+waits for the station and integration to become healthy and rolls back
+automatically if startup verification fails.
 
 Expected log lines:
 

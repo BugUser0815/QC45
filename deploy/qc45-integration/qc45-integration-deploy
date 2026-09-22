@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+config_file=${QC45_DEPLOY_CONFIG:-"${HOME}/.config/qc45-integration-deployer/config"}
+
+if [[ ! -r "$config_file" ]]; then
+    echo "QC45 integration deploy config not found: $config_file" >&2
+    exit 2
+fi
+
+# shellcheck source=/dev/null
+source "$config_file"
+
+: "${QC45_SSH_TARGET:=root@10.0.20.108}"
+: "${QC45_SSH_PORT:=22}"
+: "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
+: "${QC45_FORCE_DEPLOY:=0}"
+
+readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
+readonly QC45_BRANCH="native-integration"
+readonly QC45_REMOTE_JAR="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/lib/qc45-integration.jar"
+readonly QC45_REMOTE_WEB_XML="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xml"
+readonly QC45_REMOTE_LOG="/home/mobie/evcsd/qc45-integration.log"
+readonly QC45_REMOTE_MARKER="/home/mobie/evcsd/.qc45-integration-deploy-pending"
+readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-integration-deployer"
+
+required_commands=(git tar ssh scp mvn jar javap sha256sum mktemp awk grep flock sed)
+for command_name in "${required_commands[@]}"; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+        echo "Required command not found: $command_name" >&2
+        exit 2
+    fi
+done
+
+if [[ ! "$QC45_SSH_TARGET" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]]; then
+    echo "Invalid QC45_SSH_TARGET: $QC45_SSH_TARGET" >&2
+    exit 2
+fi
+
+if [[ ! "$QC45_SSH_PORT" =~ ^[0-9]+$ ]] || ((QC45_SSH_PORT < 1 || QC45_SSH_PORT > 65535)); then
+    echo "Invalid QC45_SSH_PORT: $QC45_SSH_PORT" >&2
+    exit 2
+fi
+
+if [[ ! -r "$QC45_IDENTITY_FILE" ]]; then
+    echo "SSH identity not found: $QC45_IDENTITY_FILE" >&2
+    exit 2
+fi
+
+if [[ "$QC45_FORCE_DEPLOY" != 0 && "$QC45_FORCE_DEPLOY" != 1 ]]; then
+    echo "QC45_FORCE_DEPLOY must be 0 or 1" >&2
+    exit 2
+fi
+
+mkdir -p "$QC45_STATE_DIR"
+exec 9>"$QC45_STATE_DIR/deploy.lock"
+if ! flock -n 9; then
+    echo "Another QC45 integration deployment is already running."
+    exit 0
+fi
+
+work_dir=""
+cleanup() {
+    local status=$?
+    if [[ -n "$work_dir" && -d "$work_dir" ]]; then
+        rm -rf -- "$work_dir"
+    fi
+    return "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+repo_dir="$QC45_STATE_DIR/repository"
+deployed_input_file="$QC45_STATE_DIR/deployed-integration-input"
+
+if [[ ! -d "$repo_dir/.git" ]]; then
+    rm -rf -- "$repo_dir"
+    git init --quiet "$repo_dir"
+    git -C "$repo_dir" remote add origin "$QC45_REPOSITORY_URL"
+else
+    git -C "$repo_dir" remote set-url origin "$QC45_REPOSITORY_URL"
+fi
+
+echo "Fetching ${QC45_REPOSITORY_URL} (${QC45_BRANCH})..."
+git -C "$repo_dir" fetch --quiet --no-tags --depth 1 origin "refs/heads/${QC45_BRANCH}"
+commit_sha=$(git -C "$repo_dir" rev-parse FETCH_HEAD)
+source_tree_sha=$(git -C "$repo_dir" rev-parse "${commit_sha}:native-integration/src")
+pom_sha=$(git -C "$repo_dir" rev-parse "${commit_sha}:native-integration/pom.xml")
+integration_input=$(printf '%s\n%s\n' "$source_tree_sha" "$pom_sha" | sha256sum | awk '{print $1}')
+
+if [[ "$QC45_FORCE_DEPLOY" == 1 ]]; then
+    echo "Force deployment requested; rebuilding integration ${integration_input:0:12}."
+elif [[ -r "$deployed_input_file" ]] && [[ "$(<"$deployed_input_file")" == "$integration_input" ]]; then
+    echo "QC45 integration is already current (${commit_sha:0:12})."
+    exit 0
+fi
+
+work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
+git -C "$repo_dir" archive --format=tar "$commit_sha" native-integration | tar -xf - -C "$work_dir"
+
+project_dir="$work_dir/native-integration"
+output_jar="$project_dir/target/qc45-integration-0.1.0.jar"
+
+echo "Building and testing the native integration..."
+mvn -B -f "$project_dir/pom.xml" clean verify
+
+if [[ ! -s "$output_jar" ]]; then
+    echo "Expected integration JAR was not produced: $output_jar" >&2
+    exit 1
+fi
+
+jar_listing="$work_dir/integration-jar.list"
+jar tf "$output_jar" >"$jar_listing"
+required_classes=(
+    de/rothner/qc45/BootstrapListener.class
+    de/rothner/qc45/ChargingLimitCoordinator.class
+    de/rothner/qc45/LoadManager.class
+    de/rothner/qc45/GridFailback.class
+)
+for class_path in "${required_classes[@]}"; do
+    if ! grep -Fqx "$class_path" "$jar_listing"; then
+        echo "Required integration class is missing from the JAR: $class_path" >&2
+        exit 1
+    fi
+done
+
+bootstrap_javap="$work_dir/bootstrap-javap.txt"
+javap -verbose -classpath "$output_jar" de.rothner.qc45.BootstrapListener >"$bootstrap_javap"
+if ! grep -Fq 'major version: 51' "$bootstrap_javap"; then
+    echo "Integration JAR is not Java 7 bytecode (major version 51)" >&2
+    exit 1
+fi
+
+ssh_args=(
+    -p "$QC45_SSH_PORT"
+    -i "$QC45_IDENTITY_FILE"
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+    -o HostKeyAlgorithms=+ssh-rsa
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+ssh_probe_args=(
+    -p "$QC45_SSH_PORT"
+    -i "$QC45_IDENTITY_FILE"
+    -o BatchMode=yes
+    -o ConnectTimeout=5
+    -o StrictHostKeyChecking=yes
+    -o HostKeyAlgorithms=+ssh-rsa
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+scp_args=(
+    -O
+    -P "$QC45_SSH_PORT"
+    -i "$QC45_IDENTITY_FILE"
+    -o BatchMode=yes
+    -o ConnectTimeout=10
+    -o StrictHostKeyChecking=yes
+    -o HostKeyAlgorithms=+ssh-rsa
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa
+)
+
+wait_for_ssh_down() {
+    local deadline=$((SECONDS + 90))
+    while ((SECONDS < deadline)); do
+        if ! ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" true >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
+
+wait_for_ssh_up() {
+    local deadline=$((SECONDS + 300))
+    while ((SECONDS < deadline)); do
+        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" true >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+wait_for_integration() {
+    local expected_sha256=$1
+    local deadline=$((SECONDS + 180))
+    local verify_command=""
+    verify_command=$(printf \
+        'active_jar=%q; expected_sha256=%q; log_file=%q; marker_file=%q; test "$(sha256sum "$active_jar" | awk '\''{print $1}'\'')" = "$expected_sha256" && /home/mobie/evcsd/scripts/status_evcsd.sh && test -r "$marker_file" && test -r "$log_file" && grep -Eq %q "$marker_file" && baseline=$(cat "$marker_file") && current=$(wc -l < "$log_file") && if test "$current" -lt "$baseline"; then grep -Fq %q "$log_file"; else sed -n "$((baseline + 1)),\$p" "$log_file" | grep -Fq %q; fi' \
+        "$QC45_REMOTE_JAR" "$expected_sha256" "$QC45_REMOTE_LOG" "$QC45_REMOTE_MARKER" \
+        '^[0-9]+$' '[QC45] native integration started' '[QC45] native integration started')
+
+    while ((SECONDS < deadline)); do
+        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" "$verify_command" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+schedule_remote_reboot() {
+    ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" \
+        "nohup sh -c 'sleep 2; sync; /sbin/reboot' >/dev/null 2>&1 </dev/null &"
+}
+
+jar_sha256=$(sha256sum "$output_jar" | awk '{print $1}')
+remote_dir=${QC45_REMOTE_JAR%/*}
+remote_name=${QC45_REMOTE_JAR##*/}
+remote_staged="${remote_dir}/.${remote_name}.new-${commit_sha:0:12}"
+
+echo "Uploading integration JAR ${jar_sha256}..."
+scp "${scp_args[@]}" "$output_jar" "${QC45_SSH_TARGET}:${remote_staged}"
+
+boot_id_before=$(ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" 'cat /proc/sys/kernel/random/boot_id')
+remote_command=$(printf 'bash -s -- %q %q %q %q %q' \
+    "$QC45_REMOTE_JAR" "$remote_staged" "$jar_sha256" "$QC45_REMOTE_WEB_XML" "$QC45_REMOTE_MARKER")
+
+echo "Installing the JAR in smartgrid and scheduling a full QC45 reboot..."
+remote_output=$(ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$remote_command" <<'REMOTE_SCRIPT'
+set -Eeuo pipefail
+
+active_jar=$1
+staged_jar=$2
+expected_sha256=$3
+web_xml=$4
+marker=$5
+
+if [[ ! -s "$staged_jar" ]]; then
+    echo "Staged integration JAR is missing" >&2
+    exit 1
+fi
+
+actual_sha256=$(sha256sum "$staged_jar" | awk '{print $1}')
+if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+    echo "Staged integration JAR checksum mismatch" >&2
+    exit 1
+fi
+
+if [[ ! -r "$web_xml" ]] || ! grep -Fq 'de.rothner.qc45.BootstrapListener' "$web_xml"; then
+    echo "BootstrapListener is not configured in smartgrid/WEB-INF/web.xml" >&2
+    exit 1
+fi
+
+backup_jar=""
+backup_sha256=""
+if [[ -s "$active_jar" ]]; then
+    timestamp=$(date +%Y%m%d-%H%M%S)
+    backup_jar="${active_jar}.backup-${timestamp}"
+    cp -p "$active_jar" "$backup_jar"
+    backup_sha256=$(sha256sum "$backup_jar" | awk '{print $1}')
+fi
+
+mv -f "$staged_jar" "$active_jar"
+if [[ -r /home/mobie/evcsd/qc45-integration.log ]]; then
+    wc -l </home/mobie/evcsd/qc45-integration.log >"$marker"
+else
+    printf '0\n' >"$marker"
+fi
+
+printf 'BACKUP_JAR=%s\n' "$backup_jar"
+printf 'BACKUP_SHA256=%s\n' "$backup_sha256"
+REMOTE_SCRIPT
+)
+printf '%s\n' "$remote_output"
+
+backup_jar=$(printf '%s\n' "$remote_output" | awk -F= '/^BACKUP_JAR=/{print substr($0, index($0, "=") + 1); exit}')
+backup_sha256=$(printf '%s\n' "$remote_output" | awk -F= '/^BACKUP_SHA256=/{print substr($0, index($0, "=") + 1); exit}')
+
+schedule_remote_reboot
+
+echo "Waiting for the QC45 to shut down..."
+if ! wait_for_ssh_down; then
+    echo "QC45 never became unreachable after the reboot command" >&2
+    exit 1
+fi
+
+echo "Waiting for the QC45 to boot..."
+if ! wait_for_ssh_up; then
+    echo "QC45 did not return over SSH within five minutes" >&2
+    exit 1
+fi
+
+boot_id_after=$(ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" 'cat /proc/sys/kernel/random/boot_id')
+if [[ "$boot_id_after" == "$boot_id_before" ]]; then
+    echo "QC45 SSH returned, but the kernel boot ID did not change" >&2
+    exit 1
+fi
+
+echo "Waiting for EVCSD and the native integration..."
+if ! wait_for_integration "$jar_sha256"; then
+    echo "The new integration did not become healthy after reboot" >&2
+
+    if [[ -z "$backup_jar" || -z "$backup_sha256" ]]; then
+        echo "No previous integration JAR is available for rollback" >&2
+        exit 1
+    fi
+
+    echo "Restoring the previous integration JAR and rebooting the QC45 again..."
+    rollback_command=$(printf 'bash -s -- %q %q %q %q' \
+        "$QC45_REMOTE_JAR" "$backup_jar" "$backup_sha256" "$QC45_REMOTE_MARKER")
+    ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$rollback_command" <<'ROLLBACK_SCRIPT'
+set -Eeuo pipefail
+
+active_jar=$1
+backup_jar=$2
+expected_sha256=$3
+marker=$4
+
+if [[ ! -s "$backup_jar" ]]; then
+    echo "Rollback JAR is missing: $backup_jar" >&2
+    exit 1
+fi
+
+actual_sha256=$(sha256sum "$backup_jar" | awk '{print $1}')
+if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+    echo "Rollback JAR checksum mismatch" >&2
+    exit 1
+fi
+
+cp -p "$backup_jar" "${active_jar}.rollback"
+mv -f "${active_jar}.rollback" "$active_jar"
+if [[ -r /home/mobie/evcsd/qc45-integration.log ]]; then
+    wc -l </home/mobie/evcsd/qc45-integration.log >"$marker"
+else
+    printf '0\n' >"$marker"
+fi
+ROLLBACK_SCRIPT
+
+    schedule_remote_reboot
+    wait_for_ssh_down || true
+    if ! wait_for_ssh_up; then
+        echo "QC45 did not return after rollback reboot" >&2
+        exit 1
+    fi
+    if ! wait_for_integration "$backup_sha256"; then
+        echo "Rollback JAR was restored, but EVCSD/integration is still unhealthy" >&2
+        exit 1
+    fi
+    ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "rm -f -- $(printf '%q' "$QC45_REMOTE_MARKER")"
+    echo "Rollback succeeded; the failed integration was not marked as deployed" >&2
+    exit 1
+fi
+
+cleanup_command=$(printf \
+    'rm -f -- %q; ls -1t %q.backup-* 2>/dev/null | sed -n '\''6,$p'\'' | while IFS= read -r old_backup; do rm -f -- "$old_backup"; done' \
+    "$QC45_REMOTE_MARKER" "$QC45_REMOTE_JAR")
+ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$cleanup_command"
+
+printf '%s\n' "$integration_input" >"$deployed_input_file"
+printf '%s\n' "$commit_sha" >"$QC45_STATE_DIR/deployed-commit"
+echo "QC45 integration deployment completed from commit ${commit_sha}; full reboot verified."
