@@ -23,6 +23,7 @@ public final class UiPatchTest {
         verifyAkkuboostConfiguration();
         verifyDecoder();
         verifyFreshIdleEndsSession();
+        verifyCardStopConfirmation();
         render(args[0], 0);
         render(args[1], 1);
         render(args[2], 2);
@@ -168,6 +169,7 @@ public final class UiPatchTest {
             set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(safetyState)));
             setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
             set(panel, "lastBatterySoc", Integer.valueOf(64));
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
 
             Method render = WaitingForCardChargingTimer.class.getDeclaredMethod("renderChargePage");
             render.setAccessible(true);
@@ -192,12 +194,53 @@ public final class UiPatchTest {
         writeAndVerify(image, path);
     }
 
+    private static void verifyCardStopConfirmation() throws Exception {
+        InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
+        try {
+            Method pending = WaitingForCardChargingTimer.class.getDeclaredMethod(
+                "showStopConfirmation");
+            pending.setAccessible(true);
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0)));
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "charging without a presented card must show the dashboard");
+
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
+            require(((Boolean)pending.invoke(panel)).booleanValue(),
+                "matching card must show stop confirmation");
+            Method render = WaitingForCardChargingTimer.class.getDeclaredMethod(
+                "renderChargePage");
+            render.setAccessible(true);
+            ImageIcon icon = (ImageIcon)render.invoke(panel);
+            BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D graphics = image.createGraphics();
+            graphics.drawImage(icon.getImage(), 0, 0, null);
+            graphics.dispose();
+            require(stopRedPixels(image) > 1000,
+                "matching card must render the red stop softkey");
+
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, false));
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "logout must return to dashboard");
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
+            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0, true)));
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "RemoteStart must retain its app-only stop path");
+            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis() - 3000L);
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "stale telemetry must not offer an unverified local stop");
+        } finally {
+            panel.stop();
+        }
+    }
+
     private static void renderRemoteStartedOverview(String path) throws Exception {
         WaitingForCardChargingTimer panel = new WaitingForCardChargingTimer();
         try {
             set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0, true)));
             setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
             set(panel, "lastBatterySoc", Integer.valueOf(64));
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
 
             Method render = WaitingForCardChargingTimer.class.getDeclaredMethod("renderChargePage");
             render.setAccessible(true);
