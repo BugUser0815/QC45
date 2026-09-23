@@ -15,7 +15,7 @@ proprietäre Basis-JAR und ihre Zustandssteuerung bleiben erhalten.
 - keine Animationen, Verläufe, Rundinstrumente oder dekorativen Karten
 - feste Aktionsflächen an den ursprünglichen Bedienpositionen
 - normaler Ladebildschirm ohne lokale Stop-/Fortsetzen-Tasten
-- RFID-gestartete Sessions bleiben dauerhaft auf der vollständigen Ladeübersicht
+- RFID-gestartete Sessions zeigen die Ladeübersicht; nach erneuter gültiger Karte erscheint die Abbruchbestätigung
 - Beenden-Hinweis im normalen Ladebildschirm: `Zum Beenden Karte vorhalten oder App benutzen.`
 - RemoteStart-Sessions bleiben ebenfalls auf der vollständigen Ladeübersicht und zeigen
   `Zum Beenden App benutzen.`
@@ -44,25 +44,25 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 | Einstellungen/Sprache | Bestätigen | Nach oben | Zurück | Nach unten |
 | Diagnose | – | – | Zurück | – |
 | Bereitschaft | keine Funktion | keine Funktion | keine Funktion | keine Funktion |
-| Aktiver Ladevorgang, auch RFID | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
+| Aktiver Ladevorgang | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion | keine lokale Ladefunktion |
+| Gültige Karte während lokaler Ladung | Ladevorgang beenden | – | – | – |
 
 Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
 Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
 Während des normalen Ladebildschirms bleiben alle vier Gerätetasten ohne Stop-/
-Fortsetzen-Beschriftung; die Session wird entsprechend dem angezeigten Hinweis
-per Karte oder App beendet.
+Fortsetzen-Beschriftung. Eine passende RFID-Karte setzt in EVCSD den
+`ChargeInfo.loggedIn`-Status. Erst dann zeigt die UI `KARTE ERKANNT` mit dem
+roten Softkey `LADEVORGANG ABBRECHEN` oben links. Das Vorhalten der Karte
+allein beendet die Ladung nicht; der Benutzer muss die Taste bestätigen.
+Nach EVCSD-Logout oder Timeout erscheint wieder die vollständige Ladeübersicht.
 
-Auch wenn EVCSD während einer per RFID gestarteten laufenden Session die Klasse
-`WaitingForCardChargingTimer` direkt öffnet, rendert sie weiterhin den vollständigen
-AC/DC-Lademonitor. Die frühere dauerhafte Ansicht `KARTE ERKANNT` mit rotem
-`LADEVORGANG ABBRECHEN`-Softkey wird nicht mehr eingeblendet. Damit bleibt die
-Übersicht mit Ladeleistung, Freigabe, Fahrzeug-SoC, Energie, Ladezeit und
-Akkuboost während des gesamten Ladevorgangs sichtbar.
-
-Bei einer über OCPP gestarteten Session bleibt dieselbe Ladeübersicht sichtbar.
-Das RemoteStart-Flag aus dem nativen Telemetrieblock beeinflusst nur den Hinweis
-in der Fußzeile: RemoteStart zeigt `Zum Beenden App benutzen.`, lokale bzw.
-RFID-gestartete Sessions zeigen `Zum Beenden Karte vorhalten oder App benutzen.`
+Auch wenn EVCSD während einer laufenden Session die Klasse
+`WaitingForCardChargingTimer` direkt öffnet, bleibt ohne das RFID-Statussignal
+der AC/DC-Lademonitor sichtbar. Bei einer über OCPP gestarteten Session bleibt
+die Ladeübersicht auch bei einem gesetzten EVCSD-Login sichtbar; das frische
+RemoteStart-Flag verhindert dort eine lokale Stop-Aufforderung. In diesem Fall
+zeigt die Fußzeile `Zum Beenden App benutzen.`, bei einer lokalen Session
+`Zum Beenden Karte vorhalten oder App benutzen.`
 
 `MainForm` und dessen Weiterleitung der Tastencodes an EVCSD werden nicht
 verändert. Der Patch ersetzt nur die visuelle Zuordnung und Beschriftung der
