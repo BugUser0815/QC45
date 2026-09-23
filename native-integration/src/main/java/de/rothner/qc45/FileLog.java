@@ -104,7 +104,7 @@ public final class FileLog {
         public synchronized void write(int value) throws IOException {
             if (lineStart) writePrefix();
             target.write(value);
-            if (value == '\\n') lineStart = true;
+            if (value == '\n') lineStart = true;
         }
 
         public synchronized void write(byte[] bytes, int off, int len) throws IOException {
@@ -116,10 +116,10 @@ public final class FileLog {
             while (off < end) {
                 if (lineStart) writePrefix();
                 int next = off;
-                while (next < end && bytes[next] != '\\n') next++;
+                while (next < end && bytes[next] != '\n') next++;
                 if (next < end) next++;
                 target.write(bytes, off, next - off);
-                lineStart = bytes[next - 1] == '\\n';
+                lineStart = bytes[next - 1] == '\n';
                 off = next;
             }
         }
