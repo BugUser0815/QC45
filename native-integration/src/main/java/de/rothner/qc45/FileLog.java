@@ -8,6 +8,7 @@ import java.io.PrintStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /** Routes native QC45 integration stdout/stderr to one compact persistent logfile. */
 public final class FileLog {
@@ -32,7 +33,7 @@ public final class FileLog {
         }
         rotate(file);
 
-        fileStream = new PrintStream(new FileOutputStream(file, true), true, "UTF-8");
+        fileStream = new PrintStream(new TimestampedOutputStream(new FileOutputStream(file, true)), true, "UTF-8");
         originalOut = System.out;
         originalErr = System.err;
         installedOut = new PrintStream(new TeeOutputStream(originalOut, fileStream), true, "UTF-8");
@@ -43,7 +44,7 @@ public final class FileLog {
         installed = true;
 
         System.out.println("[QC45] ------------------------------------------------------------");
-        System.out.println("[QC45] file logging started " + timestamp() + " -> " + file.getAbsolutePath());
+        System.out.println("[QC45] file logging started -> " + file.getAbsolutePath());
     }
 
     public static synchronized void shutdown() {
@@ -64,8 +65,11 @@ public final class FileLog {
         installed = false;
     }
 
+    /** UTC timestamps are added to the file only; Tomcat's original console output is unchanged. */
     private static String timestamp() {
-        return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return format.format(new Date());
     }
 
     private static void rotate(File file) throws IOException {
@@ -83,6 +87,56 @@ public final class FileLog {
         }
         File first = new File(file.getPath() + ".1");
         if (!file.renameTo(first)) throw new IOException("Cannot rotate log " + file);
+    }
+
+    /**
+     * Prefix each physical line, including stack traces and lines split across writes.
+     * Keep the line state on the shared file stream so stdout and stderr use the same clock.
+     */
+    private static final class TimestampedOutputStream extends OutputStream {
+        private final OutputStream target;
+        private boolean lineStart = true;
+
+        TimestampedOutputStream(OutputStream target) {
+            this.target = target;
+        }
+
+        public synchronized void write(int value) throws IOException {
+            if (lineStart) writePrefix();
+            target.write(value);
+            if (value == '\\n') lineStart = true;
+        }
+
+        public synchronized void write(byte[] bytes, int off, int len) throws IOException {
+            if (bytes == null) throw new NullPointerException();
+            if (off < 0 || len < 0 || off > bytes.length - len) {
+                throw new IndexOutOfBoundsException();
+            }
+            int end = off + len;
+            while (off < end) {
+                if (lineStart) writePrefix();
+                int next = off;
+                while (next < end && bytes[next] != '\\n') next++;
+                if (next < end) next++;
+                target.write(bytes, off, next - off);
+                lineStart = bytes[next - 1] == '\\n';
+                off = next;
+            }
+        }
+
+        public synchronized void flush() throws IOException {
+            target.flush();
+        }
+
+        public synchronized void close() throws IOException {
+            target.close();
+        }
+
+        private void writePrefix() throws IOException {
+            byte[] prefix = (timestamp() + " ").getBytes("UTF-8");
+            target.write(prefix);
+            lineStart = false;
+        }
     }
 
     /** Byte-level tee so every PrintStream overload and stack trace is preserved. */
