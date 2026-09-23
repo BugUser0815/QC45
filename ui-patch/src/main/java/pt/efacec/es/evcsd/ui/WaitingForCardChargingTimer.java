@@ -95,6 +95,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private LoadBalancingTelemetry lastBalancingData;
     private long lastBalancingDataFetch;
     private final int displayConnector;
+    private volatile boolean cardStopPending;
 
     public WaitingForCardChargingTimer() {
         this.displayConnector = 0;
@@ -140,7 +141,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     public void setInfo(ChargeInfo info) {
-        // Values deliberately come from the native integration's Modbus UI block.
+        // EVCSD sets loggedIn after a matching RFID card is presented. Keep
+        // that interaction separate from the Modbus power/session telemetry.
+        cardStopPending = info != null && info.isLoggedIn();
     }
 
     private synchronized void ensureScreenTimer() {
@@ -207,6 +210,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
             if (!isChargingSession()) return renderIdlePage();
+            if (showStopConfirmation()) return renderStopConfirmationPage();
             refreshBufferSoc(now);
 
             BufferedImage image = new BufferedImage(WIDTH, HEIGHT, BufferedImage.TYPE_INT_RGB);
@@ -235,14 +239,14 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     /**
-     * EVCSD instantiates this class directly while waiting for card interaction
-     * during an active session. The normal charging panels subclass it and keep
-     * the full charging monitor.
+     * A matching RFID card arms EVCSD's existing stop confirmation. A remote
+     * OCPP session must keep its app-only stop path, and stale telemetry must
+     * never turn an unknown remote session into an apparent local stop option.
      */
     private boolean showStopConfirmation() {
-        if (getClass() != WaitingForCardChargingTimer.class) return false;
         long now = System.currentTimeMillis();
-        return !freshBalancingData(now) || !lastBalancingData.remoteStarted();
+        return cardStopPending && freshBalancingData(now)
+            && !lastBalancingData.remoteStarted();
     }
 
     private boolean isChargingSession() {
@@ -280,7 +284,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 19));
-        centered(g, "Zum Abbrechen oben links drücken.", 360, 329);
+        centered(g, "Zum Beenden oben links drücken.", 360, 329);
 
         LoadBalancingTelemetry balancing = freshBalancingData(System.currentTimeMillis())
             ? lastBalancingData : null;
@@ -299,7 +303,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         g.drawLine(0, 416, WIDTH, 416);
         g.setColor(SECONDARY);
         g.setFont(font(Font.PLAIN, 12));
-        centered(g, "Die normale Ladeanzeige bleibt im Hintergrund aktiv.", 320, 452);
+        centered(g, "Ohne Bestätigung läuft der Ladevorgang weiter.", 320, 452);
 
         g.dispose();
         return new ImageIcon(image);
