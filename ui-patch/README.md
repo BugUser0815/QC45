@@ -50,8 +50,9 @@ Die Zuordnung wird nicht zwischen den Ansichten verschoben:
 Nicht belegte Tasten werden nicht als aktive Funktion dargestellt. In der
 Bereitschaftsansicht werden deshalb weder Pfeile noch Softkey-Hinweise angezeigt.
 Während des normalen Ladebildschirms bleiben alle vier Gerätetasten ohne Stop-/
-Fortsetzen-Beschriftung. Eine passende RFID-Karte setzt in EVCSD den
-`ChargeInfo.loggedIn`-Status. Erst dann zeigt die UI `KARTE ERKANNT` mit dem
+Fortsetzen-Beschriftung. Nach dem anfänglichen Login läuft der Ladebildschirm normal weiter.
+Erst wenn EVCSD abgemeldet hat und die passende RFID-Karte erneut den
+`ChargeInfo.loggedIn`-Status setzt, zeigt die UI `KARTE ERKANNT` mit dem
 roten Softkey `LADEVORGANG ABBRECHEN` oben links. Das Vorhalten der Karte
 allein beendet die Ladung nicht; der Benutzer muss die Taste bestätigen.
 Nach EVCSD-Logout oder Timeout erscheint wieder die vollständige Ladeübersicht.
