@@ -169,7 +169,6 @@ public final class UiPatchTest {
             set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(safetyState)));
             setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
             set(panel, "lastBatterySoc", Integer.valueOf(64));
-            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
 
             Method render = WaitingForCardChargingTimer.class.getDeclaredMethod("renderChargePage");
             render.setAccessible(true);
@@ -250,22 +249,26 @@ public final class UiPatchTest {
             graphics.drawImage(icon.getImage(), 0, 0, null);
             graphics.dispose();
 
-            int stopRedPixels = 0;
-            for (int y = 128; y < 190; y++) {
-                for (int x = 18; x < 208; x++) {
-                    int rgb = image.getRGB(x, y);
-                    int red = (rgb >> 16) & 0xff;
-                    int green = (rgb >> 8) & 0xff;
-                    int blue = rgb & 0xff;
-                    if (red > 120 && green < 70 && blue < 70) stopRedPixels++;
-                }
-            }
-            require(stopRedPixels < 20,
+            require(stopRedPixels(image) < 20,
                 "RemoteStart must not render the RFID stop overlay");
             writeAndVerify(image, path);
         } finally {
             panel.stop();
         }
+    }
+
+    private static int stopRedPixels(BufferedImage image) {
+        int count = 0;
+        for (int y = 128; y < 190; y++) {
+            for (int x = 18; x < 208; x++) {
+                int rgb = image.getRGB(x, y);
+                int red = (rgb >> 16) & 0xff;
+                int green = (rgb >> 8) & 0xff;
+                int blue = rgb & 0xff;
+                if (red > 120 && green < 70 && blue < 70) count++;
+            }
+        }
+        return count;
     }
 
     private static void renderSparsePanel(JPanel panel, String path) throws Exception {
