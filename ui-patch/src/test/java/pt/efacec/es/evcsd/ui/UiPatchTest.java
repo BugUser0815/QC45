@@ -195,22 +195,33 @@ public final class UiPatchTest {
 
     private static void verifyCardStopConfirmation() throws Exception {
         InCCSChargingPanel panel = new InCCSChargingPanel(0, 0, false, false);
+        InCCSChargingPanel afterCard = null;
         try {
             Method pending = WaitingForCardChargingTimer.class.getDeclaredMethod(
                 "showStopConfirmation");
             pending.setAccessible(true);
             set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0)));
             setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis());
-            require(!((Boolean)pending.invoke(panel)).booleanValue(),
-                "charging without a presented card must show the dashboard");
 
             panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
-            require(((Boolean)pending.invoke(panel)).booleanValue(),
-                "matching card must show stop confirmation");
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "initial loggedIn=true must still show the dashboard");
+
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, false));
+            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+                "logged-out charging must show the dashboard");
+
+            // Main creates a fresh panel for the next state message.
+            afterCard = new InCCSChargingPanel(0, 0, false, false);
+            set(afterCard, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0)));
+            setLong(afterCard, "lastBalancingDataFetch", System.currentTimeMillis());
+            afterCard.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
+            require(((Boolean)pending.invoke(afterCard)).booleanValue(),
+                "matching card must show stop option across panel replacement");
             Method render = WaitingForCardChargingTimer.class.getDeclaredMethod(
                 "renderChargePage");
             render.setAccessible(true);
-            ImageIcon icon = (ImageIcon)render.invoke(panel);
+            ImageIcon icon = (ImageIcon)render.invoke(afterCard);
             BufferedImage image = new BufferedImage(640, 480, BufferedImage.TYPE_INT_RGB);
             java.awt.Graphics2D graphics = image.createGraphics();
             graphics.drawImage(icon.getImage(), 0, 0, null);
@@ -218,18 +229,27 @@ public final class UiPatchTest {
             require(stopRedPixels(image) > 1000,
                 "matching card must render the red stop softkey");
 
-            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, false));
-            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+            afterCard.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, false));
+            require(!((Boolean)pending.invoke(afterCard)).booleanValue(),
                 "logout must return to dashboard");
-            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
-            set(panel, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0, true)));
-            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+            afterCard.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
+            set(afterCard, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0, true)));
+            require(!((Boolean)pending.invoke(afterCard)).booleanValue(),
                 "RemoteStart must retain its app-only stop path");
-            setLong(panel, "lastBalancingDataFetch", System.currentTimeMillis() - 3000L);
-            require(!((Boolean)pending.invoke(panel)).booleanValue(),
+            setLong(afterCard, "lastBalancingDataFetch", System.currentTimeMillis() - 3000L);
+            require(!((Boolean)pending.invoke(afterCard)).booleanValue(),
                 "stale telemetry must not offer an unverified local stop");
+
+            afterCard.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(false, false));
+            afterCard.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(true, true));
+            set(afterCard, "lastBalancingData", LoadBalancingTelemetry.decode(telemetry(0)));
+            setLong(afterCard, "lastBalancingDataFetch", System.currentTimeMillis());
+            require(!((Boolean)pending.invoke(afterCard)).booleanValue(),
+                "new charging session must not inherit the stop option");
         } finally {
             panel.stop();
+            if (afterCard != null) afterCard.stop();
+            panel.setInfo(new pt.efacec.es.evcsd.ui.info.ChargeInfo(false, false));
         }
     }
 
