@@ -95,6 +95,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private LoadBalancingTelemetry lastBalancingData;
     private long lastBalancingDataFetch;
     private final int displayConnector;
+    private static final Object CARD_STOP_LOCK = new Object();
+    private static boolean cardStopSawLoggedOut;
+    private static boolean cardStopArmed;
     private volatile boolean cardStopPending;
 
     public WaitingForCardChargingTimer() {
@@ -141,9 +144,20 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     public void setInfo(ChargeInfo info) {
-        // EVCSD sets loggedIn after a matching RFID card is presented. Keep
-        // that interaction separate from the Modbus power/session telemetry.
-        cardStopPending = info != null && info.isLoggedIn();
+        synchronized (CARD_STOP_LOCK) {
+            if (info == null || !info.isCharging()) {
+                cardStopSawLoggedOut = false;
+                cardStopArmed = false;
+            } else if (!info.isLoggedIn()) {
+                // The charging state starts with loggedIn=true. Only a later
+                // false-to-true transition means a matching card was shown.
+                cardStopSawLoggedOut = true;
+                cardStopArmed = false;
+            } else if (cardStopSawLoggedOut) {
+                cardStopArmed = true;
+            }
+            cardStopPending = cardStopArmed;
+        }
     }
 
     private synchronized void ensureScreenTimer() {
@@ -209,7 +223,10 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         try {
             final long now = System.currentTimeMillis();
             refreshChargingData(now);
-            if (!isChargingSession()) return renderIdlePage();
+            if (!isChargingSession()) {
+                if (freshBalancingData(now)) clearCardStopState();
+                return renderIdlePage();
+            }
             if (showStopConfirmation()) return renderStopConfirmationPage();
             refreshBufferSoc(now);
 
@@ -243,6 +260,14 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
      * OCPP session must keep its app-only stop path, and stale telemetry must
      * never turn an unknown remote session into an apparent local stop option.
      */
+    private void clearCardStopState() {
+        synchronized (CARD_STOP_LOCK) {
+            cardStopSawLoggedOut = false;
+            cardStopArmed = false;
+            cardStopPending = false;
+        }
+    }
+
     private boolean showStopConfirmation() {
         long now = System.currentTimeMillis();
         return cardStopPending && freshBalancingData(now)
