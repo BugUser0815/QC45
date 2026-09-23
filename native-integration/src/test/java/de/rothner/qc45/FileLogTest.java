@@ -20,6 +20,8 @@ public final class FileLogTest {
             FileLog.install(file.getAbsolutePath());
             System.out.println("QC45_FILELOG_STDOUT_MARKER");
             System.err.println("QC45_FILELOG_STDERR_MARKER");
+            System.out.print("SPLIT_");
+            System.out.print("LINE\nSECOND_LINE\n");
         } finally {
             FileLog.shutdown();
         }
@@ -29,6 +31,13 @@ public final class FileLogTest {
         String contents = read(file);
         assertTrue(contents.indexOf("QC45_FILELOG_STDOUT_MARKER") >= 0);
         assertTrue(contents.indexOf("QC45_FILELOG_STDERR_MARKER") >= 0);
+        assertTrue(contents.indexOf("SPLIT_LINE") >= 0);
+        String[] lines = contents.split("\\r?\\n");
+        assertTrue(lines.length >= 5);
+        for (String line : lines) {
+            assertTrue("Missing ISO UTC timestamp: " + line,
+                line.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z .*"));
+        }
         file.delete();
     }
 
