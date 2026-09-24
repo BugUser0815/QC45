@@ -1,5 +1,26 @@
 # Type2 / AC-Leistungsbegrenzung
 
+## Aktueller Stand (`native-integration`)
+
+Die unten beschriebene direkte MobiBus-Ansteuerung ist ein **früherer
+Versuchsstand**. Der aktuelle `BootstrapListener` startet
+`AcFixedPowerBridge` und `AcPowerTelemetry`; `AcPowerLimitTransport` sendet
+keine Pakete mehr. Die originale AC-Lastverteilung wird zur Laufzeit
+deaktiviert. Der KSEM-Regler schreibt das logische kW-Ziel auf den
+AC-Satelliten. `AcFixedPowerBridge` wandelt es in einen dreiphasigen
+Pilotstrom um und schreibt `ACMaxPowerFixed`; EFACEC sendet diesen Wert mit
+seinen eigenen `START_CHARGE`- und periodischen `ENERGY`-Paketen.
+
+Die Auswertung der Live-Tests ergab für den Type2-Payload **0,1 A**, nicht
+0,1 kW: 5 kW entsprechen 8 A beziehungsweise Payload 80; 11 kW entsprechen
+16 A beziehungsweise Payload 160. `maxPowerAC` ist nur ein konservativ
+mitgeführter Fallback und wird vom festen AC-Pfad nicht gelesen.
+`DCMaxPowerFixed` bleibt als Selektor positiv; die eigenständige originale
+DC-Lastverteilung bleibt aus. Physisches AC-Notladen beträgt bei logisch
+0 kW weiterhin 5 kW, und ein Hard-Trip beendet die Transaktion per RemoteStop.
+
+## Historischer Versuchsstand
+
 ## Problem
 
 Beim Type2-Anschluss konnte die native Integration intern korrekt `0 kW` als wirksame Freigabe berechnen, während ein angeschlossenes Fahrzeug physisch weiterlud. `Configuration.maxPowerAC=0` und `SatelliteModule.setMaxPower(0)` ändern zunächst nur Java-seitige Werte; sie sind für sich kein physischer Pause-Befehl an den AC-Satelliten.

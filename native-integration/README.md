@@ -35,7 +35,7 @@ Modbus TCP registers used by evcc and the local charging screen:
  22   Type2 active
  30   remoteStarted
  40   Configuration.maxPower
- 41   Configuration.maxPowerAC
+ 41   Configuration.maxPowerAC [A, native Type2 pilot-current fallback]
 100   active DC power [kW]
 101   Type2 power [kW]
 110   persistent evcc DC request/cap [kW] R/W

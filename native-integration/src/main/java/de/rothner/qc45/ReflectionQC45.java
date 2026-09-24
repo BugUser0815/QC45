@@ -306,20 +306,15 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         int oldTarget = ((Number) satType.getMethod("getMaxPower").invoke(target)).intValue();
         boolean ccs = ((Boolean) satType.getMethod("isCCSCharge").invoke(target)).booleanValue();
 
-        if (connector == 3) {
-            configurationClass.getMethod("setMaxPowerAC", Integer.TYPE).invoke(conf, Integer.valueOf(kw));
-        } else {
+        if (connector != 3) {
             setGlobalMaxPowerOn(conf, kw);
         }
 
         satType.getMethod("setMaxPower", Integer.TYPE).invoke(target, Integer.valueOf(kw));
 
-        if (connector == 3) {
-            // maxPowerAC is the runtime Type2 setpoint. ACMaxPowerFixed is the
-            // configured hardware ceiling (43 kW on this QC45) and must not be
-            // collapsed to the dynamic 5 kW Notladen target.
-            bestEffortSetMaxPowerACField(conf, kw);
-        } else {
+        // AcFixedPowerBridge is the only writer of the native Type2 pilot
+        // limit. Its fixed path uses amperes, not this logical kW target.
+        if (connector != 3) {
             bestEffortSetDcMaxPowerFixed(conf, kw);
         }
 
@@ -559,15 +554,6 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
             if (f != null) setNumberField(f, conf, kw);
         } catch (Throwable e) {
             System.err.println("[QC45] NativeLimit optional DCMaxPowerFixed failed: " + e);
-        }
-    }
-
-    private void bestEffortSetMaxPowerACField(Object conf, int kw) {
-        try {
-            Field f = findField(configurationClass, "maxPowerAC", "MaxPowerAC");
-            if (f != null) setNumberField(f, conf, kw);
-        } catch (Throwable e) {
-            System.err.println("[QC45] NativeLimit optional maxPowerAC field failed: " + e);
         }
     }
 

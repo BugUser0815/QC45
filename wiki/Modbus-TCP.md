@@ -31,7 +31,7 @@ Nur Register **110 und 111** sind beschreibbar. Alle anderen Schreibversuche lie
 | 22 | R | Session Connector 3 aktiv | 0/1 |
 | 30 | R | `remoteStarted` | 0/1 |
 | 40 | R | `Configuration.maxPower` | kW |
-| 41 | R | `Configuration.maxPowerAC` | kW |
+| 41 | R | `Configuration.maxPowerAC` (native Type2-Pilotstrom; aktiver Grenzwert steht in `ACMaxPowerFixed`) | A |
 | 50–51 | R | Energie Connector 1, U32 high/low | Wh |
 | 52–53 | R | Energie Connector 2, U32 high/low | Wh |
 | 54–55 | R | Energie Connector 3, U32 high/low | Wh |
