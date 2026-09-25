@@ -95,6 +95,8 @@ final class AcPowerTelemetry extends Thread {
                         System.out.println("[QC45] AC telemetry session started limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
                             + currentEnergyWh(satellite) + " " + hardwareState);
+                        System.out.println("[QC45] AC native limit at start "
+                            + AcNativeLimitTrace.snapshot(satellite));
                     }
                     if (now - sessionStartedMs <= STARTUP_DIAGNOSTIC_WINDOW_MS
                             && now - lastStartupDiagnosticLogMs >= STARTUP_DIAGNOSTIC_MS) {
@@ -110,6 +112,10 @@ final class AcPowerTelemetry extends Thread {
                             + lastRawPowerKw + "kW limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
                             + currentEnergyWh(satellite) + " " + hardwareState);
+                        if (now - sessionStartedMs <= STARTUP_DIAGNOSTIC_WINDOW_MS) {
+                            System.out.println("[QC45] AC native limit during startup "
+                                + AcNativeLimitTrace.snapshot(satellite));
+                        }
                         lastDiagnosticLogMs = now;
                     }
                 }
