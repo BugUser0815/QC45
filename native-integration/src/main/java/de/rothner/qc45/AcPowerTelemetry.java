@@ -222,7 +222,7 @@ final class AcPowerTelemetry extends Thread {
             String phaseValues = phases instanceof int[]
                 ? Arrays.toString((int[])phases) : String.valueOf(phases);
             return "boardStatus=" + fieldValue(info, "status")
-                + " normalStatus=" + fieldValue(info, "normalStatus")
+                + " normalStatus=[" + moduleState(info) + "]"
                 + " acDTC=" + fieldValue(info, "acDTC")
                 + " boardCurrentRaw=" + fieldValue(info, "electricCurrent")
                 + " boardVoltageRaw=" + fieldValue(info, "voltage")
@@ -238,12 +238,26 @@ final class AcPowerTelemetry extends Thread {
             Object info = fieldValue(satellite, "infoState");
             if (info == null) return "board=unavailable";
             return fieldValue(info, "status") + "/"
-                + fieldValue(info, "normalStatus") + "/"
+                + moduleState(info) + "/"
                 + fieldValue(info, "acDTC") + "/"
                 + fieldValue(info, "epoPressed");
         } catch (Throwable error) {
             return "board=unavailable:" + error.getClass().getSimpleName();
         }
+    }
+
+    private String moduleState(Object info) throws Exception {
+        Object state = fieldValue(info, "normalStatus");
+        if (state == null) return "unavailable";
+        return "type=" + fieldValue(state, "type")
+            + " energy=" + fieldValue(state, "energy")
+            + " functional=" + fieldValue(state, "functional")
+            + " additional=" + fieldValue(state, "additional")
+            + " messageDTC=" + state.getClass().getMethod("getMessageDTC").invoke(state)
+            + " statusResOK=" + state.getClass().getMethod("isStatusResOK").invoke(state)
+            + " connectorId=" + state.getClass().getMethod("getConnectorId").invoke(state)
+            + " errorInfo=" + state.getClass().getMethod("getErrorInfo").invoke(state)
+            + " epoAC=" + fieldValue(state, "epoPressedAC");
     }
 
     private void writeInfoPower(Object satellite, int kw) throws Exception {
