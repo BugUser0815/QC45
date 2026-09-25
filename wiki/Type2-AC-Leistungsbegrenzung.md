@@ -18,8 +18,10 @@ verifiziert.** Der originale Java-Code multipliziert die Konfiguration nur
 mit zehn und serialisiert anschließend einen 16-Bit-Wert. `maxPowerAC` ist nur ein konservativ
 mitgeführter Fallback und wird vom festen AC-Pfad nicht gelesen.
 `DCMaxPowerFixed` bleibt als Selektor positiv; die eigenständige originale
-DC-Lastverteilung bleibt aus. Physisches AC-Notladen beträgt bei logisch
-0 kW weiterhin 5 kW, und ein Hard-Trip beendet die Transaktion per RemoteStop.
+DC-Lastverteilung bleibt aus. Bei logisch 0 kW verlangt die Integration
+weiterhin einen 5-kW-Notladewert; dass die Platine diesen tatsächlich
+umsetzt, ist nach den fehlgeschlagenen Versuchen gerade nicht belegt.
+Ein Hard-Trip beendet die Transaktion per RemoteStop.
 
 ### Befund vom 25. September 2026
 
