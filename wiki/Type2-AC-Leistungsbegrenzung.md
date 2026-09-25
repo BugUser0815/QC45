@@ -11,13 +11,51 @@ AC-Satelliten. `AcFixedPowerBridge` wandelt es in einen dreiphasigen
 Pilotstrom um und schreibt `ACMaxPowerFixed`; EFACEC sendet diesen Wert mit
 seinen eigenen `START_CHARGE`- und periodischen `ENERGY`-Paketen.
 
-Die Auswertung der Live-Tests ergab für den Type2-Payload **0,1 A**, nicht
-0,1 kW: 5 kW entsprechen 8 A beziehungsweise Payload 80; 11 kW entsprechen
-16 A beziehungsweise Payload 160. `maxPowerAC` ist nur ein konservativ
+Die Integration nimmt derzeit an, dass der Type2-Payload **0,1 A** bedeutet:
+5 kW werden zu 8 A beziehungsweise Payload 80; 11 kW zu 16 A
+beziehungsweise Payload 160. **Diese Einheit ist für die AC-Platine nicht
+verifiziert.** Der originale Java-Code multipliziert die Konfiguration nur
+mit zehn und serialisiert anschließend einen 16-Bit-Wert. `maxPowerAC` ist nur ein konservativ
 mitgeführter Fallback und wird vom festen AC-Pfad nicht gelesen.
 `DCMaxPowerFixed` bleibt als Selektor positiv; die eigenständige originale
 DC-Lastverteilung bleibt aus. Physisches AC-Notladen beträgt bei logisch
 0 kW weiterhin 5 kW, und ein Hard-Trip beendet die Transaktion per RemoteStop.
+
+### Befund vom 25. September 2026
+
+Das originale `qc45.zip` enthält `mainConfig.properties` mit
+`AC.load.balance.enabled=false`, `AC.maxPower.fixed=35` und
+`DC.maxPower.fixed=35`. In `evcsd.jar` (Build 57) nutzt
+`SatelliteModule.sendNormalChargeStart()` für Type2 `ACMaxPowerFixed * 10`,
+**wenn beide Fixed-Werte positiv sind**. Bei aktivierter originaler
+AC-Lastverteilung nutzt es dagegen
+`maxPowerAC / (getSatsInCharge() + 1) * 10`. Die periodische
+`getEnergy()`-Abfrage nutzt beim Fixed-Weg ebenfalls `ACMaxPowerFixed * 10`,
+bei AC-Lastverteilung jedoch `maxPowerAC / getSatsInCharge() * 10`,
+ohne Schutz gegen null. `getSatsInCharge()` zählt den nativen
+`normalStatus.functional == CHARGING` aller Satelliten, nicht die
+Transaktionen des LoadManagers. Bei null ergibt die Java-Konvertierung
+`Integer.MAX_VALUE`, wovon nur die unteren 16 Bit in der MobiBus-Nachricht
+landen. Der rohe Wert `65535` kann keine verlässliche AC-Grenze sein.
+
+Ein älterer i3-Ladevorgang mit aktiviertem AC-Lastverteilungsweg ließ
+den Energiezähler von 0 auf über 1200 Wh steigen und lieferte etwa 11 kW,
+auch wenn das Java-seitige Limit zeitweise 5 kW war. Die aktuellen
+Versuche mit Fixed-Weg und Wert 8 (START/ENERGY-Payload 80) liefern
+dagegen 0 Wh. Das zeigt einen Zusammenhang, aber noch nicht, ob die
+Platine den kleinen Zahlenwert verwirft, welcher Strombereich gültig ist
+oder ob ein weiterer CP/Schütz-Fehler vorliegt. Der in der Integration
+gelesene `normalStatus` hat bei den aktuellen Versuchen
+`statusResOK=false` und ist deshalb kein sicherer Beweis für einen
+gültigen Status der AC-Platine.
+
+`AcNativeLimitTrace` protokolliert für den nächsten Versuch am Sitzungsstart
+und im Startfenster beide nach Originalcode errechneten Rohwerte und den
+aktuellen Divisor. Diese Spur sendet keine MobiBus-Befehle und ändert die
+Regelung nicht. Vor einer Verhaltensänderung müssen die tatsächlich
+akzeptierten Rohwerte und der Übergang am AC-Ausgang kontrolliert verglichen
+werden; ein Rückschalten auf den früheren Weg würde die nachgewiesene
+Überladung bei Freigabe 0 erneut ermöglichen.
 
 ## Historischer Versuchsstand
 
@@ -44,7 +82,8 @@ Für den normalen AC-Satelliten verwendet EVCSD das MobiBus-Protokoll. Bei aktiv
 - `START_CHARGE`
 - `ENERGY`
 
-Der Wert wird als `maxPower` mit Faktor 10 serialisiert:
+Der Wert wird als `maxPower` mit Faktor 10 serialisiert. Die folgende
+kW-Zuordnung war eine damalige Annahme und ist für die Platine nicht belegt:
 
 ```text
 11 kW -> maxPower 110
