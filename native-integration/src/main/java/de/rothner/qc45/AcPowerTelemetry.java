@@ -19,6 +19,8 @@ final class AcPowerTelemetry extends Thread {
     private static final long POWER_WINDOW_MS = 1000L;
     private static final long POWER_STALE_MS = 2500L;
     private static final long DIAGNOSTIC_LOG_MS = 5000L;
+    private static final long STARTUP_DIAGNOSTIC_MS = 500L;
+    private static final long STARTUP_DIAGNOSTIC_WINDOW_MS = 20000L;
     private static final long ERROR_LOG_MS = 5000L;
     private static final String CENTRAL =
         "pt.efacec.es.mobie.agent.statemachines.CentralModule";
@@ -29,6 +31,7 @@ final class AcPowerTelemetry extends Thread {
     private boolean sessionObserved;
     private long sessionStartedMs;
     private long lastDiagnosticLogMs;
+    private long lastStartupDiagnosticLogMs;
     private long lastErrorLogMs;
     private long energyAnchorWh = -1L;
     private long energyAnchorMs;
@@ -62,34 +65,43 @@ final class AcPowerTelemetry extends Thread {
                 Object satellite = acSatellite();
                 boolean session = station.sessionActive(AC_CONNECTOR);
                 int actualKw = updateLivePowerEstimate(satellite, session, now);
+                String hardwareState = hardwareState(satellite);
+                String stateKey = hardwareStateKey(satellite);
+                // The contactor may drop before a transaction exists. Watch
+                // board and native state transitions even during authorization.
+                if (!stateKey.equals(lastHardwareState)) {
+                    System.out.println("[QC45] AC hardware transition session=" + session
+                        + " " + hardwareState);
+                    lastHardwareState = stateKey;
+                }
 
                 if (!session) {
                     if (sessionObserved) {
                         System.out.println("[QC45] AC telemetry session ended age="
-                            + Math.max(0L, now - sessionStartedMs) + "ms");
+                            + Math.max(0L, now - sessionStartedMs) + "ms "
+                            + hardwareState);
                     }
                     sessionObserved = false;
                     sessionStartedMs = 0L;
                     lastDiagnosticLogMs = 0L;
-                    lastHardwareState = null;
+                    lastStartupDiagnosticLogMs = 0L;
                     resetPowerEstimate(satellite);
                 } else {
-                    // A Type2 contactor can open within seconds while EVCSD
-                    // keeps the OCPP transaction alive until its no-energy
-                    // timeout. Record the native board state as it changes.
-                    String hardwareState = hardwareState(satellite);
-                    String stateKey = hardwareStateKey(satellite);
-                    if (!stateKey.equals(lastHardwareState)) {
-                        System.out.println("[QC45] AC hardware state " + hardwareState);
-                        lastHardwareState = stateKey;
-                    }
                     if (!sessionObserved) {
                         sessionObserved = true;
                         sessionStartedMs = now;
                         lastDiagnosticLogMs = now;
+                        lastStartupDiagnosticLogMs = now;
                         System.out.println("[QC45] AC telemetry session started limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
                             + currentEnergyWh(satellite) + " " + hardwareState);
+                    }
+                    if (now - sessionStartedMs <= STARTUP_DIAGNOSTIC_WINDOW_MS
+                            && now - lastStartupDiagnosticLogMs >= STARTUP_DIAGNOSTIC_MS) {
+                        System.out.println("[QC45] AC startup age="
+                            + Math.max(0L, now - sessionStartedMs) + "ms "
+                            + hardwareState);
+                        lastStartupDiagnosticLogMs = now;
                     }
                     if (now - lastDiagnosticLogMs >= DIAGNOSTIC_LOG_MS) {
                         System.out.println("[QC45] AC telemetry age="
@@ -222,6 +234,7 @@ final class AcPowerTelemetry extends Thread {
             String phaseValues = phases instanceof int[]
                 ? Arrays.toString((int[])phases) : String.valueOf(phases);
             return "boardStatus=" + fieldValue(info, "status")
+                + " nativeState=" + nativeState(satellite)
                 + " normalStatus=[" + moduleState(info) + "]"
                 + " acDTC=" + fieldValue(info, "acDTC")
                 + " boardCurrentRaw=" + fieldValue(info, "electricCurrent")
@@ -238,12 +251,20 @@ final class AcPowerTelemetry extends Thread {
             Object info = fieldValue(satellite, "infoState");
             if (info == null) return "board=unavailable";
             return fieldValue(info, "status") + "/"
+                + nativeState(satellite) + "/"
                 + moduleState(info) + "/"
                 + fieldValue(info, "acDTC") + "/"
                 + fieldValue(info, "epoPressed");
         } catch (Throwable error) {
             return "board=unavailable:" + error.getClass().getSimpleName();
         }
+    }
+
+    private String nativeState(Object satellite) throws Exception {
+        Object machine = satellite.getClass().getMethod("getMachine").invoke(satellite);
+        if (machine == null) return "unavailable";
+        Object current = machine.getClass().getMethod("getCurrent").invoke(machine);
+        return current == null ? "unavailable" : current.getClass().getSimpleName();
     }
 
     private String moduleState(Object info) throws Exception {
