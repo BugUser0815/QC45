@@ -6,11 +6,10 @@ import java.lang.reflect.Method;
 /**
  * Mirrors the logical Type2 kW target into EVCSD's native normal-AC limit path.
  *
- * Reverse engineering of the original evcsd.jar (build 57), together with the
- * live Type2 tests, shows that the normal-satellite START_CHARGE/ENERGY payload
- * called maxPower is a current limit in 0.1 A units, despite the legacy field
- * and configuration names saying "Power". EVCSD itself multiplies the configured
- * AC value by 10 before serializing it.
+ * Reverse engineering of the original evcsd.jar (build 57) proves that the
+ * normal-satellite START_CHARGE/ENERGY payload called maxPower is the configured
+ * AC value multiplied by ten. The AC board's physical unit is still unverified;
+ * the current-to-payload mapping below is an integration assumption.
  *
  * Therefore the integration keeps SatelliteModule.satelliteMaxPower in kW for
  * its own LoadManager/Modbus model, but converts that kW budget to a three-phase
@@ -68,7 +67,7 @@ final class AcFixedPowerBridge extends Thread {
     public void run() {
         System.out.println("[QC45] AC native fixed-limit bridge started"
             + " transport=stock-START_CHARGE/ENERGY"
-            + " AC-unit=deci-A own-MobiBus-writes=false");
+            + " AC-unit=assumed-deci-A own-MobiBus-writes=false");
         while (running) {
             long now = System.currentTimeMillis();
             try {
@@ -141,7 +140,7 @@ final class AcFixedPowerBridge extends Thread {
         if (startup || targetKw != lastLoggedTargetKw || pilotA != lastLoggedPilotA
                 || dcAfter != lastLoggedDcFixed || acLoadBalanceBefore || dcBefore != dcAfter) {
             System.out.println("[QC45] AC native fixed target=" + targetKw + "kW"
-                + " pilot=" + pilotA + "A payload=" + (pilotA * 10) + "deci-A"
+                + " pilot=" + pilotA + "A payload=" + (pilotA * 10) + "raw-assumed-deci-A"
                 + " acFixed=" + before + "->" + after
                 + " dcFixed=" + dcBefore + "->" + dcAfter
                 + " acLoadBalance=" + acLoadBalanceBefore + "->false"
