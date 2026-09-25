@@ -2,6 +2,7 @@ package de.rothner.qc45;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
 
 /**
  * Read-only Type2 power telemetry for the old QC45 EVCSD.
@@ -37,6 +38,7 @@ final class AcPowerTelemetry extends Thread {
     private final int[] rawPowerWindow = new int[3];
     private int rawPowerWindowCount;
     private int rawPowerWindowIndex;
+    private String lastHardwareState;
 
     static AcPowerTelemetry startRequired() throws Exception {
         AcPowerTelemetry telemetry = new AcPowerTelemetry(new ReflectionQC45());
@@ -69,15 +71,25 @@ final class AcPowerTelemetry extends Thread {
                     sessionObserved = false;
                     sessionStartedMs = 0L;
                     lastDiagnosticLogMs = 0L;
+                    lastHardwareState = null;
                     resetPowerEstimate(satellite);
                 } else {
+                    // A Type2 contactor can open within seconds while EVCSD
+                    // keeps the OCPP transaction alive until its no-energy
+                    // timeout. Record the native board state as it changes.
+                    String hardwareState = hardwareState(satellite);
+                    String stateKey = hardwareStateKey(satellite);
+                    if (!stateKey.equals(lastHardwareState)) {
+                        System.out.println("[QC45] AC hardware state " + hardwareState);
+                        lastHardwareState = stateKey;
+                    }
                     if (!sessionObserved) {
                         sessionObserved = true;
                         sessionStartedMs = now;
                         lastDiagnosticLogMs = now;
                         System.out.println("[QC45] AC telemetry session started limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
-                            + currentEnergyWh(satellite));
+                            + currentEnergyWh(satellite) + " " + hardwareState);
                     }
                     if (now - lastDiagnosticLogMs >= DIAGNOSTIC_LOG_MS) {
                         System.out.println("[QC45] AC telemetry age="
@@ -85,7 +97,7 @@ final class AcPowerTelemetry extends Thread {
                             + "ms actual=" + actualKw + "kW raw="
                             + lastRawPowerKw + "kW limit="
                             + station.limitKw(AC_CONNECTOR) + "kW energy="
-                            + currentEnergyWh(satellite));
+                            + currentEnergyWh(satellite) + " " + hardwareState);
                         lastDiagnosticLogMs = now;
                     }
                 }
@@ -200,6 +212,38 @@ final class AcPowerTelemetry extends Thread {
         Object value = satellite.getClass().getMethod("getCurrentEnergy").invoke(satellite);
         if (!(value instanceof Number)) return 0L;
         return ((Number)value).intValue() & 0xffffffffL;
+    }
+
+    private String hardwareState(Object satellite) {
+        try {
+            Object info = fieldValue(satellite, "infoState");
+            if (info == null) return "board=unavailable";
+            Object phases = fieldValue(info, "voltagePhaseValue");
+            String phaseValues = phases instanceof int[]
+                ? Arrays.toString((int[])phases) : String.valueOf(phases);
+            return "boardStatus=" + fieldValue(info, "status")
+                + " normalStatus=" + fieldValue(info, "normalStatus")
+                + " acDTC=" + fieldValue(info, "acDTC")
+                + " boardCurrentRaw=" + fieldValue(info, "electricCurrent")
+                + " boardVoltageRaw=" + fieldValue(info, "voltage")
+                + " phaseVoltageRaw=" + phaseValues
+                + " epo=" + fieldValue(info, "epoPressed");
+        } catch (Throwable error) {
+            return "board=unavailable error=" + error.getClass().getSimpleName();
+        }
+    }
+
+    private String hardwareStateKey(Object satellite) {
+        try {
+            Object info = fieldValue(satellite, "infoState");
+            if (info == null) return "board=unavailable";
+            return fieldValue(info, "status") + "/"
+                + fieldValue(info, "normalStatus") + "/"
+                + fieldValue(info, "acDTC") + "/"
+                + fieldValue(info, "epoPressed");
+        } catch (Throwable error) {
+            return "board=unavailable:" + error.getClass().getSimpleName();
+        }
     }
 
     private void writeInfoPower(Object satellite, int kw) throws Exception {
