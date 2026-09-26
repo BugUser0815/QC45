@@ -23,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 
-for command_name in install systemctl java javap jar git ssh scp curl sha256sum awk; do
+for command_name in install systemctl java javap jar git ssh scp curl sha256sum awk grep; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Required command not found: $command_name" >&2
         echo "Install OpenJDK 21 and curl with:" >&2
@@ -67,6 +67,7 @@ fi
 
 install -d "$bin_dir" "$config_dir" "$systemd_dir"
 install -m 0755 "$source_dir/qc45-ui-deploy" "$bin_dir/qc45-ui-deploy"
+install -m 0755 "$source_dir/qc45-ui-force-deploy" "$bin_dir/qc45-ui-force-deploy"
 install -m 0644 "$source_dir/systemd/qc45-ui-deploy.service" "$systemd_dir/qc45-ui-deploy.service"
 install -m 0644 "$source_dir/systemd/qc45-ui-deploy.timer" "$systemd_dir/qc45-ui-deploy.timer"
 
@@ -81,8 +82,11 @@ systemctl --user daemon-reload
 
 echo
 echo "Installed the QC45 UI deployer."
-echo "Test one deployment first:"
+echo "Normal manual deployment:"
 echo "  $bin_dir/qc45-ui-deploy"
+echo
+echo "Forced manual deployment (always rebuilds and reinstalls):"
+echo "  $bin_dir/qc45-ui-force-deploy"
 echo
 echo "After a successful test, enable automatic checks:"
 echo "  systemctl --user enable --now qc45-ui-deploy.timer"

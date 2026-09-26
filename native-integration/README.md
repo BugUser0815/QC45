@@ -13,11 +13,15 @@ ChargePoint
    |
 qc45-integration.jar
    |-- ReflectionQC45 -> live CentralModule / SatelliteModule / Configuration
-   |-- OcppClient      -> Boot, Heartbeat, Status, transactions, MeterValues,
-   |                      RemoteStartTransaction, RemoteStopTransaction
-   `-- ModbusServer    -> evcc power control
+   |-- ChargingLimitCoordinator -> only writer for all AC/DC power limits
+   |-- ChargingLimitGuard       -> fail-closed startup/reconciliation watchdog
+   |-- OcppBridgeClient -> OCPP 1.6 backend plus persisted transaction mapping
+   |-- Ocpp15BridgeServer -> local EVCSD OCPP 1.5 SOAP translation
+   |-- ModbusServer    -> evcc power control
+   |-- LoadManager     -> demand-aware, equal-priority shared DC/AC KSEM budget
+   `-- GridFailback    -> independent DC/AC grid-limit protection
 
-Modbus TCP registers used by evcc:
+Modbus TCP registers used by evcc and the local charging screen:
   0   station power [kW]
   1   CHAdeMO power [kW]
   2   CCS power [kW]
@@ -31,14 +35,52 @@ Modbus TCP registers used by evcc:
  22   Type2 active
  30   remoteStarted
  40   Configuration.maxPower
- 41   Configuration.maxPowerAC
+ 41   Configuration.maxPowerAC [A, native Type2 pilot-current fallback]
 100   active DC power [kW]
 101   Type2 power [kW]
-110   DC budget [kW] R/W
-111   AC budget [kW] R/W
+110   persistent evcc DC request/cap [kW] R/W
+111   persistent evcc AC request/cap [kW] R/W
+120   active DC charging power [kW]
+121   active DC logical target/limit [kW] (0 while physical Notladen is 5 kW)
+122   vehicle SoC [%]
+123   charging time [s]
+124   session energy high word [Wh]
+125   session energy low word [Wh]
+126   AC/DC UI schema version (=1)
+127   AC/DC session, flow, safety and RemoteStart flags
+128   active DC connector (0/1/2)
+129-137 DC actual/request/grid/cap/effective/SoC/time/energy
+138-145 AC actual/request/grid/cap/effective/time/energy
 ```
 
-Only registers 110 and 111 are writable. Fixed AC/DC configuration limits are not modified.
+Only registers 110 and 111 are writable. Values below the configured technical
+minimum are normalized to 0 kW. evcc requests never write EVCSD directly; the
+effective connector limit is always the minimum of evcc request, grid-safe
+LoadManager allocation and GridFailback cap/block.
+
+After a JVM/webapp start both outputs use their configured maximum as an
+autonomous request cap. Startup, KSEM and failback blockers set the logical
+targets to zero while both AC and DC retain physical 5 kW Notladen.
+The first evcc write takes control of only the addressed output. An explicit
+0 kW request also retains 5 kW Notladen; it does not stop the session.
+Hard trips terminate sessions through RemoteStop.
+
+Modbus access is restricted by `modbus.allowedClients` (exact IP addresses or
+CIDR networks); loopback is always permitted. Multi-register writes of 110/111
+are applied atomically and all reductions are written before any increase.
+
+The local charging screen prefers the coherent, versioned AC/DC block 126-145
+and falls back to the legacy DC block 120-125. It can therefore display actual,
+evcc-requested, grid-allocated and effective power for AC and DC at the same
+time, including failback, invalid-safety-configuration and demand-transfer
+state. The implementation is tied
+to fields and methods verified against the original QC45 EVCSD firmware:
+`SatelliteInfo.power`, `voltage`, `electricCurrent`, `battEnergyPct`,
+`chargingTime`, `energy`, `initialEnergy`, plus
+`SatelliteModule.getActiveTransaction()`, `getCurrentEnergy()` and
+`getStartTime()`.
+
+For installations with the Iskra DC meter, `initialEnergy` is captured at session start and registers 124/125 expose `energy - initialEnergy`. Without that absolute meter baseline, `initialEnergy` remains zero and the charger-reported session energy is exposed directly.
 
 ## Build
 
@@ -53,7 +95,11 @@ Output:
 target/qc45-integration-0.1.0.jar
 ```
 
-The project targets Java 7 and has no runtime dependencies outside the servlet API already provided by Tomcat.
+The project uses the Eclipse compiler under OpenJDK 21 to emit Java 7 bytecode
+and has no runtime dependencies outside the servlet API already provided by
+Tomcat. Allocator, demand tracking, central limit coordination, 32-bit KSEM
+decoding and OCPP meter translation are covered by unit tests during the Maven
+build.
 
 ## Install on QC45
 
@@ -62,7 +108,7 @@ The project targets Java 7 and has no runtime dependencies outside the servlet A
 
 ```bash
 cp target/qc45-integration-0.1.0.jar \
-  /home/mobie/evcsd/webapps/ROOT/WEB-INF/lib/qc45-integration.jar
+  /home/mobie/evcsd/webapps/smartgrid/WEB-INF/lib/qc45-integration.jar
 ```
 
 3. Create the local configuration (do not commit credentials):
@@ -73,7 +119,7 @@ cp qc45-integration.properties.example \
 vi /home/mobie/evcsd/qc45-integration.properties
 ```
 
-4. Add this listener inside the existing `<web-app>` element in `/home/mobie/evcsd/webapps/ROOT/WEB-INF/web.xml`:
+4. Add this listener inside the existing `<web-app>` element in `/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xml`:
 
 ```xml
 <listener>
@@ -81,15 +127,33 @@ vi /home/mobie/evcsd/qc45-integration.properties
 </listener>
 ```
 
-5. Restart EVCSD/Tomcat.
+5. Reboot the complete QC45 so EVCSD, Tomcat, the native integration and all
+   station services start from one consistent state.
+
+For repeatable deployments use [`deploy/qc45-integration`](../deploy/qc45-integration/README.md).
+It builds and tests the JAR, installs it in `smartgrid`, performs the full reboot,
+waits for the station and integration to become healthy and rolls back
+automatically if startup verification fails.
 
 Expected log lines:
 
 ```text
-[QC45] native integration started
-[QC45] Modbus TCP listening on 1502
-[QC45] OCPP connected: wss://...
-[QC45] BootNotification: Accepted, heartbeat=...s
+[QC45] native integration started safety=fail-closed AC+DC coordinator=active
+[QC45] power requests DC=AUTO 50kW AC=AUTO 43kW; first Modbus write takes control of that channel
+[QC45] Modbus TCP listening on 0.0.0.0:1502 ...
+[QC45] OCPP bridge connected: wss://...
+[QC45] OCPP15 SOAP RX op=bootNotification ...
+```
+
+At process/webapp start the physical limits are set to 5 kW for both AC and DC.
+Power above Notladen requires five valid KSEM reads and a freshly calculated
+grid-safe target. evcc is optional until it explicitly writes a channel budget.
+Missing/invalid configuration reasserts the physical connector floors.
+
+During a DC session, charging-screen diagnostics are emitted at most every ten seconds, for example:
+
+```text
+[QC45] Modbus screen telemetry: dc=2 power=...kW rawPower=...kW voltage=...V current=...A limit=...kW soc=...% time=...s energy=...Wh initialEnergy=...Wh sessionEnergy=...Wh score=...
 ```
 
 ## OCPP behavior
@@ -108,21 +172,78 @@ Implemented:
 - Basic authentication
 - `ocpp1.6` WebSocket subprotocol
 
+MeterValues follow the proven QC45 behavior from 22 August: the first periodic
+energy sample is forwarded, including its supplied measurand and unit. Later
+current or power samples are not mixed into the backend's kWh consumption
+series, and bare samples are no longer relabelled as `Power.Active.Import` in
+`kW`. Transaction start/stop meters remain unchanged. Active
+transaction to connector mappings are persisted so `RemoteStopTransaction` still
+resolves after a JVM/webapp restart. Fragmented backend WebSocket messages are
+reassembled.
+
+## Grid and charging safety
+
+- Connector 1 is CHAdeMO, connector 2 CCS and connector 3 Type 2 AC.
+- One DC connector and Type 2 may charge simultaneously with equal base priority.
+- Stably unused entitlement is transferred symmetrically while retaining a 2 kW probe reserve.
+- AC is projected conservatively as a possible single-phase 230 V load; delayed
+  vehicle ramps and demand transfers are checked against the 34 A command ceiling.
+- KSEM currents use the complete 32-bit value, including readings above 65.535 A.
+- LoadManager and GridFailback share one serialized, persistent KSEM Modbus/TCP
+  connection. A failed exchange closes it before the next reconnect attempt.
+- At 34 A the failback applies its configured reduction; at 35 A it immediately
+  blocks AC/DC. The additional latched hard trip follows a conservative 35 A SLS-E
+  time/current envelope: below 1.05 x In no latch is accumulated, then the delay
+  falls from 60 minutes to 5 minutes, 60 seconds, 10 seconds and 1 second. Assuming
+  a preloaded SLS, every tolerance uses the lower current boundary; the instant
+  threshold is therefore fixed at 5 x In (175 A). Historical 38 A and 218.75 A
+  configurations are migrated automatically.
+- KSEM failure keeps both AC and DC at 5 kW Notladen while transactions remain
+  alive. Neither connector receives a native zero limit. This floor is retained
+  even without measured grid headroom; current-based overload detection cannot
+  detect a new overload while KSEM measurements are unavailable.
+- The limit mismatch guard checks actual power against the physical connector
+  floor (5 kW DC or 5 kW AC) when the logical target is zero.
+- AC Notladen uses 5 kW to exceed 6 A per phase at three-phase 230 V
+  (3 x 230 V x 6 A = 4.14 kW); the single-phase safety projection is retained.
+- During an authorized Type 2 session, logical zero sends 5 kW through MobiBus
+  ENERGY, including during KSEM/failback blocks or insufficient headroom.
+  This is the same Notladen policy as DC. The transport does not start new
+  sessions; hard-trip and limit-mismatch RemoteStop remain independent.
+  SUSPEND_CHARGE is reserved for transport shutdown.
+- After KSEM qualification, an idle DC satellite is pre-armed at the projected-safe
+  5 kW minimum without authorization or a start command. A detected session sends
+  that target through the full CCS path and holds it for three seconds before ramping.
+- Positive ramp steps are never queued ahead of a delayed vehicle response. The next
+  2 kW step requires the previous release to be reached within 1 kW on two consecutive
+  LoadManager observations; reductions remain immediate.
+- The 250 ms guard also reasserts positive limits and hard-stops a transaction that
+  keeps drawing more than 3 kW above its released limit for one second.
+- A positive CCS target uses the connector's active transaction as its control
+  authorization; a 0 kW target always sends the CCS control flag as false.
+- A hard trip retries RemoteStop until sessions end and remains latched while the
+  grid is unsafe. It resets automatically after at least 60 seconds continuously
+  below `reduceA`; a current at/above that threshold or a failed KSEM read restarts
+  the timer.
+
 Connector mapping:
 
 - 1 = CHAdeMO
 - 2 = CCS
 - 3 = Type2 AC
 
-Charging state is currently derived from `SatelliteModule.getCurrentPower() > 0`. This is intentionally conservative because the exact internal state enum of this firmware has not yet been mapped. It means `Preparing`, `SuspendedEV`, `SuspendedEVSE` and `Finishing` are not emitted yet; the client uses `Available` and `Charging` reliably from known runtime data.
+Charging status combines active-transaction/session evidence, actual power and
+the effective connector limit. This allows the bridge to distinguish
+`Charging`, `SuspendedEV`, `SuspendedEVSE` and `Finishing` without inventing a
+firmware state enum.
 
-For a locally started transaction the integration tries `SatelliteModule.getUser()` and then the private `user` field. If neither exists/contains data, `ocpp.defaultIdTag` is used.
+## Important physical verification after installation
 
-## Important runtime assumptions still to verify on the physical charger
-
-- the concrete `NmsListenerImpl` instance is reachable from `CentralModule`, or via a static zero-argument getter;
-- `SatelliteModule.stopCharging()` is the correct remote-stop path for all three connector types;
-- `getEnergy()` is expressed in Wh (the original firmware API name is known, but its unit should be confirmed against live values);
-- the station JVM trusts the ChargePoint TLS certificate chain.
+- verify in a CCS raw trace that a 0-kW V3 START frame is transmitted and acted
+  upon by the vehicle;
+- test RemoteStop on CHAdeMO, CCS and Type2 through `NmsListenerImpl.abortCharge()`;
+- confirm the station JVM trusts the configured ChargePoint TLS certificate chain;
+- perform an AC/DC parallel-load test while observing all three KSEM phases and
+  the upstream 35-A hardware protection.
 
 These are isolated in the reflection adapter so firmware-specific adjustments do not affect the OCPP or Modbus layers.

@@ -2,6 +2,7 @@ package pt.efacec.es.evcsd.ui;
 
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.InputStream;
 import javax.imageio.ImageIO;
 import pt.efacec.es.evcsd.ui.info.NoInfo;
 
@@ -43,10 +44,26 @@ public class WaitingForCard extends AlpitronicPanel implements ActionPanel<NoInf
     }
 
     private static BufferedImage loadLogo() {
-        try {
-            return ImageIO.read(WaitingForCard.class.getResource("sgs-logo.png"));
-        } catch (Exception ignored) {
-            return null;
+        String[] paths = new String[] {
+            "/pt/efacec/es/evcsd/ui/sgs-logo.png",
+            "sgs-logo.png"
+        };
+
+        for (int i = 0; i < paths.length; i++) {
+            InputStream in = null;
+            try {
+                in = WaitingForCard.class.getResourceAsStream(paths[i]);
+                if (in != null) {
+                    BufferedImage image = ImageIO.read(in);
+                    if (image != null) return image;
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (in != null) {
+                    try { in.close(); } catch (Exception ignored) {}
+                }
+            }
         }
+        return null;
     }
 }

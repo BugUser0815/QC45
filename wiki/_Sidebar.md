@@ -18,6 +18,7 @@
 
 **Lastmanagement**
 - [LoadManager](LoadManager)
+- [Type2 / AC-Leistungsbegrenzung](Type2-AC-Leistungsbegrenzung)
 - [Grid-Failback](Grid-Failback)
 - [Peak Shaving & Sunny Island](Peak-Shaving-und-Sunny-Island)
 - [SoC-Derating](SoC-Derating)

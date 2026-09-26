@@ -1,0 +1,9 @@
+[Unit]
+Description=Build and deploy the QC45 native integration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/qc45-integration-deploy
+TimeoutStartSec=20min

@@ -31,33 +31,76 @@ public final class KsemClient {
     private final int unitId;
     private final int timeoutMs;
     private final double scale;
-    private final boolean legacyLowWord;
+    private final WordOrder wordOrder;
     private int transactionId;
+    private Socket socket;
+    private InputStream input;
+    private OutputStream output;
 
     public KsemClient(String host, int port, int unitId, int timeoutMs,
-                      double scale, boolean legacyLowWord) {
-        this.host = host;
+                      double scale, String wordOrder) {
+        if (host == null || host.trim().length() == 0) throw new IllegalArgumentException("KSEM host is required");
+        if (port < 1 || port > 65535 || unitId < 0 || unitId > 255
+                || timeoutMs <= 0 || scale <= 0.0d || Double.isNaN(scale)
+                || Double.isInfinite(scale)) {
+            throw new IllegalArgumentException("invalid KSEM connection or scale");
+        }
+        this.host = host.trim();
         this.port = port;
         this.unitId = unitId;
         this.timeoutMs = timeoutMs;
         this.scale = scale;
-        this.legacyLowWord = legacyLowWord;
+        this.wordOrder = WordOrder.parse(wordOrder);
     }
 
-    public Currents readCurrents() throws Exception {
-        Socket socket = new Socket();
+    public synchronized Currents readCurrents() throws Exception {
         try {
-            socket.connect(new InetSocketAddress(host, port), timeoutMs);
-            socket.setSoTimeout(timeoutMs);
-            InputStream in = new BufferedInputStream(socket.getInputStream());
-            OutputStream out = new BufferedOutputStream(socket.getOutputStream());
-
-            double l1 = readCurrent(in, out, 60);
-            double l2 = readCurrent(in, out, 100);
-            double l3 = readCurrent(in, out, 140);
+            ensureConnected();
+            double l1 = readCurrent(input, output, 60);
+            double l2 = readCurrent(input, output, 100);
+            double l3 = readCurrent(input, output, 140);
             return new Currents(l1, l2, l3);
-        } finally {
-            try { socket.close(); } catch (Throwable ignored) {}
+        } catch (Exception e) {
+            // Never reuse a stream after a partial Modbus exchange. The next
+            // caller establishes a fresh connection while both safety users
+            // remain fail-closed for this failed reading.
+            closeConnection();
+            throw e;
+        } catch (Error e) {
+            closeConnection();
+            throw e;
+        }
+    }
+
+    public synchronized void close() {
+        closeConnection();
+    }
+
+    private void ensureConnected() throws Exception {
+        if (socket != null && socket.isConnected() && !socket.isClosed()) return;
+        Socket connected = new Socket();
+        try {
+            connected.connect(new InetSocketAddress(host, port), timeoutMs);
+            connected.setSoTimeout(timeoutMs);
+            input = new BufferedInputStream(connected.getInputStream());
+            output = new BufferedOutputStream(connected.getOutputStream());
+            socket = connected;
+        } catch (Exception e) {
+            try { connected.close(); } catch (Throwable ignored) {}
+            input = null;
+            output = null;
+            socket = null;
+            throw e;
+        }
+    }
+
+    private void closeConnection() {
+        Socket current = socket;
+        socket = null;
+        input = null;
+        output = null;
+        if (current != null) {
+            try { current.close(); } catch (Throwable ignored) {}
         }
     }
 
@@ -76,7 +119,8 @@ public final class KsemClient {
 
         byte[] header = new byte[7];
         readFully(in, header, 0, header.length);
-        if (u16(header, 0) != tx || u16(header, 2) != 0) {
+        if (u16(header, 0) != tx || u16(header, 2) != 0
+                || (header[6] & 0xff) != unitId) {
             throw new IllegalStateException("Invalid KSEM Modbus response header");
         }
 
@@ -90,21 +134,37 @@ public final class KsemClient {
             int code = pdu.length > 1 ? pdu[1] & 0xff : -1;
             throw new IllegalStateException("KSEM Modbus exception " + code + " at register " + register);
         }
-        if (function != 3 || pdu.length < 6 || (pdu[1] & 0xff) != 4) {
+        if (function != 3 || pdu.length != 6 || (pdu[1] & 0xff) != 4) {
             throw new IllegalStateException("Invalid KSEM current response at register " + register);
         }
 
         int word0 = u16(pdu, 2);
         int word1 = u16(pdu, 4);
-        long raw;
-        if (legacyLowWord) {
-            // Matches the previously proven Python reader: r1.registers[1].
-            raw = word1;
-        } else {
-            // KSEM data is commonly word-swapped for 32-bit values.
-            raw = ((long) word1 << 16) | (long) word0;
+        double current = decodeCurrent(word0, word1, scale, wordOrder);
+        if (current < 0.0d || current > 10000.0d || Double.isNaN(current)
+                || Double.isInfinite(current)) {
+            throw new IllegalStateException("Implausible KSEM current " + current
+                + "A at register " + register);
         }
-        return raw * scale;
+        return current;
+    }
+
+    static double decodeCurrent(int word0, int word1, double scale, WordOrder order) {
+        long high = order == WordOrder.HIGH_LOW ? word0 & 0xffffL : word1 & 0xffffL;
+        long low = order == WordOrder.HIGH_LOW ? word1 & 0xffffL : word0 & 0xffffL;
+        return ((high << 16) | low) * scale;
+    }
+
+    enum WordOrder {
+        HIGH_LOW,
+        LOW_HIGH;
+
+        static WordOrder parse(String value) {
+            String normalized = value == null ? "HIGH_LOW" : value.trim().toUpperCase(java.util.Locale.US);
+            if ("HIGH_LOW".equals(normalized)) return HIGH_LOW;
+            if ("LOW_HIGH".equals(normalized)) return LOW_HIGH;
+            throw new IllegalArgumentException("ksem.wordOrder must be HIGH_LOW or LOW_HIGH");
+        }
     }
 
     private static int u16(byte[] b, int o) {

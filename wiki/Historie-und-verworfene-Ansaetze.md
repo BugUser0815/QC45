@@ -24,17 +24,29 @@ Logs aus der Zwischenversion mit `ccsV3Byte2=<Ampere>` zeigen, dass der Kona hoc
 
 ### ⛔ EVCSD darf beim Start selbständig auf 50 kW springen
 
-Behoben durch Pre-Arm und autoritatives `commandedDcKw`. Ein höherer gemeldeter EVCSD-Wert wird sofort zurückgesetzt.
+Ein pauschaler 5-kW-Pre-Arm vor der Headroom-Berechnung war nicht ausreichend
+sicher. Der aktuelle Stand startet fail-closed bei 0 kW. Erst nach fünf gültigen
+KSEM-Messungen und einer konservativen Projektion wird ausschließlich am inaktiven
+DC-Satelliten ein nicht autorisierender 5-kW-Startwert hinterlegt. Beim erkannten
+Vorgang wird er autorisiert erneut übertragen und drei Sekunden gehalten. Der
+`ChargingLimitGuard` setzt fremde EVCSD-Änderungen zurück und beendet anhaltende
+Sollwertverletzungen.
 
-### ⛔ Type2 im aktuellen nativen LoadManager aktiv mitregeln
+### ⛔ Alte Type2-Mitregelung ohne heutige Schutzmechanismen
 
-Der aktuelle Stand ist bewusst DC-only. Type2 fließt über den KSEM indirekt in den Headroom ein, wird aber nicht manipuliert.
+Die frühe Hybridfassung wurde zu Recht verworfen: Sie verwendete gemeldete statt autoritative Limits und enthielt die spätere Start-, Freigabe- und GridFailback-Absicherung nicht. Seit der AC/DC-Neufassung wird Type2 wieder aktiv geregelt, aber über ein gemeinsames 50/50-Budget, autoritative AC/DC-Sollwerte, Reduktion-vor-Erhöhung und einen gemeinsamen Schutzpfad. Die alte Implementierung darf nicht wiederhergestellt werden.
 
 ## KSEM
 
 ### ⛔ Eine einzige dauerhafte KSEM-Verbindung als Zwang
 
 Nicht übernommen. Wegen paralleler Zugriffe durch QC45, PeakShaving, evcc/Monitoring sind kurze Verbindungen robust und ausreichend.
+
+### ⛔ Nur das untere 16-Bit-Wort des Phasenstroms lesen
+
+Verworfen. Oberhalb 65,535 A läuft das Low-Word über und kann einen gefährlich
+hohen Strom als kleinen Wert erscheinen lassen. Es wird immer der vollständige
+unsigned 32-Bit-Wert in der konfigurierten Wortreihenfolge ausgewertet.
 
 ## Peak Shaving
 
@@ -48,13 +60,14 @@ Zwischenzeitlich getestet, anschließend zurückgenommen. In Sonderfällen führ
 
 ### ⛔ Fake Export bei fehlender Last auf 0 setzen
 
-Falsch für das gewünschte Systemverhalten. Fake Export wird benötigt, um die Pufferbatterie zu beladen. Der richtige Sonderfall ist, **reale Einspeisung/keine Last nicht als Entladebedarf zu interpretieren**, während Fake Export bestehen bleibt.
+Falsch für das gewünschte Systemverhalten. Fake Export wird benötigt, um den Akkuboost zu beladen. Der richtige Sonderfall ist, **reale Einspeisung/keine Last nicht als Entladebedarf zu interpretieren**, während Fake Export bestehen bleibt.
 
 ## OCPP
 
 ### Historischer direkter OCPP-Client
 
-Im Source existiert noch `OcppClient.java` aus einem früheren direkten Native-OCPP-Ansatz. Der produktive `Integration.start()` verwendet heute stattdessen:
+`OcppClient.java` und die nur dafür benötigte `TlsSupport.java` wurden entfernt.
+Der produktive Stand verwendet ausschließlich:
 
 - `OcppBridgeClient`
 - `Ocpp15BridgeServer`

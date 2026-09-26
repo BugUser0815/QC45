@@ -22,7 +22,7 @@ public class CCSNotChargingPanel extends AlpitronicPanel implements ActionPanel<
 
     protected void paintScreen(Graphics2D g) {
         title(g, "FAHRZEUG VERBUNDEN", "CCS");
-        drawPlug(g, 320, 191, YELLOW);
+        ConnectorImages.draw(g, "CCS2", 320, 191, 150, 120, true);
         String reason = info == null ? "" : safe(info.getFinishReason(), "");
         instruction(g, "Warte auf Fahrzeug …",
             reason.length() == 0 ? "Der Ladevorgang startet, sobald das Fahrzeug bereit ist." : reason);

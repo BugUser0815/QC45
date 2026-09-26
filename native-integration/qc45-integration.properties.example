@@ -1,11 +1,14 @@
 # Copy to /home/mobie/evcsd/qc45-integration.properties
 
 # ChargePoint / OCPP 1.6 JSON over WSS
+ocpp.enabled=true
 ocpp.url=wss://example.invalid/ocpp/cp/socket/16/QC45
 ocpp.username=QC45
 ocpp.password=CHANGE_ME
 ocpp.tls.caFile=/home/mobie/evcsd/ocpp-ca.pem
 ocpp.tls.insecure=false
+# Persists active backend transaction-to-connector mappings across a webapp/JVM restart.
+ocpp.transactionMapFile=/home/mobie/evcsd/qc45-active-transactions.properties
 
 # Legacy EVCSD OCPP 1.5 SOAP -> OCPP 1.6 bridge
 ocpp15.loopback.enabled=true
@@ -15,8 +18,19 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
+# Dashboard / Akkuboost
+dashboard.akkuboost.url=http://10.0.20.131:7070
+
 # evcc / local load management
+# DC remains regulated. Type2/AC power is set directly in the original QC45;
+# AC Modbus requests are recorded for compatibility but have no physical effect.
+modbus.enabled=true
+modbus.bindAddress=0.0.0.0
 modbus.port=1502
+# Comma-separated exact addresses or CIDR networks. Loopback is always allowed.
+# This is the known evcc Raspberry Pi address; update it if that host changes.
+modbus.allowedClients=10.0.0.179
+modbus.maxClients=8
 
 # CCS protocol handling
 # The integration forces the live EFACEC QuickCharge/MasterProto serializers to
@@ -31,6 +45,16 @@ modbus.port=1502
 evcsd.ccsRawTrace.enabled=true
 evcsd.ccsRawTrace.repeatMs=1000
 
+# Full A19/QuickCharge RX trace for short reverse-engineering captures.
+# This logs every byte received on the physical master/CCS serial path in
+# buffered batches and can generate a lot of log data. Keep it false during
+# normal operation; enable it only while capturing a CCS plug-in/SLAC sequence.
+# A restart of EVCSD is required after changing this switch.
+evcsd.ccsRawTrace.fullRx.enabled=false
+# Optional batching controls; defaults shown here.
+evcsd.ccsRawTrace.fullRx.flushMs=40
+evcsd.ccsRawTrace.fullRx.maxBytes=256
+
 # Lightweight EVCSD internal executor lag probe.
 # One tiny marker task per interval; warnings are logged above warnMs.
 # Persistent lag >= 1000 ms for three consecutive probes arms a FULL DEVICE
@@ -41,39 +65,61 @@ evcsd.ccsRawTrace.repeatMs=1000
 evcsd.lagmonitor.enabled=true
 evcsd.lagmonitor.intervalMs=60000
 evcsd.lagmonitor.warnMs=250
+evcsd.lagmonitor.autoRestart=true
+evcsd.lagmonitor.restartLagMs=1000
+evcsd.lagmonitor.restartConsecutive=3
+evcsd.lagmonitor.idleStableMs=30000
+evcsd.lagmonitor.restartCommand=sudo -n /sbin/reboot
 
 # KOSTAL KSEM shared by LoadManager and GridFailback
 ksem.host=10.0.0.70
 ksem.port=502
 ksem.unit=71
 ksem.timeoutMs=1000
-ksem.legacyLowWord=true
 ksem.currentScale=0.001
+# 32-bit unsigned current registers. HIGH_LOW prevents rollover above 65.535 A.
+ksem.wordOrder=HIGH_LOW
 
 # Native load manager
-# Normal balancing controls DC connectors only. Type2 is not manipulated.
+# KSEM still limits DC. AC allocations are diagnostic only and do not control
+# the Type2 board while the operator-fixed AC mode is active.
+# Safety validation preserves the 34/36/38 A operating envelope and the fixed
+# E35 magnetic range; it also rejects KSEM timeouts above 1 s or increases
+# faster than 2 kW/s.
 loadmanager.enabled=true
-loadmanager.targetA=32.0
+loadmanager.targetA=34.0
+loadmanager.gridLimitA=38.0
 loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=50
 loadmanager.minAcKw=5
-loadmanager.maxAcKw=22
+loadmanager.maxAcKw=43
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
+# Reassign a stably unused fair share to the other connector. The source keeps
+# this reserve so rising vehicle demand is detected and equal sharing restored.
+loadmanager.demandStableMs=5000
+loadmanager.demandReserveKw=2
 
 # Independent grid failback
+# 36 A starts the reduction stage; 38 A immediately pauses charging. The
+# separate 175 A threshold remains the lower magnetic E35 hard-trip boundary.
 failback.enabled=true
-failback.reduceA=34.0
+failback.reduceA=36.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
-failback.tripA=35.0
+failback.tripA=38.0
+# Compatibility minimum for timed E35 overload bands. The conservative instant
+# trip at the lower magnetic boundary remains immediate.
 failback.tripDelayMs=250
-failback.instantTripA=38.0
-failback.intervalMs=200
-# Hard-trip latch clears automatically after this many ms continuously below reduceA.
+# Fixed 5 x In lower E35 magnetic boundary for an assumed preloaded 35A SLS.
+# Historical 38A and 218.75A instantTripA values are migrated automatically.
+failback.instantTripA=175.0
+failback.intervalMs=100
+# A hard trip resets automatically after this many ms continuously below reduceA.
+# Every current at/above reduceA and every failed KSEM read restarts the timer.
+# The minimum and default are 60000 ms.
 failback.resetDelayMs=60000
-# KSEM communication loss pauses charging at 0 kW but keeps transactions alive.
-failback.tripOnMeterFailure=true
-failback.meterFailureMs=3000
+# Any KSEM communication/read failure pauses AC and DC immediately at 0 kW
+# while the OCPP transactions remain active.

@@ -16,11 +16,16 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
           cache: maven
       - name: Build
         working-directory: native-integration
         run: mvn -B clean package
+      - name: Verify Java 7 bytecode
+        working-directory: native-integration
+        run: |
+          javap -verbose -classpath target/qc45-integration-0.1.0.jar \
+            de.rothner.qc45.BootstrapListener | grep -F 'major version: 51'
       - uses: actions/upload-artifact@v4
         with:
           name: qc45-integration

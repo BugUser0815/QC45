@@ -7,21 +7,21 @@ Beim CCS-RemoteStart zeigte sich eine EVCSD-spezifische Besonderheit: Der urspr�
 `RemoteStartAuthorizationFix` 체berwacht alle **100 ms**:
 
 ```text
-CentralModule.isRemoteStarted()
-AND
-Connector 2 ist aktuell CCS
+Connector 2 ist von dieser Integration remote gestartet
+AND Connector 2 hat eine aktive Session
+AND Connector 2 ist aktuell CCS
 ```
 
-Sind beide Bedingungen wahr und `loggedIn` ist false, wird `loggedIn=true` gespiegelt. Sobald RemoteStart oder CCS-Auswahl endet, wird der von der Integration gesetzte Zustand wieder auf false zur체ckgenommen.
+Sind alle Bedingungen wahr und `loggedIn` ist false, wird `loggedIn=true`
+gespiegelt. Der von der Integration gesetzte globale Zustand wird erst dann auf
+false zur체ckgenommen, wenn **keine AC- oder DC-Session mehr aktiv ist**.
 
 ```mermaid
 flowchart TD
-  R{remoteStarted?} -->|nein| REST[ggf. gesetztes loggedIn zur체cknehmen]
-  R -->|ja| C{Connector 2 = CCS?}
-  C -->|nein| REST
-  C -->|ja| L{loggedIn?}
-  L -->|nein| SET[loggedIn = true]
-  L -->|ja| KEEP[unver채ndert]
+  R{Remote-CCS auf 2 aktiv?} -->|ja| SET[loggedIn bei Bedarf true]
+  R -->|nein| A{Andere Session aktiv?}
+  A -->|ja| KEEP[globalen Zustand behalten]
+  A -->|nein| REST[eigenen loggedIn-Wert zur체cknehmen]
 ```
 
 ## Warum so eng begrenzt?
@@ -32,7 +32,10 @@ Der Fix soll **keine globale Offline-Autorisierung simulieren**. Er greift nur f
 - Connector 2
 - CCS
 
-Dadurch bleibt die Original-EVCSD-Autorisierungslogik f체r lokale Kartenstarts, CHAdeMO und Type2 weitgehend unangetastet.
+Dadurch bleibt die Original-EVCSD-Autorisierungslogik f체r lokale Kartenstarts,
+CHAdeMO und Type2 weitgehend unangetastet. Insbesondere kann das Ende einer
+Remote-CCS-Session nicht mehr die Autorisierung eines gleichzeitig ladenden
+Type2- oder CHAdeMO-Fahrzeugs zur체cksetzen.
 
 ## Bezug zum V3-START-Paket
 

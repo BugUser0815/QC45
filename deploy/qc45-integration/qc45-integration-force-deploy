@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+QC45_FORCE_DEPLOY=1 exec "$script_dir/qc45-integration-deploy" "$@"

@@ -10,6 +10,7 @@ ohne Markenassets oder eine pixelgenaue Kopie zu verwenden.
 - Gelb ausschließlich für aktiven Status, Auswahl und Ladefortschritt
 - identische Kopfzeile mit QC45, Statuspunkt und Uhrzeit
 - feste Funktionsfelder an den Positionen der vier haptischen Gerätetasten
+- eingebettete, freigestellte Produktbilder für CCS2, CHAdeMO und Type 2
 - rechteckige, eindeutig beschriftete Aktionsflächen
 - keine Werbung, Animationen, Verläufe oder dekorativen Instrumente
 
@@ -40,27 +41,62 @@ Die Tastenerfassung selbst verbleibt unverändert in der originalen EVCSD-UI:
 `MainForm` übergibt die Tastencodes weiterhin an die bestehende
 Zustandsmaschine. Der Patch ändert ausschließlich Darstellung und Beschriftung.
 
-## Aktiver Ladevorgang
+## Aktiver Ladevorgang und Load Balancing
 
-Aktuelle Ladeleistung und Fahrzeug-SoC sind die Hauptwerte. DC-Sollleistung,
-Energie, Ladezeit und Pufferbatterie-SoC stehen in einer nachgeordneten Ebene.
-Der rote Bereich ist kein lokaler Stop-Taster, sondern trägt ausschließlich den
-Hinweis `zum beenden Karte vorhalten oder App benutzen.`
+Die Hauptansicht stellt AC und den aktiven DC-Ausgang gleichberechtigt
+nebeneinander dar. Für beide Ladearten werden angezeigt:
+
+| Anzeige | Bedeutung |
+|---|---|
+| `IST` | tatsächlich gemessene Fahrzeugleistung |
+| `AUTO` | autonome Obergrenze, solange evcc für den Ausgang nichts geschrieben hat |
+| `EVCC` | vom ersten evcc-Schreibzugriff an geltende evcc-Obergrenze |
+| `NETZ` | vom LoadManager netzsicher berechnete Zuteilung |
+| `FREIGABE` | tatsächlich wirksames Minimum einschließlich Failback |
+
+Zusätzlich bleiben DC-Fahrzeug-SoC, AC/DC-Gesamtleistung, gemeinsame
+Sessionenergie, ladeartspezifische Zeit und Akkuboost-SoC sichtbar. Die
+Fußzeile unterscheidet faire gemeinsame Zuteilung, bedarfsgerechte Umverteilung
+und Sicherheitszustände. Der rote Bereich ist kein lokaler Stop-Taster, sondern
+trägt ausschließlich den Hinweis `Zum Beenden Karte vorhalten oder App benutzen.`
+Bei einer ungültigen Sicherheitskonfiguration zeigt die Kopfzeile
+`KONFIGURATION`; AC und DC bleiben dabei sichtbar auf 0 kW begrenzt, während
+die OCPP-Kommunikation weiterlaufen kann.
+Wird trotz wirksamer 0-kW-Freigabe Leistung gemessen, zeigt die Kopfzeile
+`LEISTUNGSFEHLER`. Die Transaktion wird abgebrochen und die Leistungssperre
+bleibt verriegelt, bis der betroffene Anschluss sicher inaktiv gemeldet wird.
+
+Eine zusätzliche Sicherheitsfußzeile liest den Schutzstatus über den
+loopbackgebundenen Diagnose-Port `1503`. Ist diese Diagnose oder die native
+Ladesteuerung nicht erreichbar, wird das ausdrücklich als fehlender
+Sicherheitsstatus angezeigt und nicht als Normalzustand ausgeblendet.
 
 Die QC45-Werte stammen aus einer FC03-Abfrage des lokalen Modbus-Servers auf
 `127.0.0.1:1502`:
 
 | Register | Inhalt |
 |---:|---|
-| 120 | aktuelle DC-Leistung [kW] |
-| 121 | freigegebenes DC-Limit [kW] |
-| 122 | Fahrzeug-SoC [%] |
-| 123 | Ladezeit [s] |
-| 124/125 | Sessionenergie [Wh] U32 |
+| 126 | Schema-Version (`1`) |
+| 127 | Session-/Leistungs-/Schutzstatus als Bitfeld |
+| 128 | aktiver DC-Connector (`0/1/2`) |
+| 129–137 | DC Ist, evcc, Netz, Schutzkappe, Freigabe, SoC, Zeit, Energie |
+| 138–145 | AC Ist, evcc, Netz, Schutzkappe, Freigabe, Zeit, Energie |
+
+Eine ältere native Integrations-JAR wird automatisch erkannt. In diesem Fall
+verwendet die Oberfläche weiterhin den kompatiblen DC-Block `120–125`, bis die
+neue Integrations-JAR installiert wurde.
 
 Bei Kommunikationsfehlern werden gültige Werte höchstens fünf Sekunden
-gehalten. Der Pufferbatterie-SoC wird nachgeordnet über evcc gelesen und
-höchstens alle fünf Sekunden aktualisiert.
+gehalten. Der Akkuboost-SoC wird nachgeordnet über evcc gelesen und höchstens
+alle fünf Sekunden aktualisiert. Seine Adresse steht in der gemeinsamen
+Konfigurationsdatei:
+
+```properties
+dashboard.akkuboost.url=http://10.0.20.131:7070
+```
+
+Die UI verwendet den eingebetteten Auslieferungswert, solange der Schlüssel in
+`/home/mobie/evcsd/qc45-integration.properties` noch fehlt.
 
 ## Reproduzierbarer Patch
 
@@ -76,3 +112,10 @@ cd ui-patch
 
 Die proprietäre Basis-JAR wird nicht im Repository gespeichert. Siehe auch
 [Modbus TCP](Modbus-TCP) und [Build & Installation](Build-und-Installation).
+
+`ui-patch/test.sh` baut zusätzlich ein Java-7-Testoverlay und rendert Auswahl,
+Parallelauswahl, `AC + DC bedarfsgerecht`, `GridFailback`, die
+Konfigurationssperre sowie die Notabschaltung bei einer verletzten
+0-kW-Freigabe als echte 640×480-PNG-Dateien. Zusätzlich werden beide
+Bereitschaftspfade gerendert; ein nicht decodierbares oder unsichtbares SGS-Logo
+lässt den Test fehlschlagen. Dieser Test läuft auch in GitHub Actions.

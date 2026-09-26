@@ -18,31 +18,44 @@ Die native Integration ersetzt mehrere frühere externe Hilfsprozesse durch **ei
 sequenceDiagram
   participant T as Tomcat
   participant B as BootstrapListener
-  participant V as CcsProtocolV3Enforcer
   participant I as Integration
-  participant A as RemoteStartAuthorizationFix
-  participant R as CcsRawTracerV2
+  participant S as Safety Coordinator
+  participant X as Zusatzdienste
 
   T->>B: contextInitialized()
-  B->>B: FileLog installieren
-  B->>V: QuickCharge V3 erzwingen
   B->>I: Integration.start()
-  B->>V: erneut prüfen/erzwingen
-  B->>A: RemoteStart-Fix starten
-  B->>R: Raw-Tracer installieren
+  I->>S: alle Connectoren 0 kW + Guard starten
+  I->>I: Konfiguration validieren
+  alt Sicherheitskonfiguration gültig
+    I->>S: KSEM-Failback und LoadManager starten
+  else Sicherheitskonfiguration ungültig
+    I->>S: Konfigurationssperre bei 0 kW halten
+  end
+  I->>X: CCS V3, OCPP, Modbus, Diagnose starten
 ```
+
+Ist nur die Sicherheitskonfiguration ungültig, bleibt der bereits gestartete
+`ChargingLimitGuard` im **Degraded Safe Mode** aktiv und setzt alle drei
+Connectoren weiterhin auf 0 kW. OCPP, Modbus und Diagnose starten trotzdem;
+dadurch bleibt der Ladepunkt im Backend erreichbar und der lokale Bildschirm
+zeigt die Konfigurationssperre. Fehlt dagegen die gesamte Properties-Datei,
+bleiben auch die daraus konfigurierten Zusatzdienste aus. OCPP- oder CCS-Fehler
+können den Netzschutz nicht am Start hindern.
 
 ## Von `Integration` gestartete Komponenten
 
 | Komponente | Funktion |
 |---|---|
 | `ReflectionQC45` | Adapter auf die laufenden EVCSD-Objekte |
-| `ModbusServer` | Multi-Client Modbus/TCP, Standardport 1502 |
+| `ChargingLimitCoordinator` | einzige Schreibinstanz für alle AC/DC-Limits |
+| `ChargingLimitGuard` | 250-ms-Reconcile und fail-closed Start/Shutdown |
+| `ModbusServer` | zugriffsbeschränktes Multi-Client Modbus/TCP, Port 1502 |
 | `OcppBridgeClient` | OCPP 1.6 JSON/WSS zum Backend |
 | `Ocpp15BridgeServer` | lokaler OCPP-1.5-SOAP-zu-1.6-Bridge-Endpunkt |
-| `LoadManager` | DC-Leistungsregelung nach KSEM-Phasenstrom |
-| `GridFailback` | unabhängige Schutzebene |
+| `LoadManager` | gemeinsames, gleich priorisiertes DC/AC-Budget nach KSEM-Phasenstrom |
+| `GridFailback` | unabhängige AC/DC-Schutzebene am Netzlimit |
 | `EvcsdLagMonitor` | EVCSD-Executor-Watchdog |
+| `RemoteStartAuthorizationFix` | connectorbezogene CCS-Remote-Autorisierung |
 
 ## Reflection statt Firmware-Patch
 
@@ -64,7 +77,10 @@ Das ist besonders wichtig für:
 /home/mobie/evcsd/qc45-integration.log
 ```
 
-Damit bleiben Diagnoseausgaben auch dann erhalten, wenn die ursprüngliche EVCSD-Logging-Konfiguration unpraktisch ist.
+Die Originalausgaben bleiben gleichzeitig auf dem bisherigen Tomcat-Stream
+sichtbar. Beim Webapp-Shutdown werden `System.out`/`System.err` sauber
+wiederhergestellt. Ab 10 MiB rotiert das Log beim nächsten Start in bis zu drei
+Vorversionen.
 
 ## Aktueller Grundsatz
 
