@@ -74,7 +74,7 @@ final class ChargingLimitGuard extends Thread {
         try { limits.reconcile(); }
         catch (Exception e) { reconcileFailure = e; }
 
-        for (int connector = 1; connector <= 3; connector++) {
+        for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
             int logicalEffectiveKw = limits.effectiveConnectorKw(connector);
             int enforcedKw = logicalEffectiveKw <= 0
                 ? (connector == 3 ? ChargingLimitCoordinator.AC_NOTLADEN_KW

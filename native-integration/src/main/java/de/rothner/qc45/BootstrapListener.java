@@ -22,14 +22,9 @@ public final class BootstrapListener implements ServletContextListener {
         try {
             integration = Integration.start();
 
-            // The original Efacec build has two normal-AC limit paths. Its
-            // AC-load-balance path divides maxPowerAC by getSatsInCharge()
-            // without a zero guard. On this old Type2 satellite that status can
-            // remain IDLE while a transaction is physically charging, so the
-            // divisor path can effectively remove the limit. Mirror our dynamic
-            // satellite target into ACMaxPowerFixed instead; stock EVCSD then
-            // carries it in START_CHARGE and its periodic ENERGY requests.
-            acFixedPowerBridge = AcFixedPowerBridge.startRequired();
+            // Type2 is configured by the operator in the stock QC45. Do not
+            // start the bridge that overwrites ACMaxPowerFixed/maxPowerAC or
+            // the original AC load-balance selector every 100 ms.
 
             // Inventory the stock Efacec AC implementation without invoking any
             // candidate methods. The log gives us the exact runtime method/field
@@ -41,7 +36,7 @@ public final class BootstrapListener implements ServletContextListener {
             // START_CHARGE/ENERGY serialization. We only derive live AC power
             // from the energy counter for LoadManager/UI telemetry.
             acPowerTelemetry = AcPowerTelemetry.startRequired();
-            System.out.println("[QC45] AC native setpoint mode active: dynamic satelliteMaxPower -> ACMaxPowerFixed, stock ENERGY transport, own ENERGY transport disabled, telemetry=energy-delta");
+            System.out.println("[QC45] AC operator-fixed mode: integration AC power writes/stops disabled; stock START_CHARGE/ENERGY, telemetry=energy-delta");
 
             event.getServletContext().setAttribute("qc45.native.integration", integration);
             try {

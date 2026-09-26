@@ -317,6 +317,27 @@ public final class ChargingLimitCoordinatorTest {
         return new ChargingLimitCoordinator(io, 5, 50, 5, 43);
     }
 
+    @Test
+    public void operatorFixedAcNeverReceivesCoordinatorWritesOrReassertions() throws Exception {
+        FakeIo io = new FakeIo();
+        io.value[3] = 22;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(io, 5, 50, 5, 43, false);
+        limits.initializeSafeZero();
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setGridTargets(1, true, 20, 20);
+        limits.requestBudgets(30, 0);
+        limits.setStageCaps(5, 0);
+        limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
+        limits.reassertConnectorLimit(3);
+        io.failReadConnector = 3;
+        limits.reconcile();
+        assertEquals(22, io.value[3]);
+        for (String operation : io.operations) {
+            assertTrue("unexpected AC write: " + operation,
+                !operation.startsWith("set3=") && !operation.startsWith("prearm3="));
+        }
+    }
+
     private static void assertLimits(FakeIo io, int c1, int c2, int c3) {
         assertEquals(c1, io.value[1]);
         assertEquals(c2, io.value[2]);

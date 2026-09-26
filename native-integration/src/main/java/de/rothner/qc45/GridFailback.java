@@ -295,7 +295,7 @@ public final class GridFailback extends Thread {
     }
 
     private void retryRemoteStops(long now) {
-        for (int connector = 1; connector <= 3; connector++) {
+        for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
             if (now - lastStopAttempt[connector] < 2000L) continue;
             lastStopAttempt[connector] = now;
             try {

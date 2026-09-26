@@ -22,8 +22,8 @@ ocpp15.bridge.timeoutMs=10000
 dashboard.akkuboost.url=http://10.0.20.131:7070
 
 # evcc / local load management
-# Both channels start in autonomous mode. The first evcc write takes control of
-# only the addressed channel; an explicit 0 kW remains a persistent pause.
+# DC remains regulated. Type2/AC power is set directly in the original QC45;
+# AC Modbus requests are recorded for compatibility but have no physical effect.
 modbus.enabled=true
 modbus.bindAddress=0.0.0.0
 modbus.port=1502
@@ -81,9 +81,8 @@ ksem.currentScale=0.001
 ksem.wordOrder=HIGH_LOW
 
 # Native load manager
-# One shared KSEM budget controls the active DC connector and Type2/AC.
-# When both charge, the released kW are split equally. The grid limit is a hard
-# command ceiling; targetA stays below it to retain control reserve.
+# KSEM still limits DC. AC allocations are diagnostic only and do not control
+# the Type2 board while the operator-fixed AC mode is active.
 # Safety validation preserves the 34/36/38 A operating envelope and the fixed
 # E35 magnetic range; it also rejects KSEM timeouts above 1 s or increases
 # faster than 2 kW/s.

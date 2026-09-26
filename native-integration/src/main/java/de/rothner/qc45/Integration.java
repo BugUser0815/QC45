@@ -63,7 +63,7 @@ public final class Integration {
         // therefore cannot leave legacy EVCSD limits active.
         ChargingLimitCoordinator limits = new ChargingLimitCoordinator(
             station, DEFAULT_MIN_DC_KW, DEFAULT_MAX_DC_KW,
-            DEFAULT_MIN_AC_KW, DEFAULT_MAX_AC_KW);
+            DEFAULT_MIN_AC_KW, DEFAULT_MAX_AC_KW, false);
         try { limits.initializeSafeZero(); }
         catch (Throwable e) { System.err.println("[QC45] initial safety zero failed; guard will retry: " + e); }
         ChargingLimitGuard limitGuard = new ChargingLimitGuard(station, limits, 250);
@@ -97,7 +97,8 @@ public final class Integration {
                 || minAcKw != DEFAULT_MIN_AC_KW || maxAcKw != DEFAULT_MAX_AC_KW) {
             limitGuard.shutdown();
             joinQuietly(limitGuard, 1000L);
-            limits = new ChargingLimitCoordinator(station, minDcKw, maxDcKw, minAcKw, maxAcKw);
+            limits = new ChargingLimitCoordinator(station, minDcKw, maxDcKw,
+                minAcKw, maxAcKw, false);
             try { limits.initializeSafeZero(); }
             catch (Throwable e) { System.err.println("[QC45] configured safety zero failed; guard will retry: " + e); }
             limitGuard = new ChargingLimitGuard(station, limits, 250);

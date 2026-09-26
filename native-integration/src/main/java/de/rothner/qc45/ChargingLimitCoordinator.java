@@ -28,6 +28,7 @@ public final class ChargingLimitCoordinator {
     public static final int AC_NOTLADEN_KW = 5;
 
     private final ChargingLimitIo io;
+    private final boolean acManaged;
     private final int minDcKw;
     private final int maxDcKw;
     private final int minAcKw;
@@ -53,12 +54,20 @@ public final class ChargingLimitCoordinator {
     public ChargingLimitCoordinator(ChargingLimitIo io,
                                     int minDcKw, int maxDcKw,
                                     int minAcKw, int maxAcKw) {
+        this(io, minDcKw, maxDcKw, minAcKw, maxAcKw, true);
+    }
+
+    public ChargingLimitCoordinator(ChargingLimitIo io,
+                                    int minDcKw, int maxDcKw,
+                                    int minAcKw, int maxAcKw,
+                                    boolean acManaged) {
         if (io == null) throw new IllegalArgumentException("io is required");
         if (minDcKw <= 0 || maxDcKw < minDcKw
                 || minAcKw <= 0 || maxAcKw < minAcKw) {
             throw new IllegalArgumentException("invalid connector minimum/maximum");
         }
         this.io = io;
+        this.acManaged = acManaged;
         this.minDcKw = minDcKw;
         this.maxDcKw = maxDcKw;
         this.minAcKw = minAcKw;
@@ -210,6 +219,7 @@ public final class ChargingLimitCoordinator {
     }
 
     public synchronized boolean isCcsAvailable() { return ccsAvailable; }
+    public boolean acManaged() { return acManaged; }
     public synchronized int requestedDcKw() { return requestedDcKw; }
     public synchronized int requestedAcKw() { return requestedAcKw; }
     public synchronized boolean evccControlsDc() { return evccControlsDc; }
@@ -237,6 +247,7 @@ public final class ChargingLimitCoordinator {
         if (connector < 1 || connector > 3) {
             throw new IllegalArgumentException("connector must be 1..3");
         }
+        if (connector == 3 && !acManaged) return;
         int target = targets()[connector];
         io.setConnectorLimitKw(connector, hardwareTargetKw(connector, target));
         applied[connector] = target;
@@ -268,7 +279,7 @@ public final class ChargingLimitCoordinator {
     public synchronized void reconcile() throws Exception {
         int[] expectedTargets = targets();
         Exception readFailure = null;
-        for (int connector = 1; connector <= 3; connector++) {
+        for (int connector = 1; connector <= (acManaged ? 3 : 2); connector++) {
             try {
                 int observed = clamp(io.limitKw(connector), 0,
                     connector == 3 ? maxAcKw : maxDcKw);
@@ -321,7 +332,7 @@ public final class ChargingLimitCoordinator {
         // Unknown values are treated as potentially high. Safety paths always
         // reassert logical zero as physical Notladen. A native 0 kW write
         // is never emitted because this QC45 may interpret it as unlimited.
-        for (int connector = 1; connector <= 3; connector++) {
+        for (int connector = 1; connector <= (acManaged ? 3 : 2); connector++) {
             if (target[connector] < applied[connector]
                     || applied[connector] < 0 || (safetyCritical && target[connector] == 0)) {
                 try {
@@ -334,7 +345,7 @@ public final class ChargingLimitCoordinator {
         }
 
         if (first == null) {
-            for (int connector = 1; connector <= 3; connector++) {
+            for (int connector = 1; connector <= (acManaged ? 3 : 2); connector++) {
                 if (target[connector] > applied[connector]) {
                     try {
                         writeTarget(connector, target[connector]);

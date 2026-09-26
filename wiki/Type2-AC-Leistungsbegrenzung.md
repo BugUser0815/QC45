@@ -1,5 +1,28 @@
 # Type2 / AC-Leistungsbegrenzung
 
+## Operator-fester AC-Modus (26. September 2026)
+
+Auf Wunsch wird die AC-Leistung ausschließlich in der originalen QC45
+konfiguriert (geplant: AC22 / 32 A). Die native Integration startet die
+`AcFixedPowerBridge` nicht mehr. Der `ChargingLimitCoordinator` liest oder
+schreibt für Anschluss 3 keinen Grenzwert; weder Startblockade, KSEM-Regelung,
+evcc-Modbus-Freigabe noch Failback-Stufen schreiben Type2-Werte. Der
+`ChargingLimitGuard` überwacht/stoppt nur DC, und der `GridFailback` sendet
+bei Hard-Trip keinen RemoteStop an AC. AC-Leistung und Platinenzustand werden
+für Anzeige/Diagnose weiter ausgelesen. Benutzer- oder Backend-Stop und die
+originalen Schutzfunktionen der QC45 bleiben unberührt.
+
+Die im Dashboard/Modbus sichtbare logische AC-Freigabe ist in diesem Modus
+**keine wirksame physische Strombegrenzung**. AC22 kann bis zu 32 A je Phase
+beanspruchen; der 35-A-SLS hat dann nur rund 3 A Reserve zu anderen Lasten.
+DC wird weiterhin geregelt, aber eine gleichzeitige AC22-/DC-Sitzung kann
+vom 35-A-Anschluss nicht sicher getragen werden. Vor Inbetriebnahme ist am
+CP-Signal zu prüfen, ob die original eingestellte Begrenzung tatsächlich
+32 A (ungefähr 53 % PWM) anbietet. Die Integration stellt den nativen
+AC-Wert **nicht** selbst auf 22 kW.
+
+Die folgende historische Dokumentation beschreibt frühere Steuerungsstände.
+
 ## Aktueller Stand (`native-integration`)
 
 Die unten beschriebene direkte MobiBus-Ansteuerung ist ein **früherer
