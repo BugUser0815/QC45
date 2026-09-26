@@ -45,7 +45,7 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "WEITEREN ANSCHLUSS WÄHLEN",
             emergency ? "Der Not-Halt ist betätigt."
-                      : "Ein DC-Anschluss und Type 2 dürfen parallel laden");
+                      : "AC fest 22 kW · parallele DC-Ladung vermeiden");
 
         connectorKey(g, KEY_TOP_LEFT, "CCS", "CCS",
             connectorState(isCcs, ccsInUse, ccsOut, chaInUse),
@@ -63,19 +63,16 @@ public class MultipleChargingPanel extends AlpitronicPanel implements ActionPane
         g.setColor(SECONDARY);
         g.setFont(font(java.awt.Font.BOLD, 14));
         centered(g, emergency ? "Laden gesperrt"
-                              : "AC + DC · GLEICHE PRIORITÄT", 320, 248);
+                              : "AC 22 kW FEST", 320, 248);
         if (!emergency) {
             g.setColor(YELLOW);
             g.setFont(font(java.awt.Font.PLAIN, 12));
-            centered(g, "Freie Leistung wird bedarfsgerecht umverteilt", 320, 270);
+            centered(g, "AC ohne Lastregelung · DC netzgeregelt", 320, 270);
         }
     }
 
     private String acLabel() {
-        if (acType == 11) return "AC 11";
-        if (acType == 22) return "AC 22";
-        if (acType == 43) return "AC 43";
-        return "AC";
+        return "AC 22";
     }
 
     private void connectorKey(Graphics2D g, int position, String label, String kind,

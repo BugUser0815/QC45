@@ -104,14 +104,14 @@ final class SafetyStatusOverlay extends JPanel {
 
     private static String title(int state) {
         switch (state) {
-            case STATE_STARTUP: return "SICHERER START";
-            case STATE_KSEM_RECOVERY: return "KSEM-WIEDERANLAUF";
-            case STATE_GRID_OVER_LIMIT: return "NETZSCHUTZ · WIEDERANLAUF";
+            case STATE_STARTUP: return "DC · SICHERER START";
+            case STATE_KSEM_RECOVERY: return "DC · KSEM-WIEDERANLAUF";
+            case STATE_GRID_OVER_LIMIT: return "DC-NETZSCHUTZ · WIEDERANLAUF";
             case STATE_GRID_HARD_TRIP:
-            case STATE_GRID_HARD_TRIP_WAIT_SESSION: return "NETZSCHUTZ · HARD TRIP";
-            case STATE_LIMIT_MISMATCH: return "LEISTUNGSFEHLER";
-            case STATE_CONFIGURATION: return "SICHERHEITSSPERRE";
-            case STATE_SHUTDOWN: return "LADESTEUERUNG ABGESCHALTET";
+            case STATE_GRID_HARD_TRIP_WAIT_SESSION: return "DC-NETZSCHUTZ · HARD TRIP";
+            case STATE_LIMIT_MISMATCH: return "DC-LEISTUNGSFEHLER";
+            case STATE_CONFIGURATION: return "DC-SICHERHEITSSPERRE";
+            case STATE_SHUTDOWN: return "DC-STEUERUNG ABGESCHALTET";
             case STATE_DIAGNOSTICS_UNAVAILABLE: return "SICHERHEITSSTATUS FEHLT";
             default: return "SICHERHEITSPAUSE";
         }
@@ -120,13 +120,13 @@ final class SafetyStatusOverlay extends JPanel {
     private static String detail(Status value) {
         switch (value.state) {
             case STATE_STARTUP:
-                return "KSEM-Freigabe: " + value.progress + "/" + safeTotal(value, 5)
+                return "DC-Freigabe: " + value.progress + "/" + safeTotal(value, 5)
                     + " gültige Messungen";
             case STATE_KSEM_RECOVERY:
                 return "Gültige KSEM-Messungen: " + value.progress + "/"
                     + safeTotal(value, 5);
             case STATE_GRID_OVER_LIMIT:
-                return "Freigabe nach sicheren Messungen: " + value.progress + "/"
+                return "DC-Freigabe nach sicheren Messungen: " + value.progress + "/"
                     + safeTotal(value, 5);
             case STATE_GRID_HARD_TRIP: {
                 int total = safeTotal(value, 60);
@@ -136,11 +136,11 @@ final class SafetyStatusOverlay extends JPanel {
             case STATE_GRID_HARD_TRIP_WAIT_SESSION:
                 return "Resetzeit erfüllt · warte auf Ende der aktiven Session";
             case STATE_LIMIT_MISMATCH:
-                return "Transaktion wird beendet · Freigabe sobald Anschluss inaktiv";
+                return "DC-Transaktion wird beendet · AC bleibt fest eingestellt";
             case STATE_CONFIGURATION:
                 return "Konfiguration ungültig · Neustart nach Korrektur erforderlich";
             case STATE_SHUTDOWN:
-                return "Notladen bleibt aktiv bis zum nächsten Start";
+                return "DC-Notladen bis zum nächsten Start · AC fest eingestellt";
             case STATE_DIAGNOSTICS_UNAVAILABLE:
                 return "Native Ladesteuerung oder Diagnose ist nicht erreichbar";
             default:

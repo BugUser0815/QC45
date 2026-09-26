@@ -53,6 +53,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private static final int HEIGHT = 480;
     private static final int MODBUS_FIRST_REGISTER = 120;
     private static final int MODBUS_REGISTER_COUNT = 6;
+    private static final int FIXED_AC_KW = 22;
     static final String AKKUBOOST_LABEL = "AKKUBOOST";
     private static final String AKKUBOOST_URL_PROPERTY = "dashboard.akkuboost.url";
     private static final String LEGACY_EVCC_URL_PROPERTY = "evcc.url";
@@ -395,7 +396,7 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
         g.setColor(YELLOW);
         g.setFont(font(Font.BOLD, 14));
-        centered(g, "DYNAMISCHES LOAD BALANCING  ·  AC + DC", 320, 400);
+        centered(g, "AC FEST 22 kW  ·  DC NETZGEREGELT", 320, 400);
 
         g.dispose();
         return new ImageIcon(image);
@@ -451,12 +452,13 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
         long now = System.currentTimeMillis();
         LoadBalancingTelemetry balancing = freshBalancingData(now) ? lastBalancingData : null;
-        int actualKw = value(0, -1);
+        int actualKw = displayConnector == 3
+            ? LoadBalancingTelemetry.liveType2PowerKw() : value(0, -1);
         boolean hasFreshPower = balancing != null
             ? balancing.totalActualKw() > 0
             : actualKw > 0 && lastChargingData != null && now - lastChargingDataFetch <= 2500L;
         boolean blocked = balancing != null && balancing.blocked();
-        g.setColor(blocked ? STOP_RED : hasFreshPower ? YELLOW : READY_GREEN);
+        g.setColor(hasFreshPower ? YELLOW : blocked ? STOP_RED : READY_GREEN);
         g.fillOval(157, 17, 10, 10);
         g.setColor(PRIMARY);
         g.setFont(font(Font.BOLD, 16));
@@ -471,16 +473,18 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private String headerStatus(LoadBalancingTelemetry data) {
-        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "ABGESCHALTET";
-        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "LEISTUNGSFEHLER";
-        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "KONFIGURATION";
-        if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "NETZSCHUTZ";
-        if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "KSEM WARTET";
-        if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "SICHERER START";
-        if (data.blocked()) return "LADEPAUSE";
-        if (data.dcActualKw > 0 && data.acActualKw > 0) return "AC + DC LÄDT";
-        if (data.dcActualKw > 0) return "DC LÄDT";
+        // The block flags describe the DC regulator; they do not stop the
+        // operator-fixed Type2 output. Show observed AC charging first.
+        if (data.acActualKw > 0 && data.dcActualKw > 0) return "AC + DC LÄDT";
         if (data.acActualKw > 0) return "AC LÄDT";
+        if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN)) return "DC ABGESCHALTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH)) return "DC LEISTUNGSFEHLER";
+        if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION)) return "DC KONFIGURATION";
+        if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK)) return "DC NETZSCHUTZ";
+        if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER)) return "DC KSEM WARTET";
+        if (data.has(LoadBalancingTelemetry.FLAG_STARTUP)) return "DC START";
+        if (data.blocked()) return "DC LADEPAUSE";
+        if (data.dcActualKw > 0) return "DC LÄDT";
         return "LADEBEREIT";
     }
 
@@ -489,10 +493,52 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
             data.dcSession(), data.dcActualKw, data.dcRequestedKw,
             data.dcGridKw, data.dcStageCapKw, data.dcEffectiveKw,
             data.dcSocPct, data.dcSeconds, data.evccControlsDc(), data);
-        drawLoadCard(g, 330, "AC", "TYPE 2",
-            data.acSession(), data.acActualKw, data.acRequestedKw,
-            data.acGridKw, data.acStageCapKw, data.acEffectiveKw,
-            -1, data.acSeconds, data.evccControlsAc(), data);
+        drawFixedAcCard(g, data);
+    }
+
+    private void drawFixedAcCard(Graphics2D g, LoadBalancingTelemetry data) {
+        int x = 330;
+        int y = 60;
+        int width = 292;
+        int actualKw = Math.max(0, data.acActualKw);
+        Color accent = actualKw > 0 ? YELLOW : data.acSession() ? READY_GREEN : DIVIDER;
+        drawPanel(g, x, y, width, 188, accent);
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 17));
+        g.drawString("AC", x + 20, y + 29);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.BOLD, 11));
+        g.drawString("·  TYPE 2", x + 48, y + 29);
+        rightAligned(g, "FEST 22 kW", x + width - 18, y + 29);
+        g.drawString("IST", x + 20, y + 55);
+        drawLargeValue(g, Integer.toString(actualKw), "kW",
+            x + width / 2, y + 115, 52, 25);
+
+        int barX = x + 20;
+        int barY = y + 128;
+        int barWidth = width - 40;
+        g.setColor(TRACK);
+        g.fillRect(barX, barY, barWidth, 7);
+        if (actualKw > 0) {
+            g.setColor(YELLOW);
+            g.fillRect(barX, barY, (int)Math.round(barWidth
+                * Math.min(1.0d, actualKw / (double)FIXED_AC_KW)), 7);
+        }
+        g.setColor(PRIMARY);
+        g.setFont(font(Font.BOLD, 12));
+        g.drawString("MAXIMUM  " + FIXED_AC_KW + " kW", x + 20, y + 155);
+        g.setColor(SECONDARY);
+        g.setFont(font(Font.PLAIN, 11));
+        rightAligned(g, "OHNE LASTREGELUNG", x + width - 18, y + 155);
+        g.setColor(accent);
+        g.setFont(font(Font.BOLD, 11));
+        g.drawString(actualKw > 0 ? "LÄDT" : data.acSession()
+            ? "FAHRZEUG VERBUNDEN" : "KEINE AKTIVE SESSION", x + 20, y + 177);
+        if (data.acSession()) {
+            g.setColor(SECONDARY);
+            g.setFont(font(Font.PLAIN, 10));
+            rightAligned(g, formatDuration(data.acSeconds), x + width - 18, y + 177);
+        }
     }
 
     private void drawLoadCard(Graphics2D g, int x, String channel, String connector,
@@ -571,7 +617,6 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
         if (requestedKw <= 0) return "EVCC-PAUSE";
         if (effectiveKw <= 0 || gridKw <= 0) return "NETZ-PAUSE";
         if (stageCapKw < gridKw) return "SCHUTZKAPPE AKTIV";
-        if (actualKw > 0 && data.demandTransfer()) return "LÄDT · BEDARFSGERECHT";
         if (actualKw > 0) return "LÄDT";
         return "FREIGEGEBEN";
     }
@@ -624,8 +669,8 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     private void drawLoadBalancingFooter(Graphics2D g, LoadBalancingTelemetry data) {
         g.setColor(DIVIDER);
         g.drawLine(0, 416, WIDTH, 416);
-        g.setColor(data.blocked() ? STOP_RED : SECONDARY);
-        g.setFont(font(data.blocked() ? Font.BOLD : Font.PLAIN, 11));
+        g.setColor(data.acActualKw > 0 ? SECONDARY : data.blocked() ? STOP_RED : SECONDARY);
+        g.setFont(font(data.blocked() && data.acActualKw == 0 ? Font.BOLD : Font.PLAIN, 11));
         centered(g, loadBalancingExplanation(data), 320, 438);
 
         boolean remoteStarted = data.remoteStarted();
@@ -638,30 +683,29 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
     }
 
     private String loadBalancingExplanation(LoadBalancingTelemetry data) {
+        if (data.acActualKw > 0 && data.blocked())
+            return "AC fest 22 kW lädt weiter · DC-Regelung gesperrt.";
         if (data.has(LoadBalancingTelemetry.FLAG_LIMIT_MISMATCH))
-            return "0-kW-Freigabe verletzt: Transaktion gestoppt; Neustart erforderlich.";
+            return "DC-Leistungsgrenze verletzt: DC-Transaktion gestoppt.";
         if (data.has(LoadBalancingTelemetry.FLAG_CONFIGURATION))
-            return "Sicherheitskonfiguration ungültig: AC und DC bleiben auf 0 kW.";
+            return "DC-Sicherheitskonfiguration ungültig · AC bleibt fest eingestellt.";
         if (data.has(LoadBalancingTelemetry.FLAG_FAILBACK))
-            return "Netzschutz aktiv: AC und DC sind auf 0 kW begrenzt.";
+            return "DC-Netzschutz aktiv · AC wird hier nicht begrenzt.";
         if (data.has(LoadBalancingTelemetry.FLAG_LOAD_METER))
-            return "KSEM-Messung fehlt: AC und DC bleiben sicher pausiert.";
+            return "KSEM-Messung fehlt: DC pausiert, AC bleibt fest eingestellt.";
         if (data.has(LoadBalancingTelemetry.FLAG_STARTUP))
-            return "Freigabe nach fünf gültigen KSEM-Messungen.";
+            return "DC-Freigabe nach fünf gültigen KSEM-Messungen.";
         if (data.has(LoadBalancingTelemetry.FLAG_SHUTDOWN))
-            return "Ladesteuerung ist sicher abgeschaltet.";
+            return "DC-Steuerung abgeschaltet · AC bleibt fest eingestellt.";
         if (data.has(LoadBalancingTelemetry.FLAG_STAGE_LIMIT))
-            return "Die Schutzkappe reduziert die AC/DC-Freigabe am Netzlimit.";
-        if (data.demandTransfer())
-            return "Ungenutzte Leistung wird bedarfsgerecht zwischen AC und DC verteilt.";
-        if (data.dcSession() && data.acSession())
-            return "AC und DC teilen das sichere Netzbudget gleichberechtigt.";
-        return "Der LoadManager hält die zulässige Netzlast ein.";
+            return "DC wird am Netzlimit reduziert · AC bleibt fest eingestellt.";
+        return "AC fest 22 kW · DC wird nach Netzbezug geregelt.";
     }
 
     private void drawMainValues(Graphics2D g) {
-        int actualKw = value(0, -1);
-        int targetKw = value(1, -1);
+        int actualKw = displayConnector == 3
+            ? LoadBalancingTelemetry.liveType2PowerKw() : value(0, -1);
+        int targetKw = displayConnector == 3 ? FIXED_AC_KW : value(1, -1);
         int vehicleSoc = value(2, -1);
 
         drawPanel(g, 18, 60, 292, 186, actualKw > 0 ? YELLOW : DIVIDER);
@@ -680,7 +724,9 @@ public class WaitingForCardChargingTimer extends JPanel implements ActionPanel<C
 
         g.setColor(SECONDARY);
         g.setFont(font(Font.BOLD, 13));
-        g.drawString(targetKw < 0 ? "SOLLLEISTUNG  -- kW" : "SOLLLEISTUNG  " + targetKw + " kW", 38, 231);
+        g.drawString(displayConnector == 3 ? "AC FEST 22 kW"
+            : targetKw < 0 ? "SOLLLEISTUNG  -- kW"
+            : "SOLLLEISTUNG  " + targetKw + " kW", 38, 231);
         g.drawString("FAHRZEUG-SOC", 350, 231);
     }
 

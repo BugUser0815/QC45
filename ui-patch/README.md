@@ -72,20 +72,26 @@ bestehenden Zustände.
 ## Datenquellen des Ladebildschirms
 
 Die Ladeanzeige liest einmal pro Sekunde den versionierten lokalen
-Load-Balancing-Block `126–145` auf `127.0.0.1:1502`. Der Bildschirm zeigt AC
-und den aktiven DC-Ausgang gleichzeitig:
+Telemetrieblock `126–145` auf `127.0.0.1:1502`. Der Bildschirm zeigt AC
+und den aktiven DC-Ausgang gleichzeitig. AC wird in der QC45 fest auf 22 kW
+eingestellt und von der Integration nicht mehr leistungsbegrenzt. Die AC-Kachel
+zeigt die tatsächliche Ladeleistung (`IST`) aus der Live-Telemetrie sowie
+`MAXIMUM 22 kW` und `OHNE LASTREGELUNG`. Der dynamische AC-Grenzwert aus dem
+Block ist nur noch ein logischer Altwert und erscheint nicht als Freigabe.
+
+Die DC-Kachel zeigt weiterhin:
 
 - gemessene Leistung (`IST`)
 - dauerhafte evcc-Anforderung
 - netzsichere LoadManager-Zuteilung (`NETZ`)
 - Schutzkappe und tatsächlich wirksame `FREIGABE`
-- aktive Sessions, Bedarfstransfer sowie Start-, KSEM-, Failback- und Konfigurationssperren
+- aktive Sessions sowie Start-, KSEM-, Failback- und Konfigurationssperren für DC
 - DC-Fahrzeug-SoC, AC/DC-Sessionenergie und Ladezeiten
 
-`FREIGABE` ist damit sichtbar das Minimum aus evcc-Wunsch, LoadManager-Zuteilung
-und GridFailback. Beim gleichzeitigen Laden erklärt die Fußzeile, ob 50/50
-geteilt oder ungenutzte Leistung bedarfsgerecht umverteilt wird. Ein
-Sicherheitszustand wird rot und mit seiner konkreten Ursache dargestellt.
+Die DC-`FREIGABE` ist das Minimum aus evcc-Wunsch, LoadManager-Zuteilung
+und GridFailback. Die Fußzeile bezeichnet Sperren ausdrücklich als DC-Zustand;
+sie suggeriert keine gemeinsame AC/DC-Lastverteilung. Ein DC-Sicherheitszustand
+wird mit seiner konkreten Ursache dargestellt.
 Der separate Schutzstatus auf `127.0.0.1:1503` ist fail-visible: Ist die native
 Diagnose nicht erreichbar oder inkompatibel, meldet die Fußzeile den fehlenden
 Sicherheitsstatus, statt einen Normalzustand vorzutäuschen.

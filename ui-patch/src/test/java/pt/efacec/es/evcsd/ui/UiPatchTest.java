@@ -22,6 +22,7 @@ public final class UiPatchTest {
         verifyLogoResource();
         verifyAkkuboostConfiguration();
         verifyDecoder();
+        verifyAcKeepsChargingDuringDcBlock();
         verifyFreshIdleEndsSession();
         verifyCardStopConfirmation();
         render(args[0], 0);
@@ -139,6 +140,22 @@ public final class UiPatchTest {
             throw new AssertionError("unknown schema version accepted");
         } catch (IllegalArgumentException expected) {
             // expected
+        }
+    }
+
+    private static void verifyAcKeepsChargingDuringDcBlock() throws Exception {
+        InACChargingPanel panel = new InACChargingPanel(22, 0, 0, false, false);
+        try {
+            int[] raw = telemetry(1);
+            require(raw[12] == 11, "blocked DC must not erase measured AC power");
+            LoadBalancingTelemetry data = LoadBalancingTelemetry.decode(raw);
+            Method header = WaitingForCardChargingTimer.class.getDeclaredMethod(
+                "headerStatus", LoadBalancingTelemetry.class);
+            header.setAccessible(true);
+            require("AC LÄDT".equals(header.invoke(panel, data)),
+                "AC must remain visibly charging when only the DC regulator is blocked");
+        } finally {
+            panel.stop();
         }
     }
 
@@ -393,7 +410,8 @@ public final class UiPatchTest {
             LoadBalancingTelemetry.VERSION, flags, 2,
             blocked ? 0 : 17, 50, 17, blocked ? 0 : 50, blocked ? 0 : 17,
             78, 754, 0, 12400,
-            blocked ? 0 : 11, 43, 13, blocked ? 0 : 43, blocked ? 0 : 13,
+            safetyState == 1 ? 11 : blocked ? 0 : 11,
+            43, 13, blocked ? 0 : 43, blocked ? 0 : 13,
             302, 0, 5200
         };
     }

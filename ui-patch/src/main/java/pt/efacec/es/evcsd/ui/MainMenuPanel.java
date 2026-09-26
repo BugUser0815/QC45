@@ -50,7 +50,7 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
     protected void paintScreen(Graphics2D g) {
         title(g, emergency ? "NOT-HALT ENTRIEGELN" : "ANSCHLUSS WÄHLEN",
             emergency ? "Der Not-Halt ist betätigt."
-                      : "AC und ein DC-Anschluss können gleichzeitig laden");
+                      : "AC fest 22 kW · DC nach verfügbarem Netzbudget");
 
         connectorKey(g, KEY_TOP_LEFT, "CCS", "CCS2",
             connectorState(showCcs, ccsInUse, ccsOut),
@@ -66,11 +66,11 @@ public class MainMenuPanel extends AlpitronicPanel implements ActionPanel<EpoInf
         g.setColor(SECONDARY);
         g.setFont(font(java.awt.Font.BOLD, 14));
         centered(g, emergency ? "Laden gesperrt"
-                              : "DYNAMISCHES LOAD BALANCING", 320, 246);
+                              : "AC 22 kW FEST", 320, 246);
         if (!emergency) {
             g.setColor(YELLOW);
             g.setFont(font(java.awt.Font.PLAIN, 12));
-            centered(g, "AC + DC · gleichberechtigt und netzsicher", 320, 268);
+            centered(g, "AC ohne Lastregelung · DC netzgeregelt", 320, 268);
         }
     }
 

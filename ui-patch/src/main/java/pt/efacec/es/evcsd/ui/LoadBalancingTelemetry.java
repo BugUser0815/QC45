@@ -102,7 +102,7 @@ final class LoadBalancingTelemetry {
      * leaves getCurrentPower() at zero for AC although phase telemetry is live.
      * Prefer a direct power field and then derive power from phase V/A arrays.
      */
-    private static int liveType2PowerKw() {
+    static int liveType2PowerKw() {
         try {
             Class<?> centralClass = Class.forName(
                 "pt.efacec.es.mobie.agent.statemachines.CentralModule");
