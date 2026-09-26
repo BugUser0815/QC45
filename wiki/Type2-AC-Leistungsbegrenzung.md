@@ -59,6 +59,30 @@ akzeptierten Rohwerte und der Übergang am AC-Ausgang kontrolliert verglichen
 werden; ein Rückschalten auf den früheren Weg würde die nachgewiesene
 Überladung bei Freigabe 0 erneut ermöglichen.
 
+### Versuch vom 26. September 2026, etwa 10:47 Uhr MESZ
+
+Die neue Diagnoseversion lief seit 09:42 Uhr MESZ. Beim BMW-i3-Start war
+`acBalance=false`, `chargingCount=1`, `acFixed=8`, `dcFixed=5` und
+`maxPowerAC=8`. Der originale Fixed-Weg berechnet dadurch für START und
+ENERGY durchgehend den Rohwert `80`. Der kritische Divisor null trat in
+diesem Versuch nicht auf. Das ist eine Rekonstruktion aus dem originalen
+Java-Code und den Laufzeitfeldern, kein Mitschnitt der seriellen Leitung.
+
+Der KSEM meldete vor dem Start etwa 6,4 A Netzbezug bei 33,4 A Zielwert;
+der LoadManager gab 5 kW frei. Von 10:47:17 bis 10:47:33 Uhr blieb
+der Energiezähler bei 0 Wh und die Leistung bei 0 kW. EVCSD wechselte
+dann von `ChargingState` nach `InUseAfterChargingState` und sendete
+anschließend STOP. Kurz vor dem Start erschien AC-DTC 9400, nach dem
+Sitzungsende 9100. Die Diagnose liefert für `normalStatus` weiterhin
+`statusResOK=false`; diese Codes und die Nullwerte der Board-Spannungsfelder
+beweisen deshalb für sich keine bestimmte physische Fehlerursache.
+
+Damit ist ein KSEM-bedingtes Zurücknehmen der Freigabe und der
+Null-Divisor im aktuellen Fixed-Pfad ausgeschlossen. Zu prüfen bleibt,
+ob die AC-Platine den Rohwert 80 als gültige Pilotgrenze akzeptiert und
+welcher CP-Zustand den Schützabfall auslöst. Ein weiterer identischer
+Startversuch ohne zusätzliche Messung bringt dafür keine neue Information.
+
 ## Historischer Versuchsstand
 
 ## Problem
