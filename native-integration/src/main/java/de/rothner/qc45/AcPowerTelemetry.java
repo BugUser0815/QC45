@@ -17,7 +17,10 @@ final class AcPowerTelemetry extends Thread {
     private static final int AC_CONNECTOR = 3;
     private static final int LOOP_MS = 250;
     private static final long POWER_WINDOW_MS = 1000L;
-    private static final long POWER_STALE_MS = 2500L;
+    // The Type2 energy counter on this QC45 is delivered in comparatively
+    // coarse bursts. Keep the last derived value long enough to bridge those
+    // updates instead of repeatedly clearing/re-anchoring the estimator.
+    private static final long POWER_STALE_MS = 10000L;
     private static final long DIAGNOSTIC_LOG_MS = 5000L;
     private static final long STARTUP_DIAGNOSTIC_MS = 500L;
     private static final long STARTUP_DIAGNOSTIC_WINDOW_MS = 20000L;
@@ -58,7 +61,7 @@ final class AcPowerTelemetry extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] AC power telemetry started mode=energy-delta-1s-median3 read-only no-MobiBus-writes");
+        System.out.println("[QC45] AC power telemetry started mode=energy-delta-median3 read-only no-MobiBus-writes");
         while (running) {
             long now = System.currentTimeMillis();
             try {
@@ -140,18 +143,23 @@ final class AcPowerTelemetry extends Thread {
     /**
      * Build a near-live value from the cumulative Wh counter.
      *
-     * The counter has only whole-Wh resolution. A roughly one-second slope can
-     * therefore jump several kW even when the real AC load is steady. Keep the
-     * fast one-second raw sampling, but publish a median over the three latest
-     * valid samples. A single quantisation outlier (for example 7/14/21 kW)
-     * cannot move the value seen by LoadManager and the dashboard. Real step
-     * changes become authoritative after at most two additional samples.
+     * The counter has only whole-Wh resolution and on some QC45 firmware is
+     * delivered in multi-second bursts. Calculate power from the elapsed time
+     * between actual counter changes and publish a median over the three latest
+     * valid samples. A single quantisation outlier cannot move the value seen by
+     * LoadManager and the dashboard.
      */
     private int updateLivePowerEstimate(Object satellite, boolean session, long now) {
         if (!session) return 0;
         try {
-            Object direct = satellite.getClass().getMethod("getCurrentPower").invoke(satellite);
-            int directKw = direct instanceof Number ? ((Number)direct).intValue() : 0;
+            // Direct power is optional on old firmware. Failure to read it must
+            // never abort the energy-delta estimator below.
+            int directKw = 0;
+            try {
+                Object direct = satellite.getClass().getMethod("getCurrentPower").invoke(satellite);
+                if (direct instanceof Number) directKw = ((Number)direct).intValue();
+            } catch (Throwable ignored) {}
+
             long energyWh = currentEnergyWh(satellite);
 
             if (energyAnchorWh < 0L || energyWh < energyAnchorWh) {
@@ -176,10 +184,13 @@ final class AcPowerTelemetry extends Thread {
             if (derivedPowerMs > 0L && now - derivedPowerMs > POWER_STALE_MS) {
                 derivedPowerKw = 0;
                 lastRawPowerKw = 0;
+                derivedPowerMs = 0L;
                 clearRawPowerWindow();
                 writeInfoPower(satellite, 0);
-                // Re-anchor at the current counter so a later restart is based
-                // only on newly delivered energy, not on the stale interval.
+                // Re-anchor once. Clearing derivedPowerMs is important: without
+                // it the old code re-anchored every 250 ms forever, so a sparse
+                // counter update could never accumulate the one-second window
+                // required for a new power sample.
                 energyAnchorWh = energyWh;
                 energyAnchorMs = now;
             }
@@ -227,6 +238,24 @@ final class AcPowerTelemetry extends Thread {
     }
 
     private long currentEnergyWh(Object satellite) throws Exception {
+        // The board's infoState.energy is the counter used by the stock charging
+        // UI and proved reliable on the QC45 even while voltage/current remain
+        // zero. Prefer it, then fall back to the public getter for variants that
+        // do not expose the field.
+        try {
+            Object info = fieldValue(satellite, "infoState");
+            if (info != null) {
+                Field energy = findField(info.getClass(), "energy");
+                if (energy != null) {
+                    energy.setAccessible(true);
+                    Object value = energy.get(info);
+                    if (value instanceof Number) {
+                        return ((Number)value).intValue() & 0xffffffffL;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
         Object value = satellite.getClass().getMethod("getCurrentEnergy").invoke(satellite);
         if (!(value instanceof Number)) return 0L;
         return ((Number)value).intValue() & 0xffffffffL;
