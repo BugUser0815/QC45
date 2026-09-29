@@ -76,7 +76,8 @@ public final class LoadManager extends Thread {
             + one(DAYTIME_PHASE_TARGET_A) + "A Mo-Sa 06:30-18:00 "
             + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
             + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
-            + "ms; legacy configuredTarget=" + one(configuredTargetA)
+            + "ms prearm/notladen=" + minDcKw
+            + "kW; legacy configuredTarget=" + one(configuredTargetA)
             + "A/ramp/catch-up profile is not used");
         safeBlockMeter();
 
@@ -101,9 +102,10 @@ public final class LoadManager extends Thread {
                     ChargingLimitCoordinator.STARTUP,
                     ChargingLimitCoordinator.LOAD_METER);
                 if (!meterHealthy || externalBlock) {
-                    preparedDcKw = 0;
+                    preparedDcKw = minDcKw;
                     limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                        0, 0, 0, 0, false);
+                        active.dcConnector > 0 ? minDcKw : 0, 0,
+                        active.dcConnector == 0 ? minDcKw : 0, 0, false);
                     if (meterHealthy) releasePreparedMeterBlocks();
                     previousDcConnector = active.dcConnector;
                     sleepLoop();
@@ -112,29 +114,32 @@ public final class LoadManager extends Thread {
 
                 double criticalA = currents.max();
                 if (criticalA >= commandCeilingA) {
-                    preparedDcKw = 0;
+                    preparedDcKw = minDcKw;
                     limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                        0, 0, 0, 0, false);
+                        active.dcConnector > 0 ? minDcKw : 0, 0,
+                        active.dcConnector == 0 ? minDcKw : 0, 0, false);
                     releasePreparedMeterBlocks();
                     previousDcConnector = active.dcConnector;
                     System.err.println("[QC45] LoadManager GUARD KSEM L1=" + one(currents.l1)
                         + "A L2=" + one(currents.l2) + "A L3=" + one(currents.l3)
-                        + "A max=" + one(criticalA) + "A -> DC=0kW");
+                        + "A max=" + one(criticalA) + "A -> DC Notladen="
+                        + minDcKw + "kW");
                     sleepLoop();
                     continue;
                 }
 
                 if (active.dcConnector == 0) {
-                    int idleDcKw = limits.requestedDcKw() >= minDcKw
-                        ? KsemDcAllocator.targetKw(0, currents, activePhaseTargetA,
-                            minDcKw, requestedDcMax)
-                        : 0;
+                    // IMPORTANT: never pre-arm an idle QC45 above the emergency
+                    // floor. The native charger interprets 0 kW as "no limit",
+                    // so both DC outputs stay physically prepared at 5 kW until
+                    // a real session is active and a fresh KSEM target is released.
+                    int idleDcKw = minDcKw;
                     preparedDcKw = idleDcKw;
                     limits.setGridTargetsAndPrearm(0, active.ac,
                         0, 0, idleDcKw, 0, false);
                     releasePreparedMeterBlocks();
                     logTarget(currents, activePhaseTargetA,
-                        0, idleDcKw, 0, "prearm");
+                        idleDcKw, idleDcKw, 0, "prearm");
                     previousDcConnector = 0;
                     sleepLoop();
                     continue;
@@ -144,7 +149,7 @@ public final class LoadManager extends Thread {
                 int releasedDcKw = commandedDcKw;
                 if (releasedDcKw <= 0 && preparedDcKw > 0) {
                     // A session can become active between two KSEM loops. The
-                    // previously published idle/pre-arm limit is already the
+                    // previously published 5 kW pre-arm limit is already the
                     // released hardware budget and must be the base of the next
                     // headroom calculation instead of restarting from zero.
                     releasedDcKw = preparedDcKw;
@@ -162,21 +167,25 @@ public final class LoadManager extends Thread {
                 limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
                     targetDcKw, 0, 0, 0, false);
                 releasePreparedMeterBlocks();
-                preparedDcKw = targetDcKw;
+                preparedDcKw = targetDcKw > 0 ? targetDcKw : minDcKw;
                 previousDcConnector = active.dcConnector;
 
                 int actualDcKw = station.powerKw(active.dcConnector);
                 logTarget(currents, activePhaseTargetA,
-                    releasedDcKw, targetDcKw, actualDcKw, "active");
+                    releasedDcKw, targetDcKw > 0 ? targetDcKw : minDcKw,
+                    actualDcKw, "active");
             } catch (Throwable e) {
                 markMeterOrControlFailure(now, e);
             }
             sleepLoop();
         }
 
-        try { limits.setGridTargets(0, false, 0, 0); }
-        catch (Throwable e) { System.err.println("[QC45] LoadManager stop zero failed: " + e); }
-        System.out.println("[QC45] LoadManager stopped");
+        try {
+            limits.setGridTargetsAndPrearm(0, false, 0, 0, minDcKw, 0, false);
+        } catch (Throwable e) {
+            System.err.println("[QC45] LoadManager stop Notladen failed: " + e);
+        }
+        System.out.println("[QC45] LoadManager stopped at DC Notladen=" + minDcKw + "kW");
     }
 
     private void markMeterReadHealthy() {
@@ -199,17 +208,20 @@ public final class LoadManager extends Thread {
     private void markMeterOrControlFailure(long now, Throwable error) {
         meterHealthy = false;
         healthyReads = 0;
-        preparedDcKw = 0;
+        preparedDcKw = minDcKw;
         safeBlockMeter();
         if (now - lastErrorLog >= 5000L) {
-            System.err.println("[QC45] LoadManager failure -> DC=0kW: " + error);
+            System.err.println("[QC45] LoadManager failure -> DC physical Notladen="
+                + minDcKw + "kW: " + error);
             lastErrorLog = now;
         }
     }
 
     private void safeBlockMeter() {
         try { limits.setBlocked(ChargingLimitCoordinator.LOAD_METER, true); }
-        catch (Throwable e) { System.err.println("[QC45] LoadManager safety zero failed: " + e); }
+        catch (Throwable e) {
+            System.err.println("[QC45] LoadManager Notladen enforcement failed: " + e);
+        }
     }
 
     private Active detectActive() throws Exception {
