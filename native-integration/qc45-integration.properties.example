@@ -80,24 +80,25 @@ ksem.currentScale=0.001
 # 32-bit unsigned current registers. HIGH_LOW prevents rollover above 65.535 A.
 ksem.wordOrder=HIGH_LOW
 
-# Native load manager
-# KSEM still limits DC. AC allocations are diagnostic only and do not control
-# the Type2 board while the operator-fixed AC mode is active.
-# Safety validation preserves the 34/36/38 A operating envelope and the fixed
-# E35 magnetic range; it also rejects KSEM timeouts above 1 s or increases
-# faster than 2 kW/s.
+# Native DC load manager
+# DC is released directly from the remaining current headroom of the most
+# heavily loaded KSEM phase. The live controller targets 35 A/phase and caps
+# the QC45 at 35 kW. SMA/BYD capability is deliberately not configured here:
+# battery support is already visible as reduced KSEM grid current. If the
+# battery is empty, the higher KSEM current automatically lowers the DC target.
+# Type2/AC remains operator-fixed and is therefore treated as normal site load.
+# The historical target/ramp/demand keys are retained for compatibility with
+# existing installations but are not used by the active DC control path.
 loadmanager.enabled=true
 loadmanager.targetA=34.0
 loadmanager.gridLimitA=38.0
 loadmanager.hysteresisA=0.8
 loadmanager.minDcKw=5
-loadmanager.maxDcKw=50
+loadmanager.maxDcKw=35
 loadmanager.minAcKw=5
 loadmanager.maxAcKw=43
 loadmanager.rampUpKwPerLoop=2
 loadmanager.intervalMs=1000
-# Reassign a stably unused fair share to the other connector. The source keeps
-# this reserve so rising vehicle demand is detected and equal sharing restored.
 loadmanager.demandStableMs=5000
 loadmanager.demandReserveKw=2
 
