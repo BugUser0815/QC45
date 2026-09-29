@@ -13,24 +13,19 @@ import java.util.TimeZone;
  */
 public final class LoadManager extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
-    static final double KSEM_PHASE_TARGET_A = 35.0d;
+    static final double DAYTIME_PHASE_TARGET_A = 25.0d;
+    static final double OFF_HOURS_PHASE_TARGET_A = 35.0d;
     static final int DC_HARD_MAX_KW = 35;
 
-    // Kept only for compatibility with historical tests/config diagnostics.
-    // The live controller no longer applies a time-of-day current profile.
-    private static final double BUSINESS_TARGET_A = 27.0d;
-    private static final double OFF_HOURS_CEILING_MARGIN_A = 0.1d;
-    private static final String BUSINESS_TIME_ZONE = "Europe/Berlin";
-    private static final int BUSINESS_OPEN_MINUTE = 7 * 60;
-    private static final int BUSINESS_CLOSE_MON_THU_MINUTE = 15 * 60;
-    private static final int BUSINESS_CLOSE_FRI_MINUTE = 13 * 60;
+    private static final String OPERATING_TIME_ZONE = "Europe/Berlin";
+    private static final int DAYTIME_OPEN_MINUTE = 6 * 60 + 30;
+    private static final int DAYTIME_CLOSE_MINUTE = 18 * 60;
 
     private final ReflectionQC45 station;
     private final KsemClient meter;
     private final ChargingLimitCoordinator limits;
     private final double configuredTargetA;
     private final double commandCeilingA;
-    private final double ksemPhaseTargetA;
     private final int minDcKw;
     private final int maxDcKw;
     private final int intervalMs;
@@ -42,6 +37,7 @@ public final class LoadManager extends Thread {
     private int previousDcConnector;
     private long lastErrorLog;
     private int lastLoggedTargetKw = -1;
+    private double lastLoggedPhaseTargetA = -1.0d;
 
     public LoadManager(ReflectionQC45 station, KsemClient meter,
                        ChargingLimitCoordinator limits,
@@ -65,8 +61,6 @@ public final class LoadManager extends Thread {
         this.limits = limits;
         this.configuredTargetA = targetA;
         this.commandCeilingA = commandCeilingA;
-        this.ksemPhaseTargetA = Math.min(KSEM_PHASE_TARGET_A,
-            Math.max(0.1d, commandCeilingA - 0.1d));
         this.minDcKw = minDcKw;
         this.maxDcKw = Math.min(DC_HARD_MAX_KW, maxDcKw);
         this.intervalMs = intervalMs;
@@ -78,14 +72,17 @@ public final class LoadManager extends Thread {
     }
 
     public void run() {
-        System.out.println("[QC45] LoadManager started direct-KSEM DC control phaseTarget="
-            + one(ksemPhaseTargetA) + "A hardMax=" + maxDcKw
-            + "kW interval=" + intervalMs + "ms; legacy configuredTarget="
-            + one(configuredTargetA) + "A/ramp/catch-up profile is not used");
+        System.out.println("[QC45] LoadManager started direct-KSEM DC control daytime="
+            + one(DAYTIME_PHASE_TARGET_A) + "A Mo-Sa 06:30-18:00 "
+            + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
+            + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
+            + "ms; legacy configuredTarget=" + one(configuredTargetA)
+            + "A/ramp/catch-up profile is not used");
         safeBlockMeter();
 
         while (running) {
             long now = System.currentTimeMillis();
+            double activePhaseTargetA = phaseTargetA(now, commandCeilingA);
             try {
                 KsemClient.Currents currents = meter.readCurrents();
                 markMeterReadHealthy();
@@ -129,14 +126,15 @@ public final class LoadManager extends Thread {
 
                 if (active.dcConnector == 0) {
                     int idleDcKw = limits.requestedDcKw() >= minDcKw
-                        ? KsemDcAllocator.targetKw(0, currents, ksemPhaseTargetA,
+                        ? KsemDcAllocator.targetKw(0, currents, activePhaseTargetA,
                             minDcKw, requestedDcMax)
                         : 0;
                     preparedDcKw = idleDcKw;
                     limits.setGridTargetsAndPrearm(0, active.ac,
                         0, 0, idleDcKw, 0, false);
                     releasePreparedMeterBlocks();
-                    logTarget(currents, 0, idleDcKw, 0, "prearm");
+                    logTarget(currents, activePhaseTargetA,
+                        0, idleDcKw, 0, "prearm");
                     previousDcConnector = 0;
                     sleepLoop();
                     continue;
@@ -158,7 +156,7 @@ public final class LoadManager extends Thread {
 
                 int targetDcKw = dcEligible
                     ? KsemDcAllocator.targetKw(releasedDcKw, currents,
-                        ksemPhaseTargetA, minDcKw, requestedDcMax)
+                        activePhaseTargetA, minDcKw, requestedDcMax)
                     : 0;
 
                 limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
@@ -168,7 +166,8 @@ public final class LoadManager extends Thread {
                 previousDcConnector = active.dcConnector;
 
                 int actualDcKw = station.powerKw(active.dcConnector);
-                logTarget(currents, releasedDcKw, targetDcKw, actualDcKw, "active");
+                logTarget(currents, activePhaseTargetA,
+                    releasedDcKw, targetDcKw, actualDcKw, "active");
             } catch (Throwable e) {
                 markMeterOrControlFailure(now, e);
             }
@@ -224,16 +223,20 @@ public final class LoadManager extends Thread {
         return new Active(dc, ac);
     }
 
-    private void logTarget(KsemClient.Currents currents, int releasedDcKw,
-                           int targetDcKw, int actualDcKw, String mode) {
-        if (targetDcKw == lastLoggedTargetKw && "active".equals(mode)) return;
+    private void logTarget(KsemClient.Currents currents, double phaseTargetA,
+                           int releasedDcKw, int targetDcKw,
+                           int actualDcKw, String mode) {
+        if (targetDcKw == lastLoggedTargetKw
+                && Math.abs(phaseTargetA - lastLoggedPhaseTargetA) < 0.000001d
+                && "active".equals(mode)) return;
         System.out.println("[QC45] LoadManager KSEM-direct mode=" + mode
             + " L1=" + one(currents.l1) + "A L2=" + one(currents.l2)
             + "A L3=" + one(currents.l3) + "A max=" + one(currents.max())
-            + "A phaseTarget=" + one(ksemPhaseTargetA)
+            + "A phaseTarget=" + one(phaseTargetA)
             + "A releasedDC=" + releasedDcKw + "kW targetDC=" + targetDcKw
             + "kW actualDC=" + actualDcKw + "kW hardMax=" + maxDcKw + "kW");
         lastLoggedTargetKw = targetDcKw;
+        lastLoggedPhaseTargetA = phaseTargetA;
     }
 
     private void sleepLoop() {
@@ -245,34 +248,31 @@ public final class LoadManager extends Thread {
         return String.format(java.util.Locale.US, "%.1f", Double.valueOf(value));
     }
 
-    /*
-     * Historical helpers retained for source/test compatibility. The live run()
-     * path intentionally does not call them anymore; KSEM_PHASE_TARGET_A is the
-     * sole normal DC operating target.
-     */
-    static double operatingTargetA(long epochMillis, double configuredTargetA,
-                                   double commandCeilingA, double hysteresisA) {
-        if (isBusinessHours(epochMillis)) {
-            return Math.min(BUSINESS_TARGET_A, configuredTargetA);
-        }
-        double envelopeTargetA = commandCeilingA - hysteresisA - OFF_HOURS_CEILING_MARGIN_A;
-        return Math.max(configuredTargetA, envelopeTargetA);
+    static double phaseTargetA(long epochMillis, double commandCeilingA) {
+        double scheduledTarget = isDaytimeBuffer(epochMillis)
+            ? DAYTIME_PHASE_TARGET_A : OFF_HOURS_PHASE_TARGET_A;
+        return Math.min(scheduledTarget, Math.max(0.1d, commandCeilingA - 0.1d));
     }
 
-    static boolean isBusinessHours(long epochMillis) {
-        Calendar local = Calendar.getInstance(TimeZone.getTimeZone(BUSINESS_TIME_ZONE));
+    static boolean isDaytimeBuffer(long epochMillis) {
+        Calendar local = Calendar.getInstance(TimeZone.getTimeZone(OPERATING_TIME_ZONE));
         local.setTimeInMillis(epochMillis);
         int day = local.get(Calendar.DAY_OF_WEEK);
         int minuteOfDay = local.get(Calendar.HOUR_OF_DAY) * 60 + local.get(Calendar.MINUTE);
-        if (day >= Calendar.MONDAY && day <= Calendar.THURSDAY) {
-            return minuteOfDay >= BUSINESS_OPEN_MINUTE
-                && minuteOfDay < BUSINESS_CLOSE_MON_THU_MINUTE;
-        }
-        if (day == Calendar.FRIDAY) {
-            return minuteOfDay >= BUSINESS_OPEN_MINUTE
-                && minuteOfDay < BUSINESS_CLOSE_FRI_MINUTE;
-        }
-        return false;
+        boolean mondayToSaturday = day >= Calendar.MONDAY && day <= Calendar.SATURDAY;
+        return mondayToSaturday
+            && minuteOfDay >= DAYTIME_OPEN_MINUTE
+            && minuteOfDay < DAYTIME_CLOSE_MINUTE;
+    }
+
+    // Compatibility aliases for older diagnostics/tests.
+    static double operatingTargetA(long epochMillis, double configuredTargetA,
+                                   double commandCeilingA, double hysteresisA) {
+        return phaseTargetA(epochMillis, commandCeilingA);
+    }
+
+    static boolean isBusinessHours(long epochMillis) {
+        return isDaytimeBuffer(epochMillis);
     }
 
     private static final class Active {
