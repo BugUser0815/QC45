@@ -11,50 +11,59 @@ import static org.junit.Assert.assertTrue;
 
 public final class LoadManagerOperatingProfileTest {
     @Test
-    public void mondayBusinessHoursUseTwentySevenAmps() {
-        long mondayNoon = localTime(2026, Calendar.SEPTEMBER, 7, 12, 0);
-        assertTrue(LoadManager.isBusinessHours(mondayNoon));
-        assertEquals(27.0d,
-            LoadManager.operatingTargetA(mondayNoon, 32.0d, 34.0d, 0.8d),
-            0.000001d);
+    public void mondayBefore0630UsesThirtyFiveAmps() {
+        long before = localTime(2026, Calendar.SEPTEMBER, 7, 6, 29);
+        assertFalse(LoadManager.isDaytimeBuffer(before));
+        assertEquals(35.0d, LoadManager.phaseTargetA(before, 36.0d), 0.000001d);
     }
 
     @Test
-    public void mondayAfterClosingUsesTechnicalSafeMaximum() {
-        long mondayAfternoon = localTime(2026, Calendar.SEPTEMBER, 7, 15, 0);
-        assertFalse(LoadManager.isBusinessHours(mondayAfternoon));
-        assertEquals(33.1d,
-            LoadManager.operatingTargetA(mondayAfternoon, 32.0d, 34.0d, 0.8d),
-            0.000001d);
+    public void mondayAt0630StartsTwentyFiveAmpBuffer() {
+        long start = localTime(2026, Calendar.SEPTEMBER, 7, 6, 30);
+        assertTrue(LoadManager.isDaytimeBuffer(start));
+        assertEquals(25.0d, LoadManager.phaseTargetA(start, 36.0d), 0.000001d);
     }
 
     @Test
-    public void fridayClosesAtThirteenHundred() {
-        long fridayBeforeClose = localTime(2026, Calendar.SEPTEMBER, 11, 12, 59);
-        long fridayAtClose = localTime(2026, Calendar.SEPTEMBER, 11, 13, 0);
-        assertTrue(LoadManager.isBusinessHours(fridayBeforeClose));
-        assertFalse(LoadManager.isBusinessHours(fridayAtClose));
+    public void mondayUntil1759UsesTwentyFiveAmps() {
+        long beforeClose = localTime(2026, Calendar.SEPTEMBER, 7, 17, 59);
+        assertTrue(LoadManager.isDaytimeBuffer(beforeClose));
+        assertEquals(25.0d, LoadManager.phaseTargetA(beforeClose, 36.0d), 0.000001d);
     }
 
     @Test
-    public void weekendAlwaysUsesOffHoursProfile() {
-        long saturday = localTime(2026, Calendar.SEPTEMBER, 12, 10, 0);
-        assertFalse(LoadManager.isBusinessHours(saturday));
-        assertEquals(33.1d,
-            LoadManager.operatingTargetA(saturday, 32.0d, 34.0d, 0.8d),
-            0.000001d);
+    public void mondayAt1800ReturnsToThirtyFiveAmps() {
+        long close = localTime(2026, Calendar.SEPTEMBER, 7, 18, 0);
+        assertFalse(LoadManager.isDaytimeBuffer(close));
+        assertEquals(35.0d, LoadManager.phaseTargetA(close, 36.0d), 0.000001d);
+    }
+
+    @Test
+    public void saturdayUsesDaytimeBuffer() {
+        long saturday = localTime(2026, Calendar.SEPTEMBER, 12, 12, 0);
+        assertTrue(LoadManager.isDaytimeBuffer(saturday));
+        assertEquals(25.0d, LoadManager.phaseTargetA(saturday, 36.0d), 0.000001d);
+    }
+
+    @Test
+    public void sundayHasNoDaytimeBuffer() {
+        long sunday = localTime(2026, Calendar.SEPTEMBER, 13, 12, 0);
+        assertFalse(LoadManager.isDaytimeBuffer(sunday));
+        assertEquals(35.0d, LoadManager.phaseTargetA(sunday, 36.0d), 0.000001d);
+    }
+
+    @Test
+    public void commandCeilingStillOverridesScheduleWhenLower() {
+        long sunday = localTime(2026, Calendar.SEPTEMBER, 13, 12, 0);
+        assertEquals(33.9d, LoadManager.phaseTargetA(sunday, 34.0d), 0.000001d);
     }
 
     @Test
     public void qc45GmtClockIsConvertedToBerlinLocalTime() {
-        // The QC45 reports Thu Sep 3 14:14:15 GMT 2026. That absolute instant
-        // is 16:14:15 CEST in Europe/Berlin, therefore already outside the
-        // Mon-Thu business window ending at 15:00 local time.
-        long qc45Clock = utcTime(2026, Calendar.SEPTEMBER, 3, 14, 14, 15);
-        assertFalse(LoadManager.isBusinessHours(qc45Clock));
-        assertEquals(33.1d,
-            LoadManager.operatingTargetA(qc45Clock, 32.0d, 34.0d, 0.8d),
-            0.000001d);
+        // 04:30 UTC on Sep 3 is 06:30 CEST in Europe/Berlin.
+        long qc45Clock = utcTime(2026, Calendar.SEPTEMBER, 3, 4, 30, 0);
+        assertTrue(LoadManager.isDaytimeBuffer(qc45Clock));
+        assertEquals(25.0d, LoadManager.phaseTargetA(qc45Clock, 36.0d), 0.000001d);
     }
 
     private static long localTime(int year, int month, int day, int hour, int minute) {
