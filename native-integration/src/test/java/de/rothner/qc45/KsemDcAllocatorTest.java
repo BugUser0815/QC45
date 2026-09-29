@@ -6,13 +6,28 @@ import static org.junit.Assert.assertEquals;
 
 public final class KsemDcAllocatorTest {
     @Test
-    public void fiveAmpCompanyLoadStartsAtTwentyKwWithoutBatteryAssumption() {
+    public void fiveAmpCompanyLoadStartsAtThirteenKwDuringDaytimeBuffer() {
+        assertEquals(13, KsemDcAllocator.targetKw(
+            0, 5.0d, 25.0d, 5, 35));
+    }
+
+    @Test
+    public void fiveAmpCompanyLoadStartsAtTwentyKwOutsideDaytimeBuffer() {
         assertEquals(20, KsemDcAllocator.targetKw(
             0, 5.0d, 35.0d, 5, 35));
     }
 
     @Test
-    public void smaSupportSeenByKsemLetsNextCycleReleaseFullThirtyFiveKw() {
+    public void smaSupportIsSeenOnlyThroughKsemDuringDaytimeBuffer() {
+        // With 31 kW DC, 5 A/phase base load and 17.5 kW SMA/BYD support,
+        // grid import is about 24.5 A/phase. The 25 A daytime target therefore
+        // holds the charger at 31 kW without any explicit battery assumption.
+        assertEquals(31, KsemDcAllocator.targetKw(
+            31, 24.5d, 25.0d, 5, 35));
+    }
+
+    @Test
+    public void smaSupportSeenByKsemLetsNightCycleReleaseFullThirtyFiveKw() {
         // 5 A base load = 3.464 kW. At a 20 kW charger release, 17.5 kW
         // battery support leaves about 5.96 kW / 8.6 A grid import.
         assertEquals(35, KsemDcAllocator.targetKw(
@@ -20,7 +35,7 @@ public final class KsemDcAllocatorTest {
     }
 
     @Test
-    public void fullThirtyFiveKwRemainsAllowedWithSeventeenPointFiveKwSupport() {
+    public void fullThirtyFiveKwRemainsAllowedAtNightWithSeventeenPointFiveKwSupport() {
         // 35 kW charger + 3.464 kW company load - 17.5 kW SMA/BYD
         // = about 20.96 kW grid import = about 30.3 A/phase.
         assertEquals(35, KsemDcAllocator.targetKw(
