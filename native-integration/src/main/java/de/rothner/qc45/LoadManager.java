@@ -76,7 +76,7 @@ public final class LoadManager extends Thread {
             + one(DAYTIME_PHASE_TARGET_A) + "A Mo-Sa 06:30-18:00 "
             + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
             + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
-            + "ms prearm/notladen=" + minDcKw
+            + "ms prearm=KSEM-derived notladen=" + minDcKw
             + "kW; legacy configuredTarget=" + one(configuredTargetA)
             + "A/ramp/catch-up profile is not used");
         safeBlockMeter();
@@ -129,17 +129,21 @@ public final class LoadManager extends Thread {
                 }
 
                 if (active.dcConnector == 0) {
-                    // IMPORTANT: never pre-arm an idle QC45 above the emergency
-                    // floor. The native charger interprets 0 kW as "no limit",
-                    // so both DC outputs stay physically prepared at 5 kW until
-                    // a real session is active and a fresh KSEM target is released.
-                    int idleDcKw = minDcKw;
-                    preparedDcKw = idleDcKw;
+                    // Pre-arm the next DC session with the maximum value that is
+                    // safe from the current KSEM phase headroom. If an upstream
+                    // budget logically disables DC, the coordinator still writes
+                    // physical 5 kW Notladen instead of QC45's ambiguous 0 kW.
+                    int idleDcKw = limits.requestedDcKw() >= minDcKw
+                        ? KsemDcAllocator.targetKw(0, currents, activePhaseTargetA,
+                            minDcKw, requestedDcMax)
+                        : 0;
+                    int physicalIdleDcKw = idleDcKw > 0 ? idleDcKw : minDcKw;
+                    preparedDcKw = physicalIdleDcKw;
                     limits.setGridTargetsAndPrearm(0, active.ac,
                         0, 0, idleDcKw, 0, false);
                     releasePreparedMeterBlocks();
                     logTarget(currents, activePhaseTargetA,
-                        idleDcKw, idleDcKw, 0, "prearm");
+                        physicalIdleDcKw, physicalIdleDcKw, 0, "prearm");
                     previousDcConnector = 0;
                     sleepLoop();
                     continue;
@@ -149,9 +153,9 @@ public final class LoadManager extends Thread {
                 int releasedDcKw = commandedDcKw;
                 if (releasedDcKw <= 0 && preparedDcKw > 0) {
                     // A session can become active between two KSEM loops. The
-                    // previously published 5 kW pre-arm limit is already the
-                    // released hardware budget and must be the base of the next
-                    // headroom calculation instead of restarting from zero.
+                    // previously published KSEM-derived pre-arm limit is already
+                    // the released hardware budget and must be the base of the
+                    // next headroom calculation instead of restarting from zero.
                     releasedDcKw = preparedDcKw;
                 }
                 if (active.dcConnector != previousDcConnector && releasedDcKw <= 0) {
