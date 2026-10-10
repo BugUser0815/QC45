@@ -29,6 +29,7 @@ public final class LoadManager extends Thread {
     private final int minDcKw;
     private final int maxDcKw;
     private final int intervalMs;
+    private final int rampUpKwPerLoop;
 
     private volatile boolean running = true;
     private boolean meterHealthy;
@@ -64,6 +65,7 @@ public final class LoadManager extends Thread {
         this.minDcKw = minDcKw;
         this.maxDcKw = Math.min(DC_HARD_MAX_KW, maxDcKw);
         this.intervalMs = intervalMs;
+        this.rampUpKwPerLoop = rampUpKwPerLoop;
     }
 
     public void shutdown() {
@@ -76,9 +78,9 @@ public final class LoadManager extends Thread {
             + one(DAYTIME_PHASE_TARGET_A) + "A Mo-Sa 06:30-18:00 "
             + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
             + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
-            + "ms prearm=KSEM-derived notladen=" + minDcKw
-            + "kW; legacy configuredTarget=" + one(configuredTargetA)
-            + "A/ramp/catch-up profile is not used");
+            + "ms prearm=" + minDcKw + "kW DC rampUp="
+            + rampUpKwPerLoop + "kW/loop; legacy configuredTarget="
+            + one(configuredTargetA) + "A and catch-up profile are not used");
         safeBlockMeter();
 
         while (running) {
@@ -95,6 +97,7 @@ public final class LoadManager extends Thread {
 
                 int requestedDcMax = Math.min(maxDcKw, limits.requestedDcKw());
                 boolean dcEligible = active.dcConnector > 0
+                    && limits.dcPermitValid(now)
                     && (active.dcConnector != 2 || limits.isCcsAvailable())
                     && requestedDcMax >= minDcKw;
 
@@ -129,14 +132,11 @@ public final class LoadManager extends Thread {
                 }
 
                 if (active.dcConnector == 0) {
-                    // Pre-arm the next DC session with the maximum value that is
-                    // safe from the current KSEM phase headroom. If an upstream
-                    // budget logically disables DC, the coordinator still writes
-                    // physical 5 kW Notladen instead of QC45's ambiguous 0 kW.
-                    int idleDcKw = limits.requestedDcKw() >= minDcKw
-                        ? KsemDcAllocator.targetKw(0, currents, activePhaseTargetA,
-                            minDcKw, requestedDcMax)
-                        : 0;
+                    // Do not pre-arm the unused CHAdeMO/CCS outputs with the full
+                    // KSEM headroom. A new session starts at 5 kW and ramps up
+                    // even if evcc previously granted a larger DC budget.
+                    int idleDcKw = limits.dcPermitValid(now)
+                        && requestedDcMax >= minDcKw ? minDcKw : 0;
                     int physicalIdleDcKw = idleDcKw > 0 ? idleDcKw : minDcKw;
                     preparedDcKw = physicalIdleDcKw;
                     limits.setGridTargetsAndPrearm(0, active.ac,
@@ -163,9 +163,18 @@ public final class LoadManager extends Thread {
                 }
                 releasedDcKw = Math.min(releasedDcKw, requestedDcMax);
 
-                int targetDcKw = dcEligible
+                // First active tick starts at physical Notladen=5 kW.
+                // Further increases are limited to 5 kW per 1-second loop.
+                // Reductions, including evcc-off and grid safety, bypass ramp.
+                int gridSafeTargetDcKw = dcEligible
                     ? KsemDcAllocator.targetKw(releasedDcKw, currents,
                         activePhaseTargetA, minDcKw, requestedDcMax)
+                    : 0;
+                int previouslyApprovedDcKw = active.dcConnector == previousDcConnector
+                    ? commandedDcKw : 0;
+                int targetDcKw = dcEligible
+                    ? KsemDcAllocator.limitIncreaseKw(previouslyApprovedDcKw,
+                        gridSafeTargetDcKw, minDcKw, rampUpKwPerLoop)
                     : 0;
 
                 limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
