@@ -70,9 +70,13 @@ final class ChargingLimitGuard extends Thread {
     }
 
     void runCycle(long now) throws Exception {
+        // A forgotten evcc value must never survive loss of the controller.
+        // A valid permit must be refreshed by repeated Modbus budget writes.
         Exception reconcileFailure = null;
-        try { limits.reconcile(); }
+        try { limits.expireDcRequestIfStale(System.currentTimeMillis()); }
         catch (Exception e) { reconcileFailure = e; }
+        try { limits.reconcile(); }
+        catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
 
         for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
             int logicalEffectiveKw = limits.effectiveConnectorKw(connector);
@@ -88,6 +92,19 @@ final class ChargingLimitGuard extends Thread {
             }
 
             int actualKw = station.powerKw(connector);
+            if (connector <= 2 && !limits.dcPermitValid(System.currentTimeMillis())) {
+                // Native 0 kW means "unlimited" on some QC45 firmware, while
+                // physical 5 kW Notladen still allows energy. Stop the
+                // unauthorized transaction immediately, even below 5 kW.
+                if (!mismatchLatched[connector]) {
+                    mismatchLatched[connector] = true;
+                    limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true);
+                    System.err.println("[QC45] DC SESSION WITHOUT EVCC PERMIT connector="
+                        + connector + " actual=" + actualKw + "kW -> RemoteStop");
+                }
+                retryLatchedStop(connector, enforcedKw, actualKw, now);
+                continue;
+            }
             if (mismatchLatched[connector]) {
                 // A successful RemoteStop request is not proof that the
                 // transaction ended. Keep retrying until the firmware reports

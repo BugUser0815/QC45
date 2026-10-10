@@ -161,3 +161,21 @@ Version 2.0 was promoted this way: the pre-release branch was 162 commits ahead 
 - [`../wiki/Type2-AC-Leistungsbegrenzung.md`](../wiki/Type2-AC-Leistungsbegrenzung.md)
 - [`../wiki/Modbus-TCP.md`](../wiki/Modbus-TCP.md)
 - [`../wiki/OCPP-Bridge.md`](../wiki/OCPP-Bridge.md)
+
+## DC-Anrampung (5 kW/s)
+
+Nach einer ausdrücklichen evcc-Freigabe startet der QC45-DC-Ausgang (CHAdeMO
+oder CCS) bei 5 kW und erhöht die freigegebene Leistung mit maximal 5 kW pro
+1000-ms-Regelschritt: **5 → 10 → 15 → 20 → 25 → 30 → 35 kW**.
+Hierfür gelten `loadmanager.rampUpKwPerLoop=5` und
+`loadmanager.intervalMs=1000`. Der KSEM berechnet in jedem Zyklus das
+netzverträgliche Limit, evcc die Obergrenze. Reduzierungen, Stopp,
+KSEM-Ausfall sowie evcc-Freigabeentzug werden ohne Anramp-Verzögerung
+angewendet. Die DC-Ausgänge werden im Ruhezustand höchstens mit dem
+physischen 5-kW-Notlade-Schutzwert vorgeladen, nicht mit dem verfügbaren
+KSEM-Maximum.
+
+Der physische 5-kW-Schutzwert ist kein sicheres Aus. Für aktive DC-Sitzungen
+ohne gültige evcc-Freigabe ist weiterhin der separate RemoteStop-Wächter
+zuständig. Die Parametrierung muss vor öffentlichem Ladebetrieb im
+realen CHAdeMO- und CCS-Ladetest überprüft werden.

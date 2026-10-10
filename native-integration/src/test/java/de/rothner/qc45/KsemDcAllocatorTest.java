@@ -6,6 +6,33 @@ import static org.junit.Assert.assertEquals;
 
 public final class KsemDcAllocatorTest {
     @Test
+    public void dcRampsFromFiveToThirtyFiveInFiveKwSteps() {
+        assertEquals(5, KsemDcAllocator.limitIncreaseKw(0, 35, 5, 5));
+        assertEquals(10, KsemDcAllocator.limitIncreaseKw(5, 35, 5, 5));
+        assertEquals(15, KsemDcAllocator.limitIncreaseKw(10, 35, 5, 5));
+        assertEquals(20, KsemDcAllocator.limitIncreaseKw(15, 35, 5, 5));
+        assertEquals(25, KsemDcAllocator.limitIncreaseKw(20, 35, 5, 5));
+        assertEquals(30, KsemDcAllocator.limitIncreaseKw(25, 35, 5, 5));
+        assertEquals(35, KsemDcAllocator.limitIncreaseKw(30, 35, 5, 5));
+        assertEquals(35, KsemDcAllocator.limitIncreaseKw(35, 35, 5, 5));
+    }
+
+    @Test
+    public void dcSafetyReductionsAndStopAreImmediate() {
+        assertEquals(0, KsemDcAllocator.limitIncreaseKw(35, 0, 5, 5));
+        assertEquals(5, KsemDcAllocator.limitIncreaseKw(35, 5, 5, 5));
+        assertEquals(13, KsemDcAllocator.limitIncreaseKw(35, 13, 5, 5));
+        assertEquals(18, KsemDcAllocator.limitIncreaseKw(15, 18, 5, 5));
+    }
+
+    @Test
+    public void dcRestartWithFreshPermitStartsAtFiveAgain() {
+        assertEquals(0, KsemDcAllocator.limitIncreaseKw(0, 0, 5, 5));
+        assertEquals(5, KsemDcAllocator.limitIncreaseKw(0, 30, 5, 5));
+        assertEquals(10, KsemDcAllocator.limitIncreaseKw(5, 30, 5, 5));
+    }
+
+    @Test
     public void fiveAmpCompanyLoadStartsAtThirteenKwDuringDaytimeBuffer() {
         assertEquals(13, KsemDcAllocator.targetKw(
             0, 5.0d, 25.0d, 5, 35));

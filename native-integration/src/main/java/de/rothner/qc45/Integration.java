@@ -20,7 +20,7 @@ public final class Integration {
     private static final int MAX_KSEM_TIMEOUT_MS = 1000;
     private static final int MAX_FAILBACK_INTERVAL_MS = 100;
     private static final int MAX_LOADMANAGER_INTERVAL_MS = 1000;
-    private static final int MAX_RAMP_UP_KW_PER_SECOND = 2;
+    private static final int MAX_RAMP_UP_KW_PER_SECOND = 5;
 
     private final ChargingLimitCoordinator limits;
     private final ChargingLimitGuard limitGuard;
@@ -225,14 +225,20 @@ public final class Integration {
                         + "A because command ceiling=" + commandCeilingA
                         + "A and hysteresis=" + hysteresisA + "A");
                 }
-                int rampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 2);
+                int legacyRampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 5);
+                int rampKw = effectiveRampUpKw(legacyRampKw);
+                if (legacyRampKw != rampKw) {
+                    System.out.println("[QC45] loadmanager.rampUpKwPerLoop migrated "
+                        + legacyRampKw + "kW -> " + rampKw
+                        + "kW: operator requested 5kW ramp (2026-10-10)");
+                }
                 int intervalMs = positiveInt(p, "loadmanager.intervalMs", 1000);
                 long demandStableMs = nonNegativeInt(p, "loadmanager.demandStableMs", 5000);
                 int demandReserveKw = positiveInt(p, "loadmanager.demandReserveKw", 2);
                 if (intervalMs > MAX_LOADMANAGER_INTERVAL_MS
                         || (long)rampKw * 1000L
                             > (long)MAX_RAMP_UP_KW_PER_SECOND * (long)intervalMs) {
-                    throw new IllegalArgumentException("LoadManager must poll within 1000ms and ramp at no more than 2kW/s");
+                    throw new IllegalArgumentException("LoadManager must poll within 1000ms and ramp at no more than 5kW/s");
                 }
                 loadManager = new LoadManager(
                     station, meter, limits,
@@ -411,6 +417,11 @@ public final class Integration {
             safeTrip - MIN_FAILBACK_GAP_A);
         validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
         return new double[] { safeReduce, safeTrip, safeInstant };
+    }
+
+    /** Upgrade the previous deployed 2-kW setting without editing secrets on the station. */
+    static int effectiveRampUpKw(int configuredKw) {
+        return configuredKw == 2 ? 5 : configuredKw;
     }
 
     static double conservativeLoadManagerTargetA(double configuredTargetA,

@@ -87,8 +87,9 @@ ksem.wordOrder=HIGH_LOW
 # battery support is already visible as reduced KSEM grid current. If the
 # battery is empty, the higher KSEM current automatically lowers the DC target.
 # Type2/AC remains operator-fixed and is therefore treated as normal site load.
-# The historical target/ramp/demand keys are retained for compatibility with
-# existing installations but are not used by the active DC control path.
+# Legacy target/demand parameters remain for compatibility. The ramp setting
+# IS ACTIVE: every authorized CHAdeMO/CCS transaction starts at 5 kW, then
+# increases by at most 5 kW per 1000-ms cycle; reductions are immediate.
 loadmanager.enabled=true
 loadmanager.targetA=34.0
 loadmanager.gridLimitA=38.0
@@ -97,7 +98,7 @@ loadmanager.minDcKw=5
 loadmanager.maxDcKw=35
 loadmanager.minAcKw=5
 loadmanager.maxAcKw=43
-loadmanager.rampUpKwPerLoop=2
+loadmanager.rampUpKwPerLoop=5
 loadmanager.intervalMs=1000
 loadmanager.demandStableMs=5000
 loadmanager.demandReserveKw=2
@@ -124,3 +125,10 @@ failback.intervalMs=100
 failback.resetDelayMs=60000
 # Any KSEM communication/read failure pauses AC and DC immediately at 0 kW
 # while the OCPP transactions remain active.
+
+# DC requires an explicit positive evcc budget written to Modbus register 110.
+# On startup the DC budget is 0; KSEM cannot grant power by itself.
+# Positive DC permits expire 30 seconds after the last evcc write. The evcc
+# driver must refresh them at least every 5-10 seconds. An unauthorized active
+# CHAdeMO/CCS transaction receives RemoteStop (5kW native floor is NOT off).
+# AC Type2 remains operator-fixed and is NOT controlled by this DC lease.

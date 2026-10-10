@@ -10,6 +10,13 @@ import static org.junit.Assert.fail;
 
 public final class IntegrationConfigTest {
     @Test
+    public void oldTwoKwRampSettingIsMigratedToFive() {
+        assertEquals(5, Integration.effectiveRampUpKw(2));
+        assertEquals(5, Integration.effectiveRampUpKw(5));
+        assertEquals(1, Integration.effectiveRampUpKw(1));
+    }
+
+    @Test
     public void acceptsCanonicalFailbackEnvelope() {
         Integration.validateFailbackThresholds(36.0d, 38.0d, 175.0d);
     }

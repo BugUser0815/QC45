@@ -42,6 +42,23 @@ final class KsemDcAllocator {
         return target;
     }
 
+    /**
+     * Gradual DC power INCREASES only. A fresh session starts at physical
+     * Notladen (5 kW), regardless of KSEM headroom or an evcc maximum.
+     * All decreases remain immediate, including zero and grid failback.
+     */
+    static int limitIncreaseKw(int previouslyApprovedKw, int safeTargetKw,
+                               int minDcKw, int rampUpKwPerLoop) {
+        if (previouslyApprovedKw < 0 || safeTargetKw < 0
+                || minDcKw <= 0 || rampUpKwPerLoop <= 0) {
+            throw new IllegalArgumentException("invalid DC ramp input");
+        }
+        if (safeTargetKw <= previouslyApprovedKw) return safeTargetKw;
+        if (previouslyApprovedKw < minDcKw) return Math.min(safeTargetKw, minDcKw);
+        long stepTarget = (long) previouslyApprovedKw + rampUpKwPerLoop;
+        return (int)Math.min((long)safeTargetKw, stepTarget);
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }

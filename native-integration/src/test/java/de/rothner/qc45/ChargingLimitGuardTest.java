@@ -19,6 +19,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 35;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         assertEquals(0, station.stopCount);
@@ -40,6 +41,7 @@ public final class ChargingLimitGuardTest {
         station.session[3] = true;
         station.power[3] = 5;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6100L);
@@ -57,6 +59,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 5;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(5000L);
@@ -76,6 +79,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 6;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6000L);
@@ -97,6 +101,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 35;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6100L);
@@ -117,6 +122,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 50;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         assertEquals(0, station.stopCount);
@@ -140,6 +146,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 8;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(5000L);
@@ -159,6 +166,7 @@ public final class ChargingLimitGuardTest {
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         station.session[2] = true;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         station.power[2] = 35;
         guard.runCycle(1000L);
@@ -190,6 +198,7 @@ public final class ChargingLimitGuardTest {
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         station.session[2] = true;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         station.power[2] = 35;
         guard.runCycle(1000L);
@@ -216,6 +225,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 35;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6100L);
@@ -239,6 +249,7 @@ public final class ChargingLimitGuardTest {
         station.session[2] = true;
         station.power[2] = 35;
 
+        limits.requestDcBudget(50);
         ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
         guard.runCycle(1000L);
         guard.runCycle(6100L);
@@ -255,6 +266,41 @@ public final class ChargingLimitGuardTest {
         station.power[2] = 0;
         guard.runCycle(8450L);
         assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test
+    public void immediatelyStopsUnauthorizedChademoEvenAtFiveKw() throws Exception {
+        FakeStation station = new FakeStation();
+        station.stopEndsSession = false;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        station.session[1] = true;
+        station.power[1] = 5;
+
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        assertEquals(1, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+        guard.runCycle(3100L);
+        assertEquals(2, station.stopCount);
+        station.session[1] = false;
+        station.power[1] = 0;
+        guard.runCycle(3400L);
+        assertTrue(!limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test
+    public void immediatelyStopsUnauthorizedCcsAtAnyPower() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.initializeNotladen();
+        station.session[2] = true;
+        station.power[2] = 35;
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        assertEquals(1, station.stopCount);
+        assertEquals(5, station.limit[2]);
     }
 
     private static final class FakeStation implements ChargingLimitIo, ChargingSessionIo {
