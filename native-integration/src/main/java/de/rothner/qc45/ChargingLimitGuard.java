@@ -72,10 +72,11 @@ final class ChargingLimitGuard extends Thread {
     void runCycle(long now) throws Exception {
         // A forgotten evcc value must never survive loss of the controller.
         // A valid permit must be refreshed by repeated Modbus budget writes.
-        limits.expireDcRequestIfStale(System.currentTimeMillis());
         Exception reconcileFailure = null;
-        try { limits.reconcile(); }
+        try { limits.expireDcRequestIfStale(System.currentTimeMillis()); }
         catch (Exception e) { reconcileFailure = e; }
+        try { limits.reconcile(); }
+        catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
 
         for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
             int logicalEffectiveKw = limits.effectiveConnectorKw(connector);
