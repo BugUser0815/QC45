@@ -225,7 +225,13 @@ public final class Integration {
                         + "A because command ceiling=" + commandCeilingA
                         + "A and hysteresis=" + hysteresisA + "A");
                 }
-                int rampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 5);
+                int legacyRampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 5);
+                int rampKw = effectiveRampUpKw(legacyRampKw);
+                if (legacyRampKw != rampKw) {
+                    System.out.println("[QC45] loadmanager.rampUpKwPerLoop migrated "
+                        + legacyRampKw + "kW -> " + rampKw
+                        + "kW: operator requested 5kW ramp (2026-10-10)");
+                }
                 int intervalMs = positiveInt(p, "loadmanager.intervalMs", 1000);
                 long demandStableMs = nonNegativeInt(p, "loadmanager.demandStableMs", 5000);
                 int demandReserveKw = positiveInt(p, "loadmanager.demandReserveKw", 2);
@@ -411,6 +417,11 @@ public final class Integration {
             safeTrip - MIN_FAILBACK_GAP_A);
         validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
         return new double[] { safeReduce, safeTrip, safeInstant };
+    }
+
+    /** Upgrade the previous deployed 2-kW setting without editing secrets on the station. */
+    static int effectiveRampUpKw(int configuredKw) {
+        return configuredKw == 2 ? 5 : configuredKw;
     }
 
     static double conservativeLoadManagerTargetA(double configuredTargetA,
