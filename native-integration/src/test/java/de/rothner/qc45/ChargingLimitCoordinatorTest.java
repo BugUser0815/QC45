@@ -227,6 +227,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeNotladen();
         limits.setCcsAvailable(true);
+        limits.requestDcBudget(5);
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         io.operations.clear();
@@ -245,6 +246,7 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeNotladen();
         limits.setCcsAvailable(true);
+        limits.requestDcBudget(20);
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 5, 0, false);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargetsAndPrearm(2, false, 20, 0, 0, 0, false);
@@ -303,7 +305,8 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargets(1, true, 20, 20);
-        assertEquals(5, limits.acMobiBusTargetKw());
+        // AC remains autonomous in this test; only DC starts with 0 permit.
+        assertEquals(20, limits.acMobiBusTargetKw());
         limits.requestBudgets(50, 43);
         limits.setGridTargets(1, true, 20, 20);
         assertEquals(20, limits.acMobiBusTargetKw());
