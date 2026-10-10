@@ -26,6 +26,7 @@ public final class ChargingLimitCoordinator {
      */
     public static final int NOTLADEN_KW = 5;
     public static final int AC_NOTLADEN_KW = 5;
+    public static final long DC_REQUEST_TIMEOUT_MS = 30000L;
 
     private final ChargingLimitIo io;
     private final boolean acManaged;
@@ -38,6 +39,7 @@ public final class ChargingLimitCoordinator {
     private int requestedDcKw;
     private int requestedAcKw;
     private boolean evccControlsDc;
+    private long lastDcRequestAtMs;
     private boolean evccControlsAc;
     private int gridDcKw;
     private int gridAcKw;
@@ -72,10 +74,11 @@ public final class ChargingLimitCoordinator {
         this.maxDcKw = maxDcKw;
         this.minAcKw = minAcKw;
         this.maxAcKw = maxAcKw;
-        // Native load balancing is autonomous until evcc explicitly writes a
-        // budget for the respective output. Startup, KSEM and failback blockers
-        // keep the hardware at Notladen instead of writing QC45's ambiguous zero.
-        this.requestedDcKw = maxDcKw;
+        // DC is fail-closed: KSEM may reduce a valid evcc request but must never
+        // create a charging entitlement. A JVM restart loses every old permit.
+        // Native zero is ambiguous on QC45, so the guard must also terminate
+        // DC transactions that have no current permit.
+        this.requestedDcKw = 0;
         this.requestedAcKw = maxAcKw;
         this.stageDcCapKw = maxDcKw;
         this.stageAcCapKw = maxAcKw;
@@ -102,6 +105,7 @@ public final class ChargingLimitCoordinator {
         requestedDcKw = nextDcKw;
         requestedAcKw = nextAcKw;
         evccControlsDc = true;
+        lastDcRequestAtMs = System.currentTimeMillis();
         evccControlsAc = true;
         apply(false);
     }
@@ -111,6 +115,7 @@ public final class ChargingLimitCoordinator {
         if (nextKw < requestedDcKw) gridDcKw = Math.min(gridDcKw, nextKw);
         requestedDcKw = nextKw;
         evccControlsDc = true;
+        lastDcRequestAtMs = System.currentTimeMillis();
         apply(false);
     }
 
@@ -223,6 +228,24 @@ public final class ChargingLimitCoordinator {
     public synchronized int requestedDcKw() { return requestedDcKw; }
     public synchronized int requestedAcKw() { return requestedAcKw; }
     public synchronized boolean evccControlsDc() { return evccControlsDc; }
+
+    /** DC power requires a recent, explicit positive evcc Modbus request. */
+    public synchronized boolean dcPermitValid(long nowMs) {
+        return requestedDcKw >= minDcKw && lastDcRequestAtMs > 0
+            && nowMs >= lastDcRequestAtMs
+            && nowMs - lastDcRequestAtMs < DC_REQUEST_TIMEOUT_MS;
+    }
+
+    /** Called by the independent guard even when evcc and KSEM stop responding. */
+    public synchronized void expireDcRequestIfStale(long nowMs) throws Exception {
+        if (requestedDcKw < minDcKw || dcPermitValid(nowMs)) return;
+        requestedDcKw = 0;
+        evccControlsDc = false;
+        gridDcKw = 0;
+        prearmDcKw = 0;
+        System.err.println("[QC45] DC EVCC PERMIT EXPIRED -> 0kW logical; stop unauthorized DC transactions");
+        apply(true);
+    }
     public synchronized boolean evccControlsAc() { return evccControlsAc; }
     public synchronized int effectiveDcKw() {
         return activeDcConnector == 0 ? 0 : targets()[activeDcConnector];

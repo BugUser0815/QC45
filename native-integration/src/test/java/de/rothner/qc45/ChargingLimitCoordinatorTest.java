@@ -11,10 +11,11 @@ import static org.junit.Assert.fail;
 
 public final class ChargingLimitCoordinatorTest {
     @Test
-    public void startsAutonomousUntilEvccWrites() {
+    public void startsWithoutAnyDcPermit() {
         ChargingLimitCoordinator limits = coordinator(new FakeIo());
-        assertEquals(50, limits.requestedDcKw());
+        assertEquals(0, limits.requestedDcKw());
         assertEquals(43, limits.requestedAcKw());
+        assertTrue(!limits.dcPermitValid(System.currentTimeMillis()));
         assertTrue(!limits.evccControlsDc());
         assertTrue(!limits.evccControlsAc());
         assertTrue(limits.snapshot().startupBlocked);
@@ -31,7 +32,7 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     @Test
-    public void autonomousAcAndDcReleaseOnlyAfterSafeGridTarget() throws Exception {
+    public void dcRequiresExplicitEvccPermitEvenAfterKsemIsHealthy() throws Exception {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeNotladen();
@@ -40,6 +41,10 @@ public final class ChargingLimitCoordinatorTest {
         assertLimits(io, 5, 5, 5);
 
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        assertLimits(io, 5, 5, 15);
+
+        limits.requestDcBudget(20);
+        limits.setGridTargets(2, true, 15, 15);
         assertLimits(io, 5, 15, 15);
 
         limits.requestDcBudget(0);
@@ -298,6 +303,9 @@ public final class ChargingLimitCoordinatorTest {
         ChargingLimitCoordinator limits = coordinator(io);
         limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
         limits.setGridTargets(1, true, 20, 20);
+        assertEquals(5, limits.acMobiBusTargetKw());
+        limits.requestBudgets(50, 43);
+        limits.setGridTargets(1, true, 20, 20);
         assertEquals(20, limits.acMobiBusTargetKw());
         limits.requestBudgets(0, 0);
         assertLimits(io, 5, 5, 5);
@@ -311,6 +319,35 @@ public final class ChargingLimitCoordinatorTest {
         assertEquals(5, limits.acMobiBusTargetKw());
         limits.clearStageCaps();
         assertEquals(20, limits.acMobiBusTargetKw());
+    }
+
+    @Test
+    public void expiredDcPermitCannotBeRestoredByKsemOrReboot() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeNotladen();
+        limits.setCcsAvailable(true);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.requestDcBudget(35);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 35, 0, false);
+        assertEquals(35, io.value[1]);
+        limits.expireDcRequestIfStale(
+            System.currentTimeMillis() + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
+        assertEquals(0, limits.requestedDcKw());
+        assertEquals(5, io.value[1]);
+        assertEquals(5, io.value[2]);
+        limits.setGridTargetsAndPrearm(0, false, 0, 0, 35, 0, false);
+        assertEquals(5, io.value[1]);
+        assertEquals(0, coordinator(new FakeIo()).requestedDcKw());
+    }
+
+    @Test
+    public void zeroDcRequestRevokesPermitImmediately() throws Exception {
+        ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        limits.requestDcBudget(35);
+        assertTrue(limits.dcPermitValid(System.currentTimeMillis()));
+        limits.requestDcBudget(0);
+        assertTrue(!limits.dcPermitValid(System.currentTimeMillis()));
     }
 
     private static ChargingLimitCoordinator coordinator(FakeIo io) {

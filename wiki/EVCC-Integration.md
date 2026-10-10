@@ -66,3 +66,17 @@ Der EVCC-Treiber wandelt Wh nach kWh um und implementiert damit `api.MeterEnergy
 - Template: `https://github.com/BugUser0815/evcc/blob/QC45/templates/definition/charger/efacec-qc45.yaml`
 
 Siehe auch: [Modbus TCP](Modbus-TCP), [LoadManager](LoadManager).
+
+## DC-Freigabe (fail-closed, 2026-10-10)
+
+CHAdeMO und CCS beginnen nach jedem EVCSD-Neustart mit einem **logischen DC-Budget von 0 kW**.
+KSEM misst lediglich die physikalisch zulässige Obergrenze und darf keine Freigabe
+erzeugen. Eine positive evcc-Anforderung auf Modbus-Register 110 gilt nur 30 Sekunden;
+der evcc-Treiber muss sie regelmäßig erneuern. Ohne frische positive Anforderung
+bleiben beide DC-Ausgänge bei nativen 5 kW Schutzlimit und jede aktive DC-Transaktion
+wird mittels wiederholtem RemoteStop beendet. Native 0 kW darf nicht geschrieben werden,
+da die QC45 dies unter Umständen als unbegrenzt interpretiert.
+Typ2/AC bleibt davon unberührt und wird weiterhin fest vom Betreiber eingestellt.
+
+Bei der Migration müssen evcc-URI und Modbus-Client-Allowlist auf die aktuell
+verwendeten Adressen abgestimmt werden (QC45 10.0.40.50).
