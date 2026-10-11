@@ -2,7 +2,7 @@ name: qc45-ui-patch
 
 on:
   push:
-    branches: [native-integration]
+    branches: [main]
     paths:
       - 'ui-patch/**'
       - 'native-integration/src/main/java/de/rothner/qc45/ModbusServer.java'

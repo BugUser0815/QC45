@@ -13,14 +13,14 @@ fi
 # shellcheck source=/dev/null
 source "$config_file"
 
-: "${QC45_SSH_TARGET:=root@10.0.20.108}"
+: "${QC45_SSH_TARGET:=root@10.0.40.50}"
 : "${QC45_SSH_PORT:=22}"
 : "${QC45_REMOTE_JAR:=/home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar}"
 : "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
 : "${QC45_FORCE_DEPLOY:=0}"
 
 readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
-readonly QC45_BRANCH="native-integration"
+readonly QC45_BRANCH="main"
 readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-ui-deployer"
 readonly QC45_ECJ_JAR="${HOME}/.local/share/qc45-ui-deployer/ecj-3.32.0.jar"
 readonly QC45_ECJ_SHA256="07e034c44a019c0c6394a06ee7b5c344e5518f6083c0fd046f2d8fd16a6760e2"

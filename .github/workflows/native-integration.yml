@@ -2,7 +2,7 @@ name: native-integration
 
 on:
   push:
-    branches: [native-integration]
+    branches: [main]
   pull_request:
     paths:
       - 'native-integration/**'

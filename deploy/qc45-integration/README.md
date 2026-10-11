@@ -1,6 +1,6 @@
 # Automatisches QC45-Integration-Deployment
 
-Der Deployer prüft den Branch `native-integration`, baut und testet die native
+Der Deployer prüft den Branch `main`, baut und testet die native
 Integration und installiert die JAR atomar in der tatsächlich von der QC45
 verwendeten Smartgrid-Webanwendung:
 
@@ -47,7 +47,7 @@ Der vorhandene QC45-Deployschlüssel wird weiterverwendet. Die Konfiguration
 enthält standardmäßig:
 
 ```text
-root@10.0.20.108
+root@10.0.40.50
 ~/.ssh/qc45_deploy
 ```
 
@@ -56,13 +56,16 @@ root@10.0.20.108
 ```bash
 cd ~/Development/QC45
 git fetch origin
-git checkout native-integration
-git pull --ff-only origin native-integration
+git checkout main
+git pull --ff-only origin main
 cd deploy/qc45-integration
 ./install.sh
 ```
 
-Der Installer überschreibt eine bereits vorhandene lokale Konfiguration nicht.
+Bestehende Konfigurationen bleiben erhalten. Nur dokumentierte alte
+QC45-Adressen (10.0.20.108, 10.0.0.50, 10.0.0.156) werden im Feld
+`QC45_SSH_TARGET` auf `root@10.0.40.50` migriert; davor wird eine
+Sicherung der bisherigen Konfiguration erstellt.
 
 ## Erster Test
 
@@ -91,3 +94,8 @@ journalctl --user -u qc45-integration-deploy.service -n 200 --no-pager
 
 Der Timer prüft minütlich. Nur Änderungen an `native-integration/src` oder
 `native-integration/pom.xml` lösen Build, Installation und Reboot aus.
+
+Die Deployer laufen lokal auf dem Raspberry: GitHub-Änderungen werden erst
+nach erneutem Ausführen von `./install.sh` wirksam. Für `10.0.40.50` muss
+der SSH-Hostschlüssel vor dem ersten automatischen Lauf geprüft und im
+lokalen `known_hosts` hinterlegt werden (`StrictHostKeyChecking=yes`).

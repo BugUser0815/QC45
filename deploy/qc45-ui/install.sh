@@ -76,6 +76,12 @@ if [[ ! -e "$config_dir/config" ]]; then
     echo "Created $config_dir/config"
 else
     echo "Keeping existing $config_dir/config"
+    # Migrate only previously documented QC45 IPs; preserve other settings.
+    if grep -Eq '^QC45_SSH_TARGET=.*root@10[.]0[.](20[.]108|0[.]50|0[.]156)' "$config_dir/config"; then
+        cp -p -- "$config_dir/config" "$config_dir/config.before-ip-migration.bak"
+        sed -i -E '/^QC45_SSH_TARGET=/s#root@10[.]0[.](20[.]108|0[.]50|0[.]156)#root@10.0.40.50#' "$config_dir/config"
+        echo "Migrated QC45 SSH target to root@10.0.40.50 (backup: $config_dir/config.before-ip-migration.bak)"
+    fi
 fi
 
 systemctl --user daemon-reload

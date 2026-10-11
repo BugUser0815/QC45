@@ -1,7 +1,7 @@
 # Automatisches QC45-UI-Deployment
 
 Der Raspberry prüft im Minutentakt den UI-Quellstand des Branches
-`native-integration`. Wenn sich `ui-patch/src` geändert hat, wird die aktive
+`main`. Wenn sich `ui-patch/src` geändert hat, wird die aktive
 UI-JAR von der QC45 geladen, die vollständige operative Oberfläche dagegen als
 Java-7-Bytecode gebaut und die neue JAR zurück auf die Säule übertragen.
 
@@ -16,7 +16,7 @@ enthalten ist.
 
 ## Sicherheits- und Ausfallverhalten
 
-- SSH ausschließlich zur internen QC45 unter `10.0.0.156`
+- SSH ausschließlich zur internen QC45 unter `10.0.40.50`
 - eigener RSA-Deployschlüssel; kein Passwort in GitHub oder in der Konfiguration
 - `ssh-rsa` wird nur für diese einzelne SSH-Verbindung freigeschaltet
 - SHA-256-Prüfung nach der Übertragung
@@ -61,7 +61,7 @@ ssh-keygen -t rsa -b 3072 -m PEM -f ~/.ssh/qc45_deploy -C qc45-ui-deployer
 Zuerst den Hostschlüssel interaktiv prüfen und übernehmen:
 
 ```bash
-ssh -o HostKeyAlgorithms=+ssh-rsa root@10.0.0.156 'echo QC45-SSH-OK'
+ssh -o HostKeyAlgorithms=+ssh-rsa root@10.0.40.50 'echo QC45-SSH-OK'
 ```
 
 Danach den Deployschlüssel installieren:
@@ -71,7 +71,7 @@ ssh-copy-id \
   -i ~/.ssh/qc45_deploy.pub \
   -o HostKeyAlgorithms=+ssh-rsa \
   -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-  root@10.0.0.156
+  root@10.0.40.50
 ```
 
 Passwortlosen Zugriff testen:
@@ -82,7 +82,7 @@ ssh \
   -o BatchMode=yes \
   -o HostKeyAlgorithms=+ssh-rsa \
   -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-  root@10.0.0.156 \
+  root@10.0.40.50 \
   'test -r /home/mobie/evcsd/ui/lib/evcsdUI-v4_EFACEC-ALL_IN_ONE_GENERIC.jar && command -v sha256sum'
 ```
 
@@ -91,11 +91,16 @@ ssh \
 ```bash
 cd ~/Development/QC45
 git fetch origin
-git checkout native-integration
-git pull --ff-only origin native-integration
+git checkout main
+git pull --ff-only origin main
 cd deploy/qc45-ui
 ./install.sh
 ```
+
+Der Installer migriert eine der bekannten alten QC45-Adressen
+(10.0.20.108, 10.0.0.50, 10.0.0.156) in bestehenden Konfigurationen auf
+`root@10.0.40.50` und sichert vorher die alte Datei. Andere
+SSH-Einstellungen bleiben erhalten.
 
 Der Installer legt zwei manuelle Befehle an:
 
@@ -108,7 +113,7 @@ Der normale Befehl überspringt das Deployment, wenn der gespeicherte
 `ui-patch/src`-Tree bereits dem aktuellen Branch entspricht.
 
 Der Force-Befehl ignoriert diese Gleichheit bewusst und führt immer den vollen
-Ablauf aus: aktuelle `native-integration`-Quellen holen, aktive QC45-UI-JAR als
+Ablauf aus: aktuelle `main`-Quellen holen, aktive QC45-UI-JAR als
 Basis laden, alle UI-Klassen neu als Java 7 kompilieren, Ressourcen einbetten,
 JAR prüfen, übertragen, sichern, austauschen und ausschließlich den UI-Prozess
 neu starten.
@@ -156,7 +161,7 @@ systemctl --user disable --now qc45-ui-deploy.timer
 
 ## Ablauf nach späteren Änderungen
 
-Nach einem Push in den Branch `native-integration` erkennt der Raspberry die
+Nach einem Push in den Branch `main` erkennt der Raspberry die
 geänderte UI innerhalb von ungefähr einer Minute. Dabei werden alle
 versionierten UI-Klassen gemeinsam kompiliert und vor dem Upload auf
 Vollständigkeit und Class-Major-Version 51 geprüft. Ressourcen aus
@@ -165,3 +170,8 @@ von `ui-patch/src` lösen keinen automatischen Austausch auf der QC45 aus.
 
 Wenn ein identischer UI-Tree trotzdem erneut installiert werden soll, ist dafür
 `qc45-ui-force-deploy` vorgesehen.
+
+Die Deployer laufen lokal auf dem Raspberry: GitHub-Änderungen werden erst
+nach erneutem Ausführen von `./install.sh` wirksam. Für `10.0.40.50` muss
+der SSH-Hostschlüssel vor dem ersten automatischen Lauf geprüft und im
+lokalen `known_hosts` hinterlegt werden (`StrictHostKeyChecking=yes`).

@@ -13,14 +13,14 @@ fi
 # shellcheck source=/dev/null
 source "$config_file"
 
-: "${QC45_SSH_TARGET:=root@10.0.20.108}"
+: "${QC45_SSH_TARGET:=root@10.0.40.50}"
 : "${QC45_SSH_PORT:=22}"
 : "${QC45_IDENTITY_FILE:=${HOME}/.ssh/qc45_deploy}"
 : "${QC45_FORCE_DEPLOY:=0}"
 : "${QC45_JAVA_HOME:=}"
 
 readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
-readonly QC45_BRANCH="native-integration"
+readonly QC45_BRANCH="main"
 readonly QC45_REMOTE_JAR="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/lib/qc45-integration.jar"
 readonly QC45_REMOTE_WEB_XML="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xml"
 readonly QC45_REMOTE_LOG="/home/mobie/evcsd/qc45-integration.log"
