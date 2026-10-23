@@ -94,74 +94,109 @@ ksem.wordOrder=HIGH_LOW
 ignoriert. Nur die vollständige 32-Bit-Auswertung verhindert einen Überlauf
 oberhalb 65,535 A.
 
-## LoadManager
+## SLS und LoadManager
 
 ```properties
+sls.nominalA=35.0
+sls.characteristic=E
+sls.thermalTimeConstantMs=30000
 loadmanager.enabled=true
-loadmanager.targetA=32.0
+loadmanager.targetA=34.0
 loadmanager.gridLimitA=35.0
-loadmanager.hysteresisA=0.8
+loadmanager.daytimeTargetA=25.0
+loadmanager.hysteresisA=1.5
 loadmanager.minDcKw=5
-loadmanager.maxDcKw=50
+loadmanager.maxDcKw=35
 loadmanager.minAcKw=5
 loadmanager.maxAcKw=43
-loadmanager.rampUpKwPerLoop=2
+loadmanager.rampUpKwPerLoop=5
 loadmanager.intervalMs=1000
 loadmanager.demandStableMs=5000
 loadmanager.demandReserveKw=2
 ```
 
-DC und AC nutzen ein gemeinsames Budget. Bei parallelem Laden erhalten sie zunächst denselben Anteil. Wird ein Anteil fünf Sekunden stabil nicht genutzt, kann der andere Ausgang ihn übernehmen; 2 kW Aufwachreserve bleiben am bedarfsgedeckelten Ausgang. `gridLimitA` ist die harte konfigurierte Obergrenze; bei aktivem Failback wird für neue Freigaben zusätzlich das niedrigere `failback.reduceA` verwendet.
+Der normale LoadManager regelt DC anhand der höchsten KSEM-Phase. Type2 ist
+im aktuellen Betrieb ungeregelt und erscheint als Standortlast im Messwert.
+Die früheren Demand-Parameter bleiben aus Kompatibilitätsgründen lesbar, sind
+für diese direkte DC-Regelung ohne Wirkung.
+
+Der Zielstrom ist das Minimum aus `targetA`, Freigabegrenze und Tagesprofil.
+Die Freigabegrenze ist das Minimum aus SLS-Nennstrom, `gridLimitA` und bei
+aktivem Failback dessen `reduceA`. `daytimeTargetA` gilt Mo–Sa 06:30–18:00 Uhr
+Europe/Berlin; außerhalb dieser Zeit gilt keine feste 35-A-Grenze.
+`hysteresisA` bildet einen Haltebereich bis höchstens 5 % des aktiven Sollwerts.
+Er wird nicht zusätzlich vom Sollwert abgezogen und schafft keine Reserve
+für neue Erhöhungen. Ausstehende DC-Leistung wird weiterhin reserviert;
+weitere Erhöhungen benötigen zwei bestätigende Leistungsmessungen.
 
 ## GridFailback
 
 ```properties
 failback.enabled=true
-failback.reduceA=34.0
+failback.reduceA=36.0
 failback.reduceDelayMs=500
 failback.reduceDcKw=5
 failback.reduceAcKw=5
-failback.tripA=35.0
+failback.tripA=38.0
 failback.tripDelayMs=250
 failback.instantTripA=175.0
 failback.intervalMs=100
 failback.resetDelayMs=60000
 ```
 
-`reduceA` und `tripA` müssen strikt aufsteigend sein und dürfen die sicheren
-Standardwerte 34/35 A nicht überschreiten. `instantTripA` ist für den
-35-A-SLS-E fest auf die untere magnetische Grenze `5 × In = 175 A` gesetzt.
-Damit wird eine thermische Vorbelastung angenommen und bei jeder Toleranz die
-kleinere Stromgrenze verwendet. Historische Werte wie `38.0` oder `218.75`
-werden beim Start automatisch migriert; das Log nennt konfigurierten und
-wirksamen Wert. Nicht positive oder nicht endliche Werte halten die
-Integration im sicheren 0-kW-Modus, während OCPP und Diagnose weiter starten.
+`reduceA` und `tripA` lösen proportionale Reduktionen aus; `tripA` reagiert
+schneller und bewirkt keine sofortige Pause. Reduktionen erfolgen höchstens
+einmal pro Sekunde. `reduceDcKw`/`reduceAcKw` sind der untere Endpunkt der
+schrittweisen Reduktion (0 oder technisches Minimum). Nach fünf Messungen
+unter `min(reduceA, In)` wird die Kappe bei der aktuellen Zuteilung aufgehoben.
 
-Ältere Failback-Zeiten werden ebenfalls ausschließlich verschärft. Insbesondere
-wird ein historisches `failback.intervalMs=200` automatisch auf 100 ms
-reduziert, statt LoadManager und GridFailback vollständig abzuschalten.
+`sls.nominalA` bezeichnet den tatsächlich eingebauten SLS (16–100 A);
+fehlende Einträge bedeuten weiterhin E35. Nur Charakteristik E wird unterstützt.
+Die ohne explizite Einträge berechneten Schwellen sind `In+1 A`, `In+3 A`
+und `5 × In`. Explizit gesetzte niedrigere Werte bleiben unverändert wirksam.
+Überhöhte Schwellen werden auf höchstens `1,05 × In`, `1,2 × In`
+beziehungsweise `5 × In` begrenzt und protokolliert. Danach muss
+`0 < reduceA < tripA < instantTripA` gelten. Ein kleinerer konfigurierter
+Instant-Grenzwert wird nicht mehr automatisch auf 175 A angehoben.
 
-Ab `tripA` werden DC und AC sofort auf 0 kW pausiert. Der Hard-Trip-Latch folgt
-danach der stromabhängigen E35-Kennlinie: unter `1,05 × In` entsteht kein
-Latch, bei 38,6 A erst nach 60 Minuten kontinuierlicher Belastung. Mit höherem
-Strom sinkt die Zeit stufenweise bis auf eine Sekunde; ab 175 A erfolgt der
-Instant Trip.
+Die zusätzliche thermische Softwareüberwachung berücksichtigt I²-Belastung
+und Abkühlung jeder Phase. `sls.thermalTimeConstantMs` ist auf 1000–30000 ms
+begrenzt (Standard 30000); kleinere Werte führen bei anhaltender Überlast zu
+früheren Eingriffen. Das Modell ist keine kalibrierte Herstellerkennlinie.
+Details und Hager-Quellen: [Grid-Failback](Grid-Failback).
 
-Ein KSEM-Fehler pausiert sofort und setzt die Reset-Wartezeit zurück. Der Hard
-Trip entriegelt automatisch nach `resetDelayMs` durchgehend sicheren Messwerten
-unter `reduceA`; Standard und Minimum sind 60 Sekunden. Der frühere Schalter
-`autoResetHardTrip` ist obsolet und kann den zeitgesteuerten Reset nicht mehr
-deaktivieren.
+Mess-/Steuerungsfehler sperren sofort und werden erst nach fünf sicheren
+Messungen freigegeben. Messlücken zählen nicht als thermische Abkühlung.
+Ein Hard Trip erfordert vor dem automatischen Reset zusätzlich thermische
+Erholung, mindestens 60 Sekunden durchgehend sichere Messwerte und beendete
+Sitzungen. `failback.autoResetHardTrip` ist obsolet.
+
+### Beispiel nach Austausch auf E50
+
+| Parameter | Vorhandener E35 | Beispiel E50 |
+|---|---:|---:|
+| `sls.nominalA` | 35 | 50 |
+| `loadmanager.targetA` | 34 | 49 |
+| `loadmanager.gridLimitA` | 35 | 50 |
+| `loadmanager.daytimeTargetA` | 25 | 25 (separat wählbar) |
+| `failback.reduceA` | 36 | 51 |
+| `failback.tripA` | 38 | 53 |
+| `failback.instantTripA` | 175 | 250 |
+
+Nur `sls.nominalA` zu ändern hebt explizit eingetragene alte Ziel-/Grenzwerte
+nicht an. Für die höhere Freigabe müssen diese Werte gemeinsam angepasst
+werden. Die separate DC-Leistungsgrenze bleibt bei höchstens 35 kW.
 
 ## Validierung und Safe Mode
 
 Ports, Intervalle, Skalierung, Grenzwertreihenfolge, Min/Max-Leistung und
 boolesche Werte werden beim Start validiert. Fehlerhafte Sicherheitsparameter
-starten keinen halb konfigurierten Regler, sondern lassen den bereits aktiven
-0-kW-Guard im `DEGRADED SAFE MODE` weiterlaufen. Ein deaktivierter LoadManager
-hebt die Start-Sperre ebenfalls nicht auf. Werte, die die feste
-32/34/35/38-A-Sicherheitsstaffel, den KSEM-Timeout von höchstens einer Sekunde
-oder die maximale Steigerung von 2 kW/s abschwächen würden, werden abgelehnt.
+lassen den Start-Guard im `DEGRADED SAFE MODE` aktiv; OCPP und Diagnose
+bleiben erreichbar. Ein deaktivierter LoadManager hebt die Start-Sperre nicht
+auf. KSEM-Timeout höchstens eine Sekunde, LoadManager-Zyklus höchstens eine
+Sekunde und Aufwärtsrampe höchstens 5 kW/s bleiben verbindlich. Historische
+2-kW-Rampen werden wie bisher auf 5 kW migriert. Die Failback-Zeiten werden
+auf höchstens 500/250/100 ms für Reduce/Fast Reduce/Abfrage begrenzt.
 
 ## Logs
 

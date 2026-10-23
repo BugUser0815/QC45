@@ -1,86 +1,109 @@
 # Grid-Failback
 
-`GridFailback` ist eine **unabhängige Schutzebene** neben dem normalen LoadManager. Er schützt den Netzanschlusspunkt jetzt vor der Summe aus DC und Type2/AC.
+`GridFailback` überwacht unabhängig vom DC-LoadManager alle drei KSEM-Phasen.
+Die Stromgrenzen beziehen sich auf `sls.nominalA` (Standard 35 A) und die
+E-Charakteristik. Type2 bleibt im aktuellen Betrieb ungeregelt; seine Last ist
+im KSEM-Messwert enthalten. Nur vom Coordinator verwaltete Ausgänge werden
+begrenzt oder gestoppt.
 
-## Standard-Schutzstufen
+## Proportionale Reduktion
 
-| Stufe | Bedingung | Verzögerung | Aktion |
-|---|---|---:|---|
-| Reduce | Phase ≥ `34 A` | `500 ms` | DC und AC höchstens je `5 kW`; niemals hochsetzen |
-| Over-limit pause | Phase ≥ `35 A` | sofort nach Messwert | DC `0 kW`, AC `0 kW`, Erhöhungen blockiert |
-| SLS-E Hard Trip | zeit-/stromabhängig, siehe unten | Kennlinie | alle drei Connectoren stoppen und Latch setzen |
-| Instant Trip | Phase ≥ `175 A` (`5 × In`) | sofort | alle drei Connectoren stoppen und Latch setzen |
-| Meter Failure | KSEM ungültig | sofort | DC/AC `0 kW`, Sessions zunächst aktiv lassen |
+| Stufe | Auslöser bei E35 mit Standardwerten | Reaktion |
+|---|---|---|
+| Reduce | mindestens 36 A für 500 ms | Leistung um den gemessenen Stromüberschuss absenken |
+| Fast Reduce (`tripA`) | mindestens 38 A für 250 ms | dieselbe proportionale Reduktion früher auslösen |
+| Thermischer Hard Trip | akkumulierte Überlast einer Phase | Ladefreigabe sperren, aktive verwaltete Sitzungen stoppen |
+| Instant Trip | mindestens 175 A (`5 × In`) oder niedrigerer konfigurierter Wert | sofortiger Hard Trip |
+| Mess-/Steuerungsfehler | ungültige KSEM-Daten oder fehlgeschlagene Durchsetzung | sofortige Sperre mit erneuter Messwertqualifikation |
 
-Unabhängig vom KSEM überwacht der 250-ms-Limit-Guard die tatsächlich gemessene
-Connectorleistung. Fließt nach 750 ms weiterhin Leistung, obwohl die wirksame
-Freigabe 0 kW beträgt, wird die Transaktion abgebrochen und eine bis zum
-Neustart verriegelte Leistungsfehler-Sperre gesetzt. Damit kann ein vom
-CCS-Controller nicht umgesetztes 0-kW-Telegramm den Schutz nicht umgehen.
+Abfrageintervall: höchstens 100 ms. Normale Reduktionen erfolgen höchstens
+einmal je Sekunde, damit die Station reagieren kann. `reduceDelayMs` und
+`tripDelayMs` bleiben wirksam, begrenzt auf höchstens 500 beziehungsweise 250 ms.
+`tripA` ist jetzt eine schnellere Reduktionsschwelle, keine sofortige Pause.
+Eine leichte Überschreitung des Nennstroms setzt die Sitzung nicht auf 5 kW
+zurück.
 
-Abfrageintervall: **100 ms**.
+Der Stromüberschuss wird gegenüber `min(In, reduceA)` berechnet. Bei DC wird
+je überschüssigem Ampere um rund 0,693 kW reduziert, auf ganze kW aufgerundet.
+Ausgangspunkt ist das Maximum aus wirksamer Vorgabe und beobachteter Leistung;
+eine noch nicht umgesetzte Absenkung wird dadurch nicht erneut abgezogen.
+Der Failback darf eine Vorgabe niemals erhöhen. `reduceDcKw`/`reduceAcKw`
+bezeichnen den unteren Endpunkt der schrittweisen Absenkung (0 oder das
+technische Minimum), nicht mehr eine sofort aufzuerlegende 5-kW-Kappe.
 
-Die Reduce-Stufe ist strikt reduktionsorientiert. Hat der LoadManager einen Ausgang bereits auf 0 kW gesetzt, darf der Failback ihn nicht wieder auf 5 kW anheben.
+Nach fünf aufeinanderfolgenden Messungen unter `min(In, reduceA)` entfällt
+die Schutzkappe **bei der aktuellen Zuteilung**. Der LoadManager darf danach
+normal weiterregeln. Weder eine alte hohe Vorgabe noch ein Neustart bei 5 kW
+wird dabei erzwungen. evcc-Freigabe, ausstehende DC-Leistung und Fahrzeugreaktion
+bleiben berücksichtigt.
 
-## Verhalten am Netzlimit
+## Thermische Vorgeschichte
 
-Schon der erste KSEM-Messwert ab `tripA` blockiert den LoadManager und setzt
-beide Ladearten auf 0 kW. Der zusätzliche gelatchte Hard Trip folgt der
-konservativen Software-Abbildung eines 35-A-SLS mit E-Charakteristik:
+Hager beschreibt die E-Charakteristik als Auslöseband: thermisch
+`1,05–1,2 × In`, magnetisch `5–6,25 × In`. Bei `1,05 × In` muss der Schalter
+unter den Prüfbedingungen länger als eine Stunde halten; bei `1,2 × In`
+ist die Stunde eine obere Auslösezeit, keine garantierte Mindesthaltezeit.
+Die frühere Tabelle mit bis zu einer Stunde Wartezeit und vollständigem
+Timer-Reset bei jedem Stromrückgang wurde daher entfernt.
 
-| Maximaler Phasenstrom | Dauer bis zum Hard Trip |
-|---:|---:|
-| `35 A` bis `< 36,75 A` (`< 1,05 × In`) | kein Latch-Timer; Pause bleibt aktiv |
-| `36,75 A` bis `< 42 A` | `60 min` kontinuierlich |
-| `42 A` bis `< 52,5 A` | `5 min` kontinuierlich |
-| `52,5 A` bis `< 70 A` | `60 s` kontinuierlich |
-| `70 A` bis `< 105 A` | `10 s` kontinuierlich |
-| `105 A` bis `< 175 A` | `1 s` kontinuierlich |
-| `≥ 175 A` | sofort |
+Die zusätzliche Softwareüberwachung verwendet für jede Phase einen eigenen
+normierten I²-Zustand mit exponentieller Abkühlung:
 
-Sinkt der Strom unter `1,05 × In`, wird die bis dahin gemessene Trip-Zeit
-vollständig verworfen. Die Over-limit-Pause bleibt bestehen, bis fünf
-aufeinanderfolgende Messungen unter `reduceA` liegen.
+```text
+h_neu = h_alt * exp(-dt / tau) + (I / In)^2 * (1 - exp(-dt / tau))
+```
 
-Damit führt eine kurze Überschreitung nicht sofort zum gelatchten Trip; es
-bleibt aber während der gesamten Prüfung keine Ladeleistung freigegeben.
-Für alle Kennlinien-Toleranzen gilt wegen der angenommenen thermischen
-Vorbelastung des SLS ausdrücklich die jeweils kleinere Stromgrenze.
+Für das vergangene Messintervall wird vorsichtig der größere der beiden
+angrenzenden Stromwerte verwendet. Bei Start gilt `h=1` (bereits mit Nennstrom
+belastet), die Eingriffsschwelle ist `h > 1,05²`. `tau` wird über
+`sls.thermalTimeConstantMs` vorgegeben (Standard/Maximum 30000 ms, Minimum
+1000 ms). Kleinere Werte beschleunigen die Reaktion auf anhaltende Überlast.
+Dies ist eine bewusst schnelle **Software-Schutzstrategie**, keine kalibrierte
+Hager-Kennlinie und keine zugesicherte physikalische Auslösezeit. Die originale
+SLS-Schutzeinrichtung bleibt maßgeblich.
 
-## Hard Trip
+Leichtes Pendeln um den Nennstrom wird zugelassen. Wiederholte Belastungen
+akkumulieren sich; ein einzelner niedriger Messwert setzt den Zustand nicht
+zurück. Bei Messausfall wird keine Abkühlung angenommen. Nach einem JVM-Neustart
+beginnt das Modell wieder mit der genannten Vorbelastung; der Zustand wird
+nicht über Neustarts gespeichert.
 
-Beim Hard Trip:
+## Hard Trip und Wiederfreigabe
 
-1. wird der Latch gesetzt,
-2. DC und AC werden auf 0 kW gesetzt,
-3. CHAdeMO, CCS und Type2 erhalten `remoteStop()`, sofern aktiv,
-4. fehlgeschlagene `remoteStop()`-Aufrufe werden alle zwei Sekunden erneut versucht,
-5. die 0-kW-Limits werden bis zur Freigabe regelmäßig erneut durchgesetzt.
+Ein Hard Trip sperrt die Ladefreigabe logisch auf 0 kW und sendet RemoteStop
+an aktive verwaltete Connectoren. Fehlgeschlagene Stopps werden alle zwei
+Sekunden erneut versucht. Die nativen Limits werden weiter durchgesetzt.
+Der physische 5-kW-Notladeboden ist kein sicheres Aus; der unabhängige
+Leistungswächter kontrolliert deshalb weiterhin, ob ein gesperrter Ausgang
+Leistung zieht.
 
-## Gelatchter Auto-Reset
+Der automatische Reset erfordert gleichzeitig:
 
-Der Latch wird nach `failback.resetDelayMs` automatisch gelöscht, sobald alle
-Phasen für die gesamte Wartezeit unter `reduceA` geblieben sind. Standard und
-Minimum sind 60 Sekunden. Jeder KSEM-Lesefehler und jeder Messwert ab `reduceA`
-setzt die Wartezeit wieder auf null. Solange noch eine Ladesitzung aktiv ist,
-bleibt die Freigabe zusätzlich zurückgestellt; die wiederholten `remoteStop()`-
-Versuche laufen in dieser Zeit weiter.
+- alle Phasen durchgehend unter `min(In, reduceA)`;
+- thermische Zusatzbelastung auf höchstens 25 % der Eingriffsschwelle abgebaut;
+- anschließend mindestens `failback.resetDelayMs` stabile Messwerte
+  (Standard/Minimum 60000 ms);
+- keine aktive Ladesitzung mehr an einem der drei Connectoren.
 
-Der frühere Schalter `failback.autoResetHardTrip` ist obsolet und wird ignoriert.
-Damit entsperrt auch eine vorhandene Konfiguration mit dem alten Wert `false`
-nach der stabilen Wartezeit automatisch.
+Jeder Messfehler oder erneute Grenzwertverstoß startet die Wartezeit neu.
+Der thermische Zustand bleibt auch beim Reset erhalten. Der frühere Schalter
+`failback.autoResetHardTrip` ist obsolet und wird ignoriert.
 
-## KSEM-Ausfall
+Bei einem KSEM-/Steuerungsfehler sperrt der Failback sofort. Nach fünf gültigen
+Messungen unter `min(In, reduceA)` wird zunächst die alte Grid-Freigabe verworfen;
+der LoadManager bereitet eine frische Freigabe ab dem technischen Minimum vor.
+Diese Fehlererholung unterscheidet sich von der normalen proportionalen Reduktion.
 
-Schon der erste fehlgeschlagene oder unplausible KSEM-Read pausiert AC und DC
-auf 0 kW, ohne die Backend-Transaktionen sofort abzubrechen. Nach fünf stabilen
-gültigen Reads unter 34 A wird zunächst jede alte Grid-Freigabe verworfen; erst
-danach darf der LoadManager beide Ausgänge neu hochfahren.
+## Konfiguration und Quellen
 
-Dasselbe Nullsetzen vor Freigabe gilt beim Ende der Reduce-Stufe. Eine alte
-50-kW-Freigabe kann dadurch beim Entfernen einer 5-kW-Schutzkappe nicht
-sprunghaft wieder wirksam werden.
+Alle explizit gesetzten niedrigeren Stromschwellen bleiben wirksam. Der Code
+hebt insbesondere einen kleineren `instantTripA`-Wert nicht mehr automatisch
+auf 175 A an. Überhöhte Werte werden abhängig vom eingestellten SLS begrenzt
+und im Startlog ausgewiesen. Für E50 skalieren Modell und magnetische Grenze
+auf 50 A beziehungsweise 250 A; vorhandene explizite E35-Grenzen müssen für
+die neue Installation bewusst angepasst werden.
 
-Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/GridFailback.java`
-
-Siehe auch: [LoadManager](LoadManager).
+- [Hager: E-Auslöseband und technische Daten, Seiten 1 und 3](https://assets.hager.com/step-content/P/HA_22838894/Document/std.lang.all/22DE0001-TECHNIK-SLS-SCHALTER.pdf)
+- [Hager: Erklärung der Prüfströme und Auslösezeiten](https://hager.com/de/wissen/e-volution/produktwissen/selektive-hauptleitungsschutzschalter)
+- [Konfiguration und Betrieb](Konfiguration-und-Betrieb)
+- [LoadManager](LoadManager)

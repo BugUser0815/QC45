@@ -60,14 +60,15 @@ public final class LoadManagerControlTest {
     }
 
     @Test
-    public void ceilingAndPermitWithdrawalStillReduceImmediately() throws Exception {
+    public void smallCeilingExcessIsHeldButPermitWithdrawalStillStops() throws Exception {
         Fixture f = new Fixture(5);
         f.station.active[2] = true;
         f.tick(5.0d, 5);
         f.tick(10.0d, 5);
         assertEquals(10, f.command());
+        f.tick(15.0d, 10);
         f.tick(35.1d, 10);
-        assertEquals(5, f.command());
+        assertEquals(10, f.command());
         f.limits.requestDcBudget(0);
         f.tick(5.0d, 5, false);
         assertEquals(0, f.limits.effectiveDcKw());
@@ -169,7 +170,7 @@ public final class LoadManagerControlTest {
             limits.setCcsAvailable(true);
             manager = new LoadManager(station, meter, limits,
                 34.0d, 35.0d, 1.5d, 5, 50, 5, 43,
-                ramp, 1000, 5000L, 2);
+                ramp, 1000, 5000L, 2, 34.0d);
             for (int i = 0; i < 5; i++) tick(4.0d, 0);
         }
 
@@ -187,7 +188,7 @@ public final class LoadManagerControlTest {
         int command() { return station.limit[2]; }
     }
 
-    private static final class FakeMeter implements LoadManager.CurrentSource {
+    private static final class FakeMeter implements GridCurrentIo {
         double criticalA;
         boolean fail;
         public KsemClient.Currents readCurrents() throws Exception {
