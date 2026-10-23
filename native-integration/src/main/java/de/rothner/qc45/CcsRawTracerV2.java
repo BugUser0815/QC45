@@ -65,6 +65,7 @@ public final class CcsRawTracerV2 {
         // local Modbus/UI path. Therefore install it regardless of whether raw
         // trace logging is enabled. The flag only controls diagnostic logging.
         boolean logging = bool(p, "evcsd.ccsRawTrace.enabled", true);
+        CcsTraceSession.CURRENT.configure(bool(p, "evcsd.ccsRawTrace.onlyWhenConnected", true));
         startInstaller(RUNTIME, integer(p, "evcsd.ccsRawTrace.repeatMs", 1000), logging, 1000L);
     }
 
@@ -77,10 +78,12 @@ public final class CcsRawTracerV2 {
         lastAttachmentStatus = null;
         lastAttachmentLogMs = 0L;
         clearLiveTelemetry();
+        CcsTraceSession.CURRENT.configure(true);
         System.out.println(PREFIX + "streams restored");
     }
 
     private static void clearLiveTelemetry() {
+        CcsTraceSession.CURRENT.reset();
         synchronized (LIVE_LOCK) {
             liveSocPct = 0;
             livePowerW = 0;
@@ -364,6 +367,7 @@ public final class CcsRawTracerV2 {
     }
 
     private static final class TraceState {
+        private final CcsTraceSession.LogBuffer logBuffer = new CcsTraceSession.LogBuffer();
         private final String dir, port, serializer;
         private final long repeatMs;
         private final boolean logging;
@@ -371,18 +375,21 @@ public final class CcsRawTracerV2 {
         private String last="";
         private long lastMs;
         TraceState(String d,String p,String s,long r,boolean log){dir=d;port=p;serializer=s;repeatMs=Math.max(100L,r);logging=log;}
-        synchronized void disable() { active = false; }
+        synchronized void disable() { active = false; logBuffer.clear(); }
         synchronized void observe(byte[] b,int o,int l){
             if(!active||b==null||l<=0)return;
-            if("RX".equals(dir)) observeLiveRx(b,o,l);
+            long now=System.currentTimeMillis();
+            if("RX".equals(dir)) {
+                CcsTraceSession.CURRENT.observeRx(b,o,l,now);
+                observeLiveRx(b,o,l);
+            }
             if(!logging)return;
             String h=hex(b,o,l);
-            long now=System.currentTimeMillis();
             boolean relevant=h.indexOf("63")>=0;
             if(!relevant)return;
             if(h.equals(last)&&now-lastMs<repeatMs)return;
             last=h;lastMs=now;
-            System.out.println(PREFIX+dir+" t="+now+" port="+port+" serializer="+serializer+" bytes="+l+" raw="+h);
+            logBuffer.write(PREFIX+dir+" t="+now+" port="+port+" serializer="+serializer+" bytes="+l+" raw="+h,now);
         }
     }
 

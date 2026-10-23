@@ -185,6 +185,7 @@ public final class CcsFullRxTracer {
     }
 
     private static final class TraceState {
+        private final CcsTraceSession.LogBuffer logBuffer = new CcsTraceSession.LogBuffer();
         private final Object lock = new Object();
         private final String port;
         private final String serializer;
@@ -227,6 +228,7 @@ public final class CcsFullRxTracer {
             running = false;
             flusher.interrupt();
             synchronized (lock) { flushLocked("shutdown"); }
+            logBuffer.clear();
         }
 
         private void flushLoop() {
@@ -249,11 +251,12 @@ public final class CcsFullRxTracer {
             if (pending.size() == 0) return;
             byte[] bytes = pending.toByteArray();
             pending.reset();
-            System.out.println(PREFIX + "RX t=" + System.currentTimeMillis()
+            long now = System.currentTimeMillis();
+            logBuffer.write(PREFIX + "RX t=" + now
                 + " port=" + port + " serializer=" + serializer
                 + " bytes=" + bytes.length + " flush=" + reason
                 + " raw=" + hex(bytes, 0, bytes.length)
-                + printableSuffix(bytes));
+                + printableSuffix(bytes), now);
         }
     }
 

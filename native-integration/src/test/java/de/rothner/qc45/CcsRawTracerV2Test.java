@@ -18,6 +18,36 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertArrayEquals;
 
 public final class CcsRawTracerV2Test {
+    @Test
+    public void rawTxLoggingWaitsForAValidatedConnectionAndDoesNotModifyTraffic() throws Exception {
+        final Channel channel = new Channel("/dev/ttyS0");
+        final ByteArrayOutputStream output = new ByteArrayOutputStream();
+        channel.out = output;
+        final InputStream input = new ByteArrayInputStream(CcsTraceSessionTest.connectedMasterFrame());
+        final SerialReader reader = new SerialReader(channel, input);
+        Fixture runtime = new Fixture(new Central(channel), refs(reader));
+        ByteArrayOutputStream logs = new ByteArrayOutputStream();
+        PrintStream original = System.out;
+        byte[] request = { 0x63, 0x02, 0x05, 0x00, 0x00 };
+        try {
+            System.setOut(new PrintStream(logs, true, "UTF-8"));
+            CcsRawTracerV2.startInstaller(runtime, 1000L, true, 10L);
+            await(new Condition() { public boolean met() { return reader.in != input && channel.out != output; } });
+            channel.out.write(request);
+            assertFalse(logs.toString("UTF-8").contains("CCS-RAW2 TX t="));
+            reader.in.read(new byte[64]);
+            request[2] = 6;
+            channel.out.write(request);
+            assertTrue(logs.toString("UTF-8").contains("CCS-RAW2 TX t="));
+            assertTrue(logs.toString("UTF-8").contains("preRoll=true"));
+            assertEquals(10, output.size());
+            assertEquals(6, output.toByteArray()[7]);
+        } finally {
+            CcsRawTracerV2.shutdown();
+            System.setOut(original);
+        }
+    }
+
     @After
     public void stopInstaller() {
         CcsFullRxTracer.shutdown();

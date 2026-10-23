@@ -44,10 +44,16 @@ modbus.maxClients=8
 # proves that a 10 kW V3 START frame was handed to the serial/RXTX output path.
 evcsd.ccsRawTrace.enabled=true
 evcsd.ccsRawTrace.repeatMs=1000
+# Trace data is written only during a validated CCS connection (including
+# the 0 V handshake), with up to 2 seconds of bounded RAM pre-roll and a
+# 5-second tail after disconnect. Live telemetry remains enabled while idle.
+evcsd.ccsRawTrace.onlyWhenConnected=true
+# Set false temporarily when diagnosing events before any cable indication.
 
 # Full A19/QuickCharge RX trace for short reverse-engineering captures.
-# This logs every byte received on the physical master/CCS serial path in
-# buffered batches and can generate a lot of log data. Keep it false during
+# During the same connection window, this logs every byte received on the
+# physical master/CCS serial path, without the sparse 0x63 filter. It can
+# generate a lot of log data. Keep it false during
 # normal operation; enable it only while capturing a CCS plug-in/SLAC sequence.
 # A restart of EVCSD is required after changing this switch.
 evcsd.ccsRawTrace.fullRx.enabled=false
