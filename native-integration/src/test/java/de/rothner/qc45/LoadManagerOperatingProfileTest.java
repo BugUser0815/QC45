@@ -11,51 +11,51 @@ import static org.junit.Assert.assertTrue;
 
 public final class LoadManagerOperatingProfileTest {
     @Test
-    public void mondayBefore0630UsesThirtyFiveAmps() {
+    public void mondayBefore0630UsesConfiguredNightTarget() {
         long before = localTime(2026, Calendar.SEPTEMBER, 7, 6, 29);
         assertFalse(LoadManager.isDaytimeBuffer(before));
-        assertEquals(35.0d, LoadManager.phaseTargetA(before, 36.0d), 0.000001d);
+        assertEquals(34.0d, LoadManager.phaseTargetA(before, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
     public void mondayAt0630StartsTwentyFiveAmpBuffer() {
         long start = localTime(2026, Calendar.SEPTEMBER, 7, 6, 30);
         assertTrue(LoadManager.isDaytimeBuffer(start));
-        assertEquals(25.0d, LoadManager.phaseTargetA(start, 36.0d), 0.000001d);
+        assertEquals(25.0d, LoadManager.phaseTargetA(start, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
     public void mondayUntil1759UsesTwentyFiveAmps() {
         long beforeClose = localTime(2026, Calendar.SEPTEMBER, 7, 17, 59);
         assertTrue(LoadManager.isDaytimeBuffer(beforeClose));
-        assertEquals(25.0d, LoadManager.phaseTargetA(beforeClose, 36.0d), 0.000001d);
+        assertEquals(25.0d, LoadManager.phaseTargetA(beforeClose, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
-    public void mondayAt1800ReturnsToThirtyFiveAmps() {
+    public void mondayAt1800ReturnsToConfiguredNightTarget() {
         long close = localTime(2026, Calendar.SEPTEMBER, 7, 18, 0);
         assertFalse(LoadManager.isDaytimeBuffer(close));
-        assertEquals(35.0d, LoadManager.phaseTargetA(close, 36.0d), 0.000001d);
+        assertEquals(34.0d, LoadManager.phaseTargetA(close, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
     public void saturdayUsesDaytimeBuffer() {
         long saturday = localTime(2026, Calendar.SEPTEMBER, 12, 12, 0);
         assertTrue(LoadManager.isDaytimeBuffer(saturday));
-        assertEquals(25.0d, LoadManager.phaseTargetA(saturday, 36.0d), 0.000001d);
+        assertEquals(25.0d, LoadManager.phaseTargetA(saturday, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
     public void sundayHasNoDaytimeBuffer() {
         long sunday = localTime(2026, Calendar.SEPTEMBER, 13, 12, 0);
         assertFalse(LoadManager.isDaytimeBuffer(sunday));
-        assertEquals(35.0d, LoadManager.phaseTargetA(sunday, 36.0d), 0.000001d);
+        assertEquals(34.0d, LoadManager.phaseTargetA(sunday, 34.0d, 36.0d, 0.8d), 0.000001d);
     }
 
     @Test
     public void commandCeilingStillOverridesScheduleWhenLower() {
         long sunday = localTime(2026, Calendar.SEPTEMBER, 13, 12, 0);
-        assertEquals(33.9d, LoadManager.phaseTargetA(sunday, 34.0d), 0.000001d);
+        assertEquals(33.1d, LoadManager.phaseTargetA(sunday, 34.0d, 34.0d, 0.8d), 0.000001d);
     }
 
     @Test
@@ -63,7 +63,21 @@ public final class LoadManagerOperatingProfileTest {
         // 04:30 UTC on Sep 3 is 06:30 CEST in Europe/Berlin.
         long qc45Clock = utcTime(2026, Calendar.SEPTEMBER, 3, 4, 30, 0);
         assertTrue(LoadManager.isDaytimeBuffer(qc45Clock));
-        assertEquals(25.0d, LoadManager.phaseTargetA(qc45Clock, 36.0d), 0.000001d);
+        assertEquals(25.0d, LoadManager.phaseTargetA(qc45Clock, 34.0d, 36.0d, 0.8d), 0.000001d);
+    }
+
+    @Test
+    public void liveConfigurationUsesThirtyThreePointFourInsteadOfThirtyFourPointNine() {
+        long liveSession = utcTime(2026, Calendar.OCTOBER, 23, 17, 30, 0);
+        assertEquals(33.4d, LoadManager.operatingTargetA(
+            liveSession, 34.0d, 35.0d, 1.5d), 0.000001d);
+    }
+
+    @Test
+    public void daytimeScheduleCannotOverrideLowerConfiguredTarget() {
+        long daytime = localTime(2026, Calendar.SEPTEMBER, 7, 12, 0);
+        assertEquals(23.0d, LoadManager.phaseTargetA(
+            daytime, 23.0d, 35.0d, 1.5d), 0.000001d);
     }
 
     private static long localTime(int year, int month, int day, int hour, int minute) {

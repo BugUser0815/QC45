@@ -6,40 +6,79 @@ package de.rothner.qc45;
  * SMA/BYD system is visible only through the measured KSEM currents.
  */
 final class KsemDcAllocator {
-    // sqrt(3) * 400 V / 1000 = balanced three-phase kW per ampere.
+    // Nominal conversion for reductions; rounding up removes the full excess.
     static final double THREE_PHASE_KW_PER_A = 0.692820323d;
+    // Reserve for rectifier losses, voltage variation and delayed KSEM samples.
+    static final double DC_KW_PER_GRID_A = 0.60d;
+    private static final double RAMP_HEADROOM_FACTOR = 0.75d;
+    private static final double MAX_HOLD_BAND_A = 0.5d;
+    private static final int CATCHUP_TOLERANCE_KW = 1;
 
     private KsemDcAllocator() {}
 
-    static int targetKw(int releasedKw,
-                        KsemClient.Currents currents,
-                        double phaseLimitA,
-                        int minDcKw,
-                        int maxDcKw) {
-        if (currents == null) throw new IllegalArgumentException("currents are required");
-        return targetKw(releasedKw, currents.max(), phaseLimitA, minDcKw, maxDcKw);
-    }
-
-    static int targetKw(int releasedKw,
+    /** confirmedActualKw is the lower of two consecutive DC power readings. */
+    static int targetKw(int commandedKw, int confirmedActualKw,
                         double criticalA,
-                        double phaseLimitA,
+                        double phaseTargetA, double hysteresisA,
                         int minDcKw,
-                        int maxDcKw) {
-        if (phaseLimitA <= 0.0d || minDcKw <= 0 || maxDcKw < minDcKw
-                || Double.isNaN(criticalA) || Double.isInfinite(criticalA)) {
+                        int maxDcKw, int rampUpKwPerLoop) {
+        if (commandedKw < 0 || confirmedActualKw < 0
+                || !finite(criticalA) || criticalA < 0.0d
+                || !finite(phaseTargetA) || phaseTargetA <= 0.0d
+                || !finite(hysteresisA) || hysteresisA < 0.0d
+                || minDcKw <= 0 || maxDcKw < minDcKw || rampUpKwPerLoop <= 0) {
             throw new IllegalArgumentException("invalid KSEM allocator input");
         }
 
-        int released = clamp(releasedKw, 0, maxDcKw);
-        double headroomA = phaseLimitA - criticalA;
-        int deltaKw = (int)Math.floor(headroomA * THREE_PHASE_KW_PER_A);
-        int target = clamp(released + deltaKw, 0, maxDcKw);
+        // Logical zero still means physical 5-kW Notladen on this hardware.
+        int releasedKw = clamp(commandedKw, minDcKw, maxDcKw);
+        double headroomA = phaseTargetA - criticalA;
+        double holdBandA = Math.min(hysteresisA, MAX_HOLD_BAND_A);
+        int targetKw = releasedKw;
 
-        // QC45 DC cannot be commanded below its technical minimum. A target
-        // below that threshold therefore becomes a logical pause; the existing
-        // coordinator keeps the charger's native 0-kW ambiguity fail-safe.
-        if (target < minDcKw) return 0;
-        return target;
+        if (headroomA < -holdBandA) {
+            // Calculate from observed output, not the previous command. A
+            // reduction which the station has not yet followed must not be
+            // subtracted again on every loop with the same high grid reading.
+            targetKw = Math.min(targetKw, (int)Math.floor(
+                confirmedActualKw + headroomA * THREE_PHASE_KW_PER_A));
+        }
+
+        // Already released but undrawn power can still appear at the grid.
+        // Only credit new DC output after a second reading, and never credit
+        // an unobserved reduction as headroom. This bound also applies while
+        // holding or waiting for the vehicle to catch up.
+        int pendingBudgetKw = (int)Math.floor(Math.max(0.0d,
+            (headroomA + holdBandA) * DC_KW_PER_GRID_A));
+        targetKw = (int)Math.min((long)targetKw,
+            (long)confirmedActualKw + pendingBudgetKw);
+
+        if (targetKw < minDcKw) return 0;
+        if (targetKw < releasedKw) return targetKw;
+
+        // Both rising and falling output must settle before another increase.
+        // Small current fluctuations around the target do not change the limit.
+        if (headroomA <= holdBandA
+                || confirmedActualKw < releasedKw - CATCHUP_TOLERANCE_KW
+                || confirmedActualKw > releasedKw + CATCHUP_TOLERANCE_KW) {
+            return releasedKw;
+        }
+
+        int headroomStepKw = (int)Math.floor(
+            headroomA * DC_KW_PER_GRID_A * RAMP_HEADROOM_FACTOR);
+        int rampedKw = limitIncreaseKw(commandedKw,
+            (int)Math.min((long)maxDcKw, (long)releasedKw + headroomStepKw),
+            minDcKw, rampUpKwPerLoop);
+        // A new increase must fit below the target itself, without consuming
+        // the hold band reserved for noise on an existing command.
+        int safeIncreaseKw = (int)Math.min((long)maxDcKw,
+            (long)confirmedActualKw
+                + (int)Math.floor(Math.max(0.0d, headroomA) * DC_KW_PER_GRID_A));
+        return Math.max(releasedKw, Math.min(rampedKw, safeIncreaseKw));
+    }
+
+    private static boolean finite(double value) {
+        return !Double.isNaN(value) && !Double.isInfinite(value);
     }
 
     /**
