@@ -12,6 +12,10 @@ import java.util.TimeZone;
  * is calculated from the most heavily loaded phase only.
  */
 public final class LoadManager extends Thread {
+    interface CurrentSource {
+        KsemClient.Currents readCurrents() throws Exception;
+    }
+
     private static final int HEALTHY_READS_TO_RESUME = 5;
     static final double DAYTIME_PHASE_TARGET_A = 25.0d;
     static final double OFF_HOURS_PHASE_TARGET_A = 35.0d;
@@ -21,11 +25,12 @@ public final class LoadManager extends Thread {
     private static final int DAYTIME_OPEN_MINUTE = 6 * 60 + 30;
     private static final int DAYTIME_CLOSE_MINUTE = 18 * 60;
 
-    private final ReflectionQC45 station;
-    private final KsemClient meter;
+    private final ChargingSessionIo station;
+    private final CurrentSource meter;
     private final ChargingLimitCoordinator limits;
     private final double configuredTargetA;
     private final double commandCeilingA;
+    private final double hysteresisA;
     private final int minDcKw;
     private final int maxDcKw;
     private final int intervalMs;
@@ -34,8 +39,8 @@ public final class LoadManager extends Thread {
     private volatile boolean running = true;
     private boolean meterHealthy;
     private int healthyReads;
-    private int preparedDcKw;
     private int previousDcConnector;
+    private int previousActualDcKw = -1;
     private long lastErrorLog;
     private int lastLoggedTargetKw = -1;
     private double lastLoggedPhaseTargetA = -1.0d;
@@ -46,6 +51,18 @@ public final class LoadManager extends Thread {
                        int minDcKw, int maxDcKw, int minAcKw, int maxAcKw,
                        int rampUpKwPerLoop, int intervalMs,
                        long demandStableMs, int demandReserveKw) {
+        this((ChargingSessionIo) station, meter, limits,
+            targetA, commandCeilingA, hysteresisA,
+            minDcKw, maxDcKw, minAcKw, maxAcKw,
+            rampUpKwPerLoop, intervalMs, demandStableMs, demandReserveKw);
+    }
+
+    LoadManager(ChargingSessionIo station, CurrentSource meter,
+                ChargingLimitCoordinator limits,
+                double targetA, double commandCeilingA, double hysteresisA,
+                int minDcKw, int maxDcKw, int minAcKw, int maxAcKw,
+                int rampUpKwPerLoop, int intervalMs,
+                long demandStableMs, int demandReserveKw) {
         super("QC45-LoadManager");
         setDaemon(true);
         if (station == null || meter == null || limits == null) {
@@ -61,7 +78,10 @@ public final class LoadManager extends Thread {
         this.meter = meter;
         this.limits = limits;
         this.configuredTargetA = targetA;
+        // Validate the same effective target that will be used by every loop.
+        Integration.conservativeLoadManagerTargetA(targetA, commandCeilingA, hysteresisA);
         this.commandCeilingA = commandCeilingA;
+        this.hysteresisA = hysteresisA;
         this.minDcKw = minDcKw;
         this.maxDcKw = Math.min(DC_HARD_MAX_KW, maxDcKw);
         this.intervalMs = intervalMs;
@@ -79,117 +99,13 @@ public final class LoadManager extends Thread {
             + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
             + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
             + "ms prearm=" + minDcKw + "kW DC rampUp="
-            + rampUpKwPerLoop + "kW/loop; legacy configuredTarget="
-            + one(configuredTargetA) + "A and catch-up profile are not used");
+            + rampUpKwPerLoop + "kW/loop configuredTarget="
+            + one(configuredTargetA) + "A hysteresis=" + one(hysteresisA)
+            + "A; two-sample DC catch-up and pending-power reserve enabled");
         safeBlockMeter();
 
         while (running) {
-            long now = System.currentTimeMillis();
-            double activePhaseTargetA = phaseTargetA(now, commandCeilingA);
-            try {
-                KsemClient.Currents currents = meter.readCurrents();
-                markMeterReadHealthy();
-                Active active = detectActive();
-
-                // Close writes made by legacy EVCSD code before calculating a
-                // new KSEM-derived target.
-                limits.reconcile();
-
-                int requestedDcMax = Math.min(maxDcKw, limits.requestedDcKw());
-                boolean dcEligible = active.dcConnector > 0
-                    && limits.dcPermitValid(now)
-                    && (active.dcConnector != 2 || limits.isCcsAvailable())
-                    && requestedDcMax >= minDcKw;
-
-                boolean externalBlock = limits.hasBlockerOtherThan(
-                    ChargingLimitCoordinator.STARTUP,
-                    ChargingLimitCoordinator.LOAD_METER);
-                if (!meterHealthy || externalBlock) {
-                    preparedDcKw = minDcKw;
-                    limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                        active.dcConnector > 0 ? minDcKw : 0, 0,
-                        active.dcConnector == 0 ? minDcKw : 0, 0, false);
-                    if (meterHealthy) releasePreparedMeterBlocks();
-                    previousDcConnector = active.dcConnector;
-                    sleepLoop();
-                    continue;
-                }
-
-                double criticalA = currents.max();
-                if (criticalA >= commandCeilingA) {
-                    preparedDcKw = minDcKw;
-                    limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                        active.dcConnector > 0 ? minDcKw : 0, 0,
-                        active.dcConnector == 0 ? minDcKw : 0, 0, false);
-                    releasePreparedMeterBlocks();
-                    previousDcConnector = active.dcConnector;
-                    System.err.println("[QC45] LoadManager GUARD KSEM L1=" + one(currents.l1)
-                        + "A L2=" + one(currents.l2) + "A L3=" + one(currents.l3)
-                        + "A max=" + one(criticalA) + "A -> DC Notladen="
-                        + minDcKw + "kW");
-                    sleepLoop();
-                    continue;
-                }
-
-                if (active.dcConnector == 0) {
-                    // Do not pre-arm the unused CHAdeMO/CCS outputs with the full
-                    // KSEM headroom. A new session starts at 5 kW and ramps up
-                    // even if evcc previously granted a larger DC budget.
-                    int idleDcKw = limits.dcPermitValid(now)
-                        && requestedDcMax >= minDcKw ? minDcKw : 0;
-                    int physicalIdleDcKw = idleDcKw > 0 ? idleDcKw : minDcKw;
-                    preparedDcKw = physicalIdleDcKw;
-                    limits.setGridTargetsAndPrearm(0, active.ac,
-                        0, 0, idleDcKw, 0, false);
-                    releasePreparedMeterBlocks();
-                    logTarget(currents, activePhaseTargetA,
-                        physicalIdleDcKw, physicalIdleDcKw, 0, "prearm");
-                    previousDcConnector = 0;
-                    sleepLoop();
-                    continue;
-                }
-
-                int commandedDcKw = limits.effectiveDcKw();
-                int releasedDcKw = commandedDcKw;
-                if (releasedDcKw <= 0 && preparedDcKw > 0) {
-                    // A session can become active between two KSEM loops. The
-                    // previously published KSEM-derived pre-arm limit is already
-                    // the released hardware budget and must be the base of the
-                    // next headroom calculation instead of restarting from zero.
-                    releasedDcKw = preparedDcKw;
-                }
-                if (active.dcConnector != previousDcConnector && releasedDcKw <= 0) {
-                    releasedDcKw = minDcKw;
-                }
-                releasedDcKw = Math.min(releasedDcKw, requestedDcMax);
-
-                // First active tick starts at physical Notladen=5 kW.
-                // Further increases are limited to 5 kW per 1-second loop.
-                // Reductions, including evcc-off and grid safety, bypass ramp.
-                int gridSafeTargetDcKw = dcEligible
-                    ? KsemDcAllocator.targetKw(releasedDcKw, currents,
-                        activePhaseTargetA, minDcKw, requestedDcMax)
-                    : 0;
-                int previouslyApprovedDcKw = active.dcConnector == previousDcConnector
-                    ? commandedDcKw : 0;
-                int targetDcKw = dcEligible
-                    ? KsemDcAllocator.limitIncreaseKw(previouslyApprovedDcKw,
-                        gridSafeTargetDcKw, minDcKw, rampUpKwPerLoop)
-                    : 0;
-
-                limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                    targetDcKw, 0, 0, 0, false);
-                releasePreparedMeterBlocks();
-                preparedDcKw = targetDcKw > 0 ? targetDcKw : minDcKw;
-                previousDcConnector = active.dcConnector;
-
-                int actualDcKw = station.powerKw(active.dcConnector);
-                logTarget(currents, activePhaseTargetA,
-                    releasedDcKw, targetDcKw > 0 ? targetDcKw : minDcKw,
-                    actualDcKw, "active");
-            } catch (Throwable e) {
-                markMeterOrControlFailure(now, e);
-            }
+            runCycle(System.currentTimeMillis());
             sleepLoop();
         }
 
@@ -199,6 +115,97 @@ public final class LoadManager extends Thread {
             System.err.println("[QC45] LoadManager stop Notladen failed: " + e);
         }
         System.out.println("[QC45] LoadManager stopped at DC Notladen=" + minDcKw + "kW");
+    }
+
+    void runCycle(long now) {
+        double activePhaseTargetA = operatingTargetA(
+            now, configuredTargetA, commandCeilingA, hysteresisA);
+        try {
+            KsemClient.Currents currents = meter.readCurrents();
+            markMeterReadHealthy();
+            Active active = detectActive();
+
+            // Close writes made by legacy EVCSD code before calculating a
+            // new KSEM-derived target.
+            limits.reconcile();
+
+            int requestedDcMax = Math.min(maxDcKw, limits.requestedDcKw());
+            boolean dcEligible = active.dcConnector > 0
+                && limits.dcPermitValid(now)
+                && (active.dcConnector != 2 || limits.isCcsAvailable())
+                && requestedDcMax >= minDcKw;
+
+            boolean externalBlock = limits.hasBlockerOtherThan(
+                ChargingLimitCoordinator.STARTUP,
+                ChargingLimitCoordinator.LOAD_METER);
+            if (!meterHealthy || externalBlock) {
+                previousActualDcKw = -1;
+                limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                    active.dcConnector > 0 ? minDcKw : 0, 0,
+                    active.dcConnector == 0 ? minDcKw : 0, 0, false);
+                if (meterHealthy) releasePreparedMeterBlocks();
+                previousDcConnector = active.dcConnector;
+                return;
+            }
+
+            double criticalA = currents.max();
+            if (criticalA >= commandCeilingA) {
+                previousActualDcKw = -1;
+                limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                    active.dcConnector > 0 ? minDcKw : 0, 0,
+                    active.dcConnector == 0 ? minDcKw : 0, 0, false);
+                releasePreparedMeterBlocks();
+                previousDcConnector = active.dcConnector;
+                System.err.println("[QC45] LoadManager GUARD KSEM L1=" + one(currents.l1)
+                    + "A L2=" + one(currents.l2) + "A L3=" + one(currents.l3)
+                    + "A max=" + one(criticalA) + "A -> DC Notladen="
+                    + minDcKw + "kW");
+                return;
+            }
+
+            if (active.dcConnector == 0) {
+                previousActualDcKw = -1;
+                // Do not pre-arm the unused CHAdeMO/CCS outputs with the full
+                // KSEM headroom. A new session starts at 5 kW and ramps up
+                // even if evcc previously granted a larger DC budget.
+                int idleDcKw = limits.dcPermitValid(now)
+                    && requestedDcMax >= minDcKw ? minDcKw : 0;
+                int physicalIdleDcKw = idleDcKw > 0 ? idleDcKw : minDcKw;
+                limits.setGridTargetsAndPrearm(0, active.ac,
+                    0, 0, idleDcKw, 0, false);
+                releasePreparedMeterBlocks();
+                logTarget(currents, activePhaseTargetA,
+                    physicalIdleDcKw, physicalIdleDcKw, 0, 0, "prearm");
+                previousDcConnector = 0;
+                return;
+            }
+
+            int commandedDcKw = active.dcConnector == previousDcConnector
+                ? limits.effectiveDcKw() : 0;
+            if (active.dcConnector != previousDcConnector) previousActualDcKw = -1;
+            // Read output before computing a new limit. The lower of two
+            // consecutive samples gives KSEM time to include a newly drawn kW.
+            int actualDcKw = dcEligible ? station.powerKw(active.dcConnector) : 0;
+            int confirmedActualDcKw = previousActualDcKw < 0
+                ? 0 : Math.min(previousActualDcKw, actualDcKw);
+            int targetDcKw = dcEligible
+                ? KsemDcAllocator.targetKw(commandedDcKw, confirmedActualDcKw,
+                    criticalA, activePhaseTargetA, hysteresisA,
+                    minDcKw, requestedDcMax, rampUpKwPerLoop)
+                : 0;
+
+            limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
+                targetDcKw, 0, 0, 0, false);
+            releasePreparedMeterBlocks();
+            previousDcConnector = active.dcConnector;
+
+            previousActualDcKw = dcEligible ? actualDcKw : -1;
+            logTarget(currents, activePhaseTargetA,
+                commandedDcKw, targetDcKw > 0 ? targetDcKw : minDcKw,
+                actualDcKw, confirmedActualDcKw, "active");
+        } catch (Throwable e) {
+            markMeterOrControlFailure(now, e);
+        }
     }
 
     private void markMeterReadHealthy() {
@@ -221,7 +228,7 @@ public final class LoadManager extends Thread {
     private void markMeterOrControlFailure(long now, Throwable error) {
         meterHealthy = false;
         healthyReads = 0;
-        preparedDcKw = minDcKw;
+        previousActualDcKw = -1;
         safeBlockMeter();
         if (now - lastErrorLog >= 5000L) {
             System.err.println("[QC45] LoadManager failure -> DC physical Notladen="
@@ -250,7 +257,7 @@ public final class LoadManager extends Thread {
 
     private void logTarget(KsemClient.Currents currents, double phaseTargetA,
                            int releasedDcKw, int targetDcKw,
-                           int actualDcKw, String mode) {
+                           int actualDcKw, int confirmedDcKw, String mode) {
         if (targetDcKw == lastLoggedTargetKw
                 && Math.abs(phaseTargetA - lastLoggedPhaseTargetA) < 0.000001d
                 && "active".equals(mode)) return;
@@ -259,7 +266,9 @@ public final class LoadManager extends Thread {
             + "A L3=" + one(currents.l3) + "A max=" + one(currents.max())
             + "A phaseTarget=" + one(phaseTargetA)
             + "A releasedDC=" + releasedDcKw + "kW targetDC=" + targetDcKw
-            + "kW actualDC=" + actualDcKw + "kW hardMax=" + maxDcKw + "kW");
+            + "kW actualDC=" + actualDcKw + "kW confirmedDC=" + confirmedDcKw
+            + "kW pendingDC=" + Math.max(0, targetDcKw - confirmedDcKw)
+            + "kW hardMax=" + maxDcKw + "kW");
         lastLoggedTargetKw = targetDcKw;
         lastLoggedPhaseTargetA = phaseTargetA;
     }
@@ -273,10 +282,12 @@ public final class LoadManager extends Thread {
         return String.format(java.util.Locale.US, "%.1f", Double.valueOf(value));
     }
 
-    static double phaseTargetA(long epochMillis, double commandCeilingA) {
+    static double phaseTargetA(long epochMillis, double configuredTargetA,
+                               double commandCeilingA, double hysteresisA) {
         double scheduledTarget = isDaytimeBuffer(epochMillis)
             ? DAYTIME_PHASE_TARGET_A : OFF_HOURS_PHASE_TARGET_A;
-        return Math.min(scheduledTarget, Math.max(0.1d, commandCeilingA - 0.1d));
+        return Math.min(scheduledTarget, Integration.conservativeLoadManagerTargetA(
+            configuredTargetA, commandCeilingA, hysteresisA));
     }
 
     static boolean isDaytimeBuffer(long epochMillis) {
@@ -293,7 +304,7 @@ public final class LoadManager extends Thread {
     // Compatibility aliases for older diagnostics/tests.
     static double operatingTargetA(long epochMillis, double configuredTargetA,
                                    double commandCeilingA, double hysteresisA) {
-        return phaseTargetA(epochMillis, commandCeilingA);
+        return phaseTargetA(epochMillis, configuredTargetA, commandCeilingA, hysteresisA);
     }
 
     static boolean isBusinessHours(long epochMillis) {

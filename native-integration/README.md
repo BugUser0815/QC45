@@ -174,18 +174,35 @@ Version 2.0 was promoted this way: the pre-release branch was 162 commits ahead 
 - [`../wiki/Modbus-TCP.md`](../wiki/Modbus-TCP.md)
 - [`../wiki/OCPP-Bridge.md`](../wiki/OCPP-Bridge.md)
 
-## DC-Anrampung (5 kW/s)
+## DC-Anrampung und stabiler Grenzbetrieb
 
 Nach einer ausdrücklichen evcc-Freigabe startet der QC45-DC-Ausgang (CHAdeMO
-oder CCS) bei 5 kW und erhöht die freigegebene Leistung mit maximal 5 kW pro
-1000-ms-Regelschritt: **5 → 10 → 15 → 20 → 25 → 30 → 35 kW**.
-Hierfür gelten `loadmanager.rampUpKwPerLoop=5` und
-`loadmanager.intervalMs=1000`. Der KSEM berechnet in jedem Zyklus das
-netzverträgliche Limit, evcc die Obergrenze. Reduzierungen, Stopp,
-KSEM-Ausfall sowie evcc-Freigabeentzug werden ohne Anramp-Verzögerung
-angewendet. Die DC-Ausgänge werden im Ruhezustand höchstens mit dem
-physischen 5-kW-Notlade-Schutzwert vorgeladen, nicht mit dem verfügbaren
-KSEM-Maximum.
+oder CCS) bei 5 kW. `loadmanager.rampUpKwPerLoop` ist die maximale Erhöhung
+pro Regelschritt, kein fester Takt: Eine weitere Erhöhung wird erst freigegeben,
+wenn zwei aufeinanderfolgende Leistungswerte die letzte Vorgabe bis auf 1 kW
+erreicht haben. Das gilt auch nach einer Reduzierung. Nahe dem Zielstrom werden
+die Schritte zusätzlich anhand des verfügbaren Stromabstands verkleinert.
+
+Der wirksame Stromsollwert ist das Minimum aus dem Zeitprofil (25 A Mo–Sa
+06:30–18:00 Uhr Europe/Berlin, sonst 35 A), `loadmanager.targetA` und
+`commandCeilingA - loadmanager.hysteresisA - 0,1 A`. Die Freigabegrenze
+`commandCeilingA` ist das Minimum aus `loadmanager.gridLimitA` und der
+Failback-Reduktionsschwelle. Bei 35 A Freigabegrenze, 34 A konfiguriertem Ziel
+und 1,5 A Hysterese ergibt das abends **33,4 A**.
+
+Ein Haltebereich von höchstens ±0,5 A (bei kleinerer Hysterese entsprechend
+schmaler) verhindert wiederholte 1-kW-Korrekturen durch kleine Messschwankungen.
+Bereits freigegebene, noch nicht abgerufene DC-Leistung wird mit konservativen
+0,60 kW je zusätzlichem Netzampere reserviert. Neue Erhöhungen müssen unter
+dem Sollwert selbst bleiben; der Haltebereich dient nur bestehenden Vorgaben.
+Reduktionen werden aus der beobachteten Leistung berechnet, damit eine noch
+nicht umgesetzte Reduktion nicht in jedem Zyklus erneut abgezogen wird.
+
+Reduzierungen, Stopp, KSEM-Ausfall sowie evcc-Freigabeentzug umgehen die
+Aufwärtsrampe. Die sofortige 5-kW-Reduktion ab der Freigabegrenze und der
+separate GridFailback bleiben als Schutzpfade aktiv. Die DC-Ausgänge werden
+im Ruhezustand höchstens mit dem physischen 5-kW-Notlade-Schutzwert
+vorgeladen, nicht mit dem verfügbaren KSEM-Maximum.
 
 Der physische 5-kW-Schutzwert ist kein sicheres Aus. Für aktive DC-Sitzungen
 ohne gültige evcc-Freigabe ist weiterhin der separate RemoteStop-Wächter

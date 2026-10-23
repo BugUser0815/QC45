@@ -9,7 +9,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /** Minimal Modbus/TCP reader for KOSTAL KSEM phase currents. */
-public final class KsemClient {
+public final class KsemClient implements LoadManager.CurrentSource {
     public static final class Currents {
         public final double l1;
         public final double l2;
