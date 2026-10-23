@@ -171,9 +171,25 @@ Hauptlog der Erweiterung:
 /home/mobie/evcsd/qc45-integration.log
 ```
 
-Das Log rotiert ab 10 MiB beim nächsten Start (`.1` bis `.3`). Die ursprünglichen
+Das Log rotiert **im laufenden Betrieb**, bevor die aktive Datei 10 MiB
+überschreitet. Drei Sicherungen bleiben erhalten (`.1` ist die neueste,
+`.3` die älteste); die älteste wird bei der nächsten Rotation gelöscht.
+Aktive Datei und Sicherungen belegen zusammen höchstens **40 MiB**, auch
+bei aktiviertem vollständigem RX-Mitschnitt. Dafür sind weder Cronjob noch
+regelmäßige Neustarts oder zusätzliche Properties erforderlich.
+
+Beim Start kürzt die Integration übergroße Altdateien aus früheren Versionen
+direkt auf ihre letzten 10 MiB. Dabei wird keine große temporäre Kopie
+angelegt. Die laufende Rotation schließt die alte Datei vor dem Umbenennen
+und öffnet die aktive Datei anschließend neu. Die ursprünglichen
 Tomcat-Streams bleiben parallel erhalten und werden beim Webapp-Shutdown
-wiederhergestellt.
+wiederhergestellt; ihre externe Aufbewahrung wird dadurch nicht geändert.
+
+Zum Verfolgen über Dateirotationen hinweg:
+
+```bash
+tail -F /home/mobie/evcsd/qc45-integration.log
+```
 
 Sinnvolle Suchmuster:
 
