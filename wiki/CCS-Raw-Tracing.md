@@ -69,3 +69,41 @@ Er sieht die proprietäre serielle Efacec-Strecke. Er dekodiert **nicht** direkt
 
 Quellcode: `https://github.com/BugUser0815/QC45/blob/native-integration/native-integration/src/main/java/de/rothner/qc45/CcsRawTracerV2.java`
 
+
+## Ausgabe nur bei CCS-Verbindung
+
+RAW2 und der optionale vollständige RX-Tracer schreiben Trace-Daten nur,
+wenn eine geprüfte Controllerantwort eine CCS-Kabelverbindung, Autorisierung
+oder Ladeaktivität meldet. Die Prüfung setzt die Master-Pakete und die darin
+fragmentierten QuickCharge-Antworten zusammen und prüft beide Prüfsummen.
+Ein zufälliges `63` in Nutzdaten aktiviert den Mitschnitt nicht.
+
+Die Kabelerkennung öffnet den Mitschnitt auch bei **0 V / 0 A** und noch
+unbekanntem SoC. Dadurch bleiben Handshake, fehlgeschlagene Starts und DTCs
+wie 4008 sichtbar. Während der Leerlaufzeit wird ein begrenzter Vorpuffer im
+RAM gehalten: Beim Verbindungsbeginn werden bis zu zwei Sekunden Kontext
+nachgereicht (`preRoll=true`, ursprünglicher Zeitstempel in `t=`). Jeder
+Ausgabepuffer ist auf 64 KiB Logtext begrenzt. Die Vorlaufzeilen verschiedener
+Richtungen können später ausgegeben werden; für die Zeitfolge zählt `t=`.
+
+Nach einer gemeldeten Trennung laufen die Trace-Zeilen noch fünf Sekunden
+weiter. Wiederholte Leerlaufantworten verlängern diesen Nachlauf nicht.
+Bleiben nach einer Verbindung gültige Controllerantworten ganz aus, bleibt
+der Mitschnitt bis zu 90 Sekunden nach der letzten aktiven Antwort offen,
+um auch den etwa 63 Sekunden langen fehlgeschlagenen Start zu erfassen.
+
+Die Hooks und Live-Telemetrie bleiben im Leerlauf aktiv. Installations- und
+Fehlermeldungen bleiben ebenfalls sichtbar. Die Schalter `enabled` und
+`fullRx.enabled` behalten ihre Bedeutung; der vollständige RX-Tracer muss
+weiterhin ausdrücklich aktiviert und erfolgreich installiert sein.
+
+Die Verbindungsfilterung ist standardmäßig aktiv, auch bei bestehenden
+Konfigurationen ohne neue Property:
+
+```properties
+evcsd.ccsRawTrace.onlyWhenConnected=true
+```
+
+Für eine gezielte Diagnose vor jeder Kabelerkennung kann diese Property
+vorübergehend auf `false` gesetzt werden. Nach einem Neustart gilt dann
+wieder die kontinuierliche Ausgabe, sofern der jeweilige Tracer aktiviert ist.
