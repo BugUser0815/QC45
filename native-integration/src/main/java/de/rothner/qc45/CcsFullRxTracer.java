@@ -7,7 +7,6 @@ import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.util.Map;
 import java.util.Properties;
 
 /**
@@ -23,6 +22,9 @@ public final class CcsFullRxTracer {
     private static volatile TraceState liveState;
     private static Object hookedReader;
     private static Field hookedField;
+    private static volatile Thread installer;
+    private static String lastStatus;
+    private static long lastStatusAt;
     private static InputStream originalInput;
     private static TraceInputStream wrapperInput;
 
@@ -34,7 +36,7 @@ public final class CcsFullRxTracer {
         return stream instanceof TraceInputStream && ((TraceInputStream)stream).source() == raw;
     }
 
-    static synchronized void restoreRaw(Object stream, InputStream raw, InputStream original) {
+    static void restoreRaw(Object stream, InputStream raw, InputStream original) {
         if (wraps(stream, raw)) {
             ((TraceInputStream)stream).replaceSource(original);
             if (originalInput == raw) originalInput = original;
@@ -57,21 +59,52 @@ public final class CcsFullRxTracer {
 
         int flushMs = integer(p, "evcsd.ccsRawTrace.fullRx.flushMs", 40);
         int maxBytes = integer(p, "evcsd.ccsRawTrace.fullRx.maxBytes", 256);
-        install(flushMs, maxBytes);
+        startInstaller(CcsRawTracerV2.RUNTIME, flushMs, maxBytes, 1000L);
+    }
+
+    static synchronized void startInstaller(final CcsRawTracerV2.RuntimeAccess runtime,
+                                             final int flushMs, final int maxBytes,
+                                             final long retryMs) {
+        if (installer != null) return;
+        installer = new Thread(new Runnable() {
+            public void run() {
+                Thread self = Thread.currentThread();
+                while (installer == self) {
+                    synchronized (CcsSerialDiscovery.STREAM_LOCK) {
+                        if (installer != self) return;
+                        try { attachAvailable(runtime, flushMs, maxBytes); }
+                        catch (Exception error) { report("waiting reason=" + error, false); }
+                    }
+                    try { Thread.sleep(Math.max(10L, retryMs)); }
+                    catch (InterruptedException ignored) {}
+                }
+            }
+        }, "qc45-ccs-full-rx-attach");
+        installer.setDaemon(true);
+        installer.start();
     }
 
     public static synchronized void shutdown() {
+        Thread worker = installer;
+        installer = null;
+        if (worker != null) worker.interrupt();
+        synchronized (CcsSerialDiscovery.STREAM_LOCK) {
+            detach();
+            lastStatus = null;
+            lastStatusAt = 0L;
+        }
+    }
+
+    private static void detach() {
         try {
             if (hookedReader != null && hookedField != null && wrapperInput != null) {
                 hookedField.setAccessible(true);
-                if (hookedField.get(hookedReader) == wrapperInput) {
-                    hookedField.set(hookedReader, originalInput);
-                } else {
-                    CcsRawTracerV2.restoreFull(hookedField.get(hookedReader), wrapperInput, originalInput);
-                }
+                Object input = hookedField.get(hookedReader);
+                if (input == wrapperInput) hookedField.set(hookedReader, originalInput);
+                else CcsRawTracerV2.restoreFull(input, wrapperInput, originalInput);
             }
-        } catch (Throwable e) {
-            System.err.println(PREFIX + "stream restore failed: " + e);
+        } catch (Throwable error) {
+            System.err.println(PREFIX + "stream restore failed: " + error);
         }
         TraceState state = liveState;
         liveState = null;
@@ -82,73 +115,55 @@ public final class CcsFullRxTracer {
         wrapperInput = null;
     }
 
-    private static void install(int flushMs, int maxBytes) throws Exception {
-        Class<?> centralType = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
-        Object central = centralType.getMethod("getCurrentModule").invoke(null);
+    private static void attachAvailable(CcsRawTracerV2.RuntimeAccess runtime,
+                                        int flushMs, int maxBytes) throws Exception {
+        Object central = runtime.central();
         if (central == null) throw new IllegalStateException("CentralModule unavailable");
-
-        Field communicationsField = findField(central.getClass(), "communications");
-        if (communicationsField == null) throw new NoSuchFieldException("CentralModule.communications");
-        communicationsField.setAccessible(true);
-        Object channel = communicationsField.get(central);
-        if (channel == null) throw new IllegalStateException("CentralModule.communications is null");
-
-        String port = stringField(channel, "portName", "physical-master");
-        String serializer = objectClassField(channel, "pSerializer");
-        Object reader = findSerialReader(channel, port);
-        if (reader == null) throw new IllegalStateException("SerialReader unavailable for " + port);
-
-        Field inField = findField(reader.getClass(), "in");
-        if (inField == null) throw new NoSuchFieldException(reader.getClass().getName() + ".in");
-        inField.setAccessible(true);
-        Object inValue = inField.get(reader);
-        if (!(inValue instanceof InputStream)) {
-            throw new IllegalStateException("SerialReader.in is not an InputStream: " + className(inValue));
-        }
-        if (inValue instanceof TraceInputStream) {
-            System.out.println(PREFIX + "already installed port=" + port);
+        CcsSerialDiscovery.Selection selection = CcsSerialDiscovery.select(central, runtime.readers());
+        Object reader = selection.reader == null ? null : selection.reader.inputOwner;
+        if (hookedReader != reader || !attached()) detach();
+        if (reader == null) {
+            report("waiting selection=" + selection.reason, false);
             return;
         }
-
-        TraceState state = new TraceState(port, serializer, flushMs, maxBytes);
-        TraceInputStream wrapper = new TraceInputStream((InputStream)inValue, state);
-        inField.set(reader, wrapper);
-        hookedReader = reader;
-        hookedField = inField;
-        originalInput = (InputStream)inValue;
-        wrapperInput = wrapper;
-        liveState = state;
-
-        System.out.println(PREFIX + "installed port=" + port + " serializer=" + serializer
-            + " flushMs=" + state.flushMs + " maxBytes=" + state.maxBytes
-            + " WARNING=high-volume-diagnostic-use-only");
+        if (wrapperInput == null) {
+            Field field = findField(reader.getClass(), "in");
+            if (field == null) throw new NoSuchFieldException(reader.getClass().getName() + ".in");
+            field.setAccessible(true);
+            Object input = field.get(reader);
+            if (!(input instanceof InputStream)) throw new IllegalStateException("SerialReader input unavailable");
+            String port = CcsSerialDiscovery.port(selection.channel);
+            String serializer = CcsSerialDiscovery.serializer(selection.channel);
+            TraceState state = new TraceState(port, serializer, flushMs, maxBytes);
+            TraceInputStream wrapper = new TraceInputStream((InputStream)input, state);
+            try { field.set(reader, wrapper); }
+            catch (Exception error) { state.shutdown(); throw error; }
+            hookedReader = reader;
+            hookedField = field;
+            originalInput = (InputStream)input;
+            wrapperInput = wrapper;
+            liveState = state;
+        }
+        report("installed port=" + CcsSerialDiscovery.port(selection.channel)
+            + " serializer=" + CcsSerialDiscovery.serializer(selection.channel)
+            + " selection=" + selection.reason + " flushMs=" + liveState.flushMs
+            + " maxBytes=" + liveState.maxBytes
+            + " WARNING=high-volume-diagnostic-use-only", true);
     }
 
-    private static Object findSerialReader(Object channel, String port) throws Exception {
-        Map<Thread, StackTraceElement[]> threads = Thread.getAllStackTraces();
-        Field targetField = findField(Thread.class, "target");
-        if (targetField != null) targetField.setAccessible(true);
+    private static boolean attached() throws Exception {
+        if (wrapperInput == null) return false;
+        Object input = hookedField.get(hookedReader);
+        return input == wrapperInput || CcsRawTracerV2.wraps(input, wrapperInput);
+    }
 
-        Object byOwner = null;
-        Object byName = null;
-        for (Thread thread : threads.keySet()) {
-            if (thread == null) continue;
-            String name = thread.getName();
-            if (name == null || name.indexOf("SerialReader") < 0) continue;
-
-            Object target = null;
-            try { if (targetField != null) target = targetField.get(thread); } catch (Throwable ignored) {}
-            if (target == null || target.getClass().getName().indexOf("SerialReader") < 0) continue;
-
-            Field ownerField = findField(target.getClass(), "owner");
-            if (ownerField != null) {
-                ownerField.setAccessible(true);
-                Object owner = ownerField.get(target);
-                if (owner == channel) byOwner = target;
-            }
-            if (name.indexOf(port) >= 0) byName = target;
+    private static void report(String status, boolean ready) {
+        long now = System.currentTimeMillis();
+        if (!status.equals(lastStatus) || (!ready && now - lastStatusAt >= 30000L)) {
+            System.out.println(PREFIX + status);
+            lastStatus = status;
+            lastStatusAt = now;
         }
-        return byOwner != null ? byOwner : byName;
     }
 
     private static final class TraceInputStream extends FilterInputStream {
@@ -273,30 +288,6 @@ public final class CcsFullRxTracer {
             }
         }
         return printable >= 4 ? " ascii=" + text.toString() : "";
-    }
-
-    private static Object fieldObject(Object owner, String name) {
-        try {
-            Field f = findField(owner.getClass(), name);
-            if (f == null) return null;
-            f.setAccessible(true);
-            return f.get(owner);
-        } catch (Throwable e) {
-            return null;
-        }
-    }
-
-    private static String objectClassField(Object owner, String name) {
-        return className(fieldObject(owner, name));
-    }
-
-    private static String className(Object value) {
-        return value == null ? "null" : value.getClass().getName();
-    }
-
-    private static String stringField(Object owner, String name, String fallback) {
-        Object value = fieldObject(owner, name);
-        return value == null ? fallback : String.valueOf(value);
     }
 
     private static Field findField(Class<?> type, String name) {

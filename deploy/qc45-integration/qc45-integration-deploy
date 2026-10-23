@@ -23,7 +23,7 @@ readonly QC45_REPOSITORY_URL="https://github.com/BugUser0815/QC45.git"
 readonly QC45_BRANCH="main"
 readonly QC45_REMOTE_JAR="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/lib/qc45-integration.jar"
 readonly QC45_REMOTE_WEB_XML="/home/mobie/evcsd/webapps/smartgrid/WEB-INF/web.xml"
-readonly QC45_REMOTE_LOG="/home/mobie/evcsd/qc45-integration.log"
+readonly QC45_REMOTE_HEALTH="/home/mobie/evcsd/qc45-integration-health.properties"
 readonly QC45_REMOTE_MARKER="/home/mobie/evcsd/.qc45-integration-deploy-pending"
 readonly QC45_STATE_DIR="${HOME}/.local/state/qc45-integration-deployer"
 # Keep using the UI deployer's established lock path so already-installed UI
@@ -123,10 +123,11 @@ elif [[ -r "$deployed_input_file" ]] && [[ "$(<"$deployed_input_file")" == "$int
 fi
 
 work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
-git -C "$repo_dir" archive --format=tar "$commit_sha" native-integration | tar -xf - -C "$work_dir"
+git -C "$repo_dir" archive --format=tar "$commit_sha" native-integration deploy/qc45-integration/qc45-integration-health-check | tar -xf - -C "$work_dir"
 
 project_dir="$work_dir/native-integration"
 output_jar="$project_dir/target/qc45-integration-0.1.0.jar"
+health_check="$work_dir/deploy/qc45-integration/qc45-integration-health-check"
 
 echo "Building and testing the native integration..."
 JAVA_HOME="$QC45_JAVA_HOME" PATH="$QC45_JAVA_HOME/bin:$PATH" \
@@ -141,6 +142,7 @@ jar_listing="$work_dir/integration-jar.list"
 "$QC45_JAVA_HOME/bin/jar" tf "$output_jar" >"$jar_listing"
 required_classes=(
     de/rothner/qc45/BootstrapListener.class
+    de/rothner/qc45/IntegrationHealth.class
     de/rothner/qc45/ChargingLimitCoordinator.class
     de/rothner/qc45/LoadManager.class
     de/rothner/qc45/GridFailback.class
@@ -212,16 +214,18 @@ wait_for_ssh_up() {
 
 wait_for_integration() {
     local expected_sha256=$1
+    local mode=${2:-ready}
     local deadline=$((SECONDS + 180))
+    local stable_samples=0
     local verify_command=""
-    verify_command=$(printf \
-        'active_jar=%q; expected_sha256=%q; log_file=%q; marker_file=%q; test "$(sha256sum "$active_jar" | awk '\''{print $1}'\'')" = "$expected_sha256" && /home/mobie/evcsd/scripts/status_evcsd.sh && test -r "$marker_file" && test -r "$log_file" && grep -Eq %q "$marker_file" && baseline=$(cat "$marker_file") && current=$(wc -l < "$log_file") && if test "$current" -lt "$baseline"; then grep -Fq %q "$log_file"; else sed -n "$((baseline + 1)),\$p" "$log_file" | grep -Fq %q; fi' \
-        "$QC45_REMOTE_JAR" "$expected_sha256" "$QC45_REMOTE_LOG" "$QC45_REMOTE_MARKER" \
-        '^[0-9]+$' '[QC45] native integration started' '[QC45] native integration started')
-
+    verify_command=$(printf '/home/mobie/evcsd/scripts/status_evcsd.sh && sh -s -- %q %q %q %q' \
+        "$QC45_REMOTE_JAR" "$expected_sha256" "$QC45_REMOTE_HEALTH" "$mode")
     while ((SECONDS < deadline)); do
-        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" "$verify_command" >/dev/null 2>&1; then
-            return 0
+        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" "$verify_command" <"$health_check" >/dev/null 2>&1; then
+            ((stable_samples += 1))
+            if ((stable_samples >= 3)); then return 0; fi
+        else
+            stable_samples=0
         fi
         sleep 3
     done
@@ -243,7 +247,7 @@ scp "${scp_args[@]}" "$output_jar" "${QC45_SSH_TARGET}:${remote_staged}"
 
 boot_id_before=$(ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" 'cat /proc/sys/kernel/random/boot_id')
 remote_command=$(printf 'bash -s -- %q %q %q %q %q' \
-    "$QC45_REMOTE_JAR" "$remote_staged" "$jar_sha256" "$QC45_REMOTE_WEB_XML" "$QC45_REMOTE_MARKER")
+    "$QC45_REMOTE_JAR" "$remote_staged" "$jar_sha256" "$QC45_REMOTE_WEB_XML" "$QC45_REMOTE_HEALTH")
 
 echo "Installing the JAR in smartgrid and scheduling a full QC45 reboot..."
 remote_output=$(ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$remote_command" <<'REMOTE_SCRIPT'
@@ -253,7 +257,7 @@ active_jar=$1
 staged_jar=$2
 expected_sha256=$3
 web_xml=$4
-marker=$5
+health_file=$5
 
 if [[ ! -s "$staged_jar" ]]; then
     echo "Staged integration JAR is missing" >&2
@@ -273,28 +277,30 @@ fi
 
 backup_jar=""
 backup_sha256=""
+backup_health_mode=legacy-rollback
 if [[ -s "$active_jar" ]]; then
     timestamp=$(date +%Y%m%d-%H%M%S)
     backup_jar="${active_jar}.backup-${timestamp}"
     cp -p "$active_jar" "$backup_jar"
     backup_sha256=$(sha256sum "$backup_jar" | awk '{print $1}')
+    if LC_ALL=C grep -aq 'de/rothner/qc45/IntegrationHealth.class' "$backup_jar"; then
+        backup_health_mode=ready
+    fi
 fi
 
 mv -f "$staged_jar" "$active_jar"
-if [[ -r /home/mobie/evcsd/qc45-integration.log ]]; then
-    wc -l </home/mobie/evcsd/qc45-integration.log >"$marker"
-else
-    printf '0\n' >"$marker"
-fi
+rm -f -- "$health_file"
 
 printf 'BACKUP_JAR=%s\n' "$backup_jar"
 printf 'BACKUP_SHA256=%s\n' "$backup_sha256"
+printf 'BACKUP_HEALTH_MODE=%s\n' "$backup_health_mode"
 REMOTE_SCRIPT
 )
 printf '%s\n' "$remote_output"
 
 backup_jar=$(printf '%s\n' "$remote_output" | awk -F= '/^BACKUP_JAR=/{print substr($0, index($0, "=") + 1); exit}')
 backup_sha256=$(printf '%s\n' "$remote_output" | awk -F= '/^BACKUP_SHA256=/{print substr($0, index($0, "=") + 1); exit}')
+backup_health_mode=$(printf '%s\n' "$remote_output" | awk -F= '/^BACKUP_HEALTH_MODE=/{print substr($0, index($0, "=") + 1); exit}')
 
 schedule_remote_reboot
 
@@ -327,14 +333,14 @@ if ! wait_for_integration "$jar_sha256"; then
 
     echo "Restoring the previous integration JAR and rebooting the QC45 again..."
     rollback_command=$(printf 'bash -s -- %q %q %q %q' \
-        "$QC45_REMOTE_JAR" "$backup_jar" "$backup_sha256" "$QC45_REMOTE_MARKER")
+        "$QC45_REMOTE_JAR" "$backup_jar" "$backup_sha256" "$QC45_REMOTE_HEALTH")
     ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "$rollback_command" <<'ROLLBACK_SCRIPT'
 set -Eeuo pipefail
 
 active_jar=$1
 backup_jar=$2
 expected_sha256=$3
-marker=$4
+health_file=$4
 
 if [[ ! -s "$backup_jar" ]]; then
     echo "Rollback JAR is missing: $backup_jar" >&2
@@ -349,11 +355,7 @@ fi
 
 cp -p "$backup_jar" "${active_jar}.rollback"
 mv -f "${active_jar}.rollback" "$active_jar"
-if [[ -r /home/mobie/evcsd/qc45-integration.log ]]; then
-    wc -l </home/mobie/evcsd/qc45-integration.log >"$marker"
-else
-    printf '0\n' >"$marker"
-fi
+rm -f -- "$health_file"
 ROLLBACK_SCRIPT
 
     schedule_remote_reboot
@@ -362,11 +364,14 @@ ROLLBACK_SCRIPT
         echo "QC45 did not return after rollback reboot" >&2
         exit 1
     fi
-    if ! wait_for_integration "$backup_sha256"; then
+    if ! wait_for_integration "$backup_sha256" "$backup_health_mode"; then
         echo "Rollback JAR was restored, but EVCSD/integration is still unhealthy" >&2
         exit 1
     fi
     ssh "${ssh_args[@]}" "$QC45_SSH_TARGET" "rm -f -- $(printf '%q' "$QC45_REMOTE_MARKER")"
+    if [[ "$backup_health_mode" == legacy-rollback ]]; then
+        echo "Legacy rollback verified JAR/process only; the old JAR has no readiness status." >&2
+    fi
     echo "Rollback succeeded; the failed integration was not marked as deployed" >&2
     exit 1
 fi

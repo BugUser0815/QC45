@@ -4,7 +4,12 @@ import java.util.ArrayDeque;
 
 /** Read-only connection detector and bounded diagnostic pre-roll for the master stream. */
 final class CcsTraceSession {
-    static final CcsTraceSession CURRENT = new CcsTraceSession();
+    interface StatusListener { void status(byte[] frame, long now); }
+    static final CcsTraceSession CURRENT = new CcsTraceSession(new StatusListener() {
+        public void status(byte[] frame, long now) {
+            CcsRawTracerV2.observeValidatedStatus(frame, now);
+        }
+    });
     static final long TAIL_MS = 5000L;
     private static final long STATUS_TIMEOUT_MS = 90000L;
     private final byte[] master = new byte[259];
@@ -14,6 +19,10 @@ final class CcsTraceSession {
     private long captureUntil;
     private boolean connected;
     private boolean onlyWhenConnected = true;
+    private final StatusListener listener;
+
+    CcsTraceSession() { this(null); }
+    CcsTraceSession(StatusListener listener) { this.listener = listener; }
 
     synchronized void configure(boolean connectionOnly) { onlyWhenConnected = connectionOnly; }
 
@@ -74,6 +83,7 @@ final class CcsTraceSession {
             if (present) captureUntil = now + STATUS_TIMEOUT_MS;
             else if (connected) captureUntil = now + TAIL_MS;
             connected = present;
+            if (header == 0x63 && listener != null) listener.status(quick, now);
             quickLength = 0;
         } else {
             System.arraycopy(quick, 1, quick, 0, quick.length - 1);

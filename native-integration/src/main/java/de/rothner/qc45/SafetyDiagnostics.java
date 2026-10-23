@@ -11,6 +11,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Read-only diagnostic view of the native integration's safety state.
@@ -235,16 +237,26 @@ final class SafetyDiagnostics {
     }
 
     /** Minimal FC03/FC04 server for five read-only diagnostic registers. */
-    private static final class DiagnosticModbusServer extends Thread {
+    static final class DiagnosticModbusServer extends Thread {
         private volatile ChargingLimitCoordinator limits;
         private volatile ServerSocket listener;
         private volatile boolean running = true;
+        private final int port;
+        private final Set<Socket> clients = new HashSet<Socket>();
+        private static final int MAX_CLIENTS = 8;
 
         DiagnosticModbusServer(ChargingLimitCoordinator limits) {
+            this(limits, MODBUS_PORT);
+        }
+
+        DiagnosticModbusServer(ChargingLimitCoordinator limits, int port) {
             super("QC45-Safety-Diagnostics-Modbus");
             this.limits = limits;
+            this.port = port;
             setDaemon(true);
         }
+
+        int localPort() { ServerSocket s = listener; return s == null ? 0 : s.getLocalPort(); }
 
         void setLimits(ChargingLimitCoordinator limits) {
             if (limits != null) this.limits = limits;
@@ -255,19 +267,35 @@ final class SafetyDiagnostics {
                 listener = new ServerSocket();
                 listener.setReuseAddress(true);
                 listener.bind(new InetSocketAddress(
-                    InetAddress.getByName("127.0.0.1"), MODBUS_PORT));
+                    InetAddress.getByName("127.0.0.1"), port));
                 System.out.println("[QC45] safety diagnostics Modbus listening on 127.0.0.1:"
-                    + MODBUS_PORT + " registers=" + MODBUS_FIRST_REGISTER + ".."
+                    + listener.getLocalPort() + " registers=" + MODBUS_FIRST_REGISTER + ".."
                     + (MODBUS_FIRST_REGISTER + MODBUS_REGISTER_COUNT - 1));
                 while (running) {
-                    Socket socket = listener.accept();
-                    socket.setSoTimeout(1500);
-                    try { handle(socket); }
-                    catch (SocketException ignored) {}
-                    catch (Throwable e) {
-                        System.err.println("[QC45] safety diagnostics Modbus client failed: " + e);
-                    } finally {
-                        try { socket.close(); } catch (Throwable ignored) {}
+                    final Socket socket = listener.accept();
+                    synchronized (clients) {
+                        if (!running || clients.size() >= MAX_CLIENTS) {
+                            socket.close();
+                            continue;
+                        }
+                        clients.add(socket);
+                    }
+                    try {
+                        socket.setSoTimeout(1500);
+                        Thread worker = new Thread(new Runnable() {
+                            public void run() {
+                                try { handle(socket); }
+                                catch (SocketException ignored) {}
+                                catch (Throwable error) {
+                                    if (running) System.err.println("[QC45] safety diagnostics Modbus client failed: " + error);
+                                } finally { release(socket); }
+                            }
+                        }, "QC45-Safety-Diagnostics-Client");
+                        worker.setDaemon(true);
+                        worker.start();
+                    } catch (Throwable error) {
+                        release(socket);
+                        if (running) System.err.println("[QC45] safety diagnostics client startup failed: " + error);
                     }
                 }
             } catch (Throwable e) {
@@ -275,6 +303,7 @@ final class SafetyDiagnostics {
                     System.err.println("[QC45] safety diagnostics Modbus disabled: " + e);
                 }
             } finally {
+                closeClients();
                 ServerSocket current = listener;
                 listener = null;
                 if (current != null) try { current.close(); } catch (Throwable ignored) {}
@@ -288,13 +317,26 @@ final class SafetyDiagnostics {
             running = false;
             ServerSocket current = listener;
             if (current != null) try { current.close(); } catch (Throwable ignored) {}
+            closeClients();
             interrupt();
+        }
+
+        private void release(Socket socket) {
+            synchronized (clients) { clients.remove(socket); }
+            try { socket.close(); } catch (Throwable ignored) {}
+        }
+
+        private void closeClients() {
+            synchronized (clients) {
+                for (Socket socket : clients) try { socket.close(); } catch (Throwable ignored) {}
+                clients.clear();
+            }
         }
 
         private void handle(Socket socket) throws Exception {
             InputStream in = socket.getInputStream();
             OutputStream out = socket.getOutputStream();
-            while (!socket.isClosed()) {
+            while (running && !socket.isClosed()) {
                 byte[] mbap = new byte[7];
                 if (!readFullyOrEof(in, mbap, 0, mbap.length)) return;
                 int tx = u16(mbap, 0);

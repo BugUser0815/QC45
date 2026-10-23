@@ -13,8 +13,14 @@ import javax.net.ssl.*;
 
 /** OCPP 1.6 JSON/WSS endpoint used by the legacy OCPP 1.5 SOAP bridge. */
 public final class OcppBridgeClient extends Thread {
+    interface Station {
+        void remoteStart(String idTag, int connector) throws Exception;
+        void remoteStop(int connector) throws Exception;
+        boolean sessionActive(int connector) throws Exception;
+        int connectorForTransactionId(int transactionId);
+    }
     private static final Charset UTF8 = Charset.forName("UTF-8");
-    private final ReflectionQC45 station;
+    private final Station station;
     private final URI uri;
     private final String username, password, caFile;
     private final boolean insecure;
@@ -27,6 +33,11 @@ public final class OcppBridgeClient extends Thread {
     public OcppBridgeClient(ReflectionQC45 station, String url, String username, String password,
                             String caFile, boolean insecure,
                             String transactionMapPath) throws Exception {
+        this((Station)station, url, username, password, caFile, insecure, transactionMapPath);
+    }
+
+    OcppBridgeClient(Station station, String url, String username, String password,
+                     String caFile, boolean insecure, String transactionMapPath) throws Exception {
         super("qc45-ocpp-bridge");
         if (station == null || url == null || username == null || password == null
                 || transactionMapPath == null || transactionMapPath.trim().length() == 0) {
@@ -167,7 +178,7 @@ public final class OcppBridgeClient extends Thread {
         sendError(uid, "NotSupported", "Unsupported action: " + action);
     }
 
-    private int connectorForTransaction(int transactionId) {
+    int connectorForTransaction(int transactionId) {
         if (transactionId < 0) return 0;
         int reflected = station.connectorForTransactionId(transactionId);
         if (reflected > 0) {
@@ -190,12 +201,8 @@ public final class OcppBridgeClient extends Thread {
                 persistTransactionMapBestEffort();
             }
         }
-        int sole = station.soleActiveConnector();
-        if (sole > 0) {
-            System.out.println("[QC45] recovered transaction mapping tx=" + transactionId
-                + " connector=" + sole + " from sole active session");
-            return sole;
-        }
+        // A single active session is not evidence that an unknown/stale
+        // transaction ID belongs to it. Reject rather than stop another charge.
         return 0;
     }
 
@@ -313,7 +320,36 @@ public final class OcppBridgeClient extends Thread {
         synchronized void close(){if(!open&&socket==null)return;try{if(open)sendFrame(8,new byte[0]);}catch(Throwable ignored){}open=false;try{if(socket!=null)socket.close();}catch(Throwable ignored){}}
         private void sendFrame(int op,byte[] data)throws IOException{if(!open&&op!=8)throw new IOException("closed");ByteArrayOutputStream b=new ByteArrayOutputStream();b.write(0x80|op);int n=data.length;if(n<=125)b.write(0x80|n);else if(n<=65535){b.write(0x80|126);b.write((n>>>8)&255);b.write(n&255);}else{b.write(0x80|127);for(int i=7;i>=0;i--)b.write((int)(((long)n>>>(8*i))&255));}byte[] m=new byte[4];RANDOM.nextBytes(m);b.write(m);for(int i=0;i<n;i++)b.write(data[i]^m[i&3]);out.write(b.toByteArray());out.flush();}
         private void appendFragment(byte[] data)throws IOException{if(fragmented.size()+data.length>1024*1024)throw new IOException("fragmented message too large");fragmented.write(data,0,data.length);}
-        private Frame readFrame()throws IOException{int a=in.read(),b=in.read();if(a<0||b<0)throw new EOFException();boolean fin=(a&128)!=0;if((a&112)!=0)throw new IOException("WebSocket RSV bits are unsupported");int op=a&15;if(op!=0&&op!=1&&op!=2&&op!=8&&op!=9&&op!=10)throw new IOException("invalid WebSocket opcode "+op);boolean masked=(b&128)!=0;if(masked)throw new IOException("server WebSocket frame must not be masked");long n=b&127;if(n==126)n=((long)readByte()<<8)|readByte();else if(n==127){int first=readByte();if((first&128)!=0)throw new IOException("invalid WebSocket length");n=first;for(int i=1;i<8;i++)n=(n<<8)|readByte();}if(n>1024*1024)throw new IOException("frame too large");if(op>=8&&(!fin||n>125))throw new IOException("invalid WebSocket control frame");byte[] d=new byte[(int)n];readFully(in,d);return new Frame(fin,op,d);}
+        private Frame readFrame() throws IOException {
+            // A timeout before the first byte is ordinary idle. Once a frame
+            // has begun, local parse state must never be silently discarded.
+            int a = in.read();
+            if (a < 0) throw new EOFException();
+            try {
+                int b = readByte();
+                boolean fin = (a & 128) != 0;
+                if ((a & 112) != 0) throw new IOException("WebSocket RSV bits are unsupported");
+                int op = a & 15;
+                if (op != 0 && op != 1 && op != 2 && op != 8 && op != 9 && op != 10)
+                    throw new IOException("invalid WebSocket opcode " + op);
+                if ((b & 128) != 0) throw new IOException("server WebSocket frame must not be masked");
+                long n = b & 127;
+                if (n == 126) n = ((long)readByte() << 8) | readByte();
+                else if (n == 127) {
+                    int first = readByte();
+                    if ((first & 128) != 0) throw new IOException("invalid WebSocket length");
+                    n = first;
+                    for (int i = 1; i < 8; i++) n = (n << 8) | readByte();
+                }
+                if (n > 1024 * 1024) throw new IOException("frame too large");
+                if (op >= 8 && (!fin || n > 125)) throw new IOException("invalid WebSocket control frame");
+                byte[] data = new byte[(int)n];
+                readFully(in, data);
+                return new Frame(fin, op, data);
+            } catch (java.net.SocketTimeoutException timeout) {
+                throw new IOException("WebSocket timeout within a partial frame; reconnect required", timeout);
+            }
+        }
         private int readByte()throws IOException{int b=in.read();if(b<0)throw new EOFException();return b&255;}
         private static void readFully(InputStream in,byte[] d)throws IOException{int p=0;while(p<d.length){int n=in.read(d,p,d.length-p);if(n<0)throw new EOFException();p+=n;}}
         private static String readHeader(InputStream in)throws IOException{ByteArrayOutputStream b=new ByteArrayOutputStream();int s=0;while(b.size()<65536){int c=in.read();if(c<0)throw new EOFException();b.write(c);if(s==0&&c=='\r')s=1;else if(s==1&&c=='\n')s=2;else if(s==2&&c=='\r')s=3;else if(s==3&&c=='\n')return new String(b.toByteArray(),UTF8);else s=c=='\r'?1:0;}throw new IOException("header too large");}

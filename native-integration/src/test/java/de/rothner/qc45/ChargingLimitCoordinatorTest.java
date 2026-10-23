@@ -353,6 +353,17 @@ public final class ChargingLimitCoordinatorTest {
         assertTrue(!limits.dcPermitValid(System.currentTimeMillis()));
     }
 
+    @Test public void nativeLimitAboveConfiguredMaximumIsReasserted() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(io, 5, 35, 5, 22);
+        limits.initializeNotladen(); limits.setCcsAvailable(true);
+        limits.requestBudgets(35, 22); limits.setGridTargets(2, true, 35, 22);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        io.value[2] = 50; io.value[3] = 43;
+        limits.reconcile();
+        assertEquals(35, io.value[2]); assertEquals(22, io.value[3]);
+    }
+
     private static ChargingLimitCoordinator coordinator(FakeIo io) {
         return new ChargingLimitCoordinator(io, 5, 50, 5, 43);
     }

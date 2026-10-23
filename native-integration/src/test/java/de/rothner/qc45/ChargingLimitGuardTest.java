@@ -1,6 +1,8 @@
 package de.rothner.qc45;
 
 import org.junit.Test;
+import java.io.IOException;
+import static org.junit.Assert.fail;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -303,16 +305,61 @@ public final class ChargingLimitGuardTest {
         assertEquals(5, station.limit[2]);
     }
 
+    @Test public void brokenChademoStatusDoesNotSkipUnauthorizedCcs() throws Exception {
+        FakeStation station = new FakeStation();
+        station.failSessionConnector = 1; station.session[2] = true;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43, false);
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        try { guard.runCycle(1000L); fail("status error must be reported"); }
+        catch (IOException expected) {}
+        assertEquals(1, station.stops[2]);
+    }
+
+    @Test public void missingPowerDoesNotBypassPermitOrLatchedStop() throws Exception {
+        FakeStation station = new FakeStation();
+        station.session[2] = true; station.stopEndsSession = false; station.failPowerConnector = 2;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43, false);
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L);
+        assertEquals(1, station.stops[2]);
+        station.failSessionConnector = 2;
+        try { guard.runCycle(3100L); fail("unknown session must be reported"); }
+        catch (IOException expected) {}
+        assertEquals(2, station.stops[2]);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+    }
+
+    @Test public void failedSafetyLimitWriteStillAttemptsImmediateStop() throws Exception {
+        FakeStation station = new FakeStation(); station.session[2] = true;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43, false);
+        limits.initializeNotladen(); station.failWriteConnector = 2;
+        try { new ChargingLimitGuard(station, limits, 250).runCycle(1000L); fail("write error must be reported"); }
+        catch (IOException expected) {}
+        assertEquals(1, station.stops[2]);
+    }
+
+    @Test public void failedChademoStopDoesNotSkipCcsStop() throws Exception {
+        FakeStation station = new FakeStation(); station.session[1] = true; station.session[2] = true;
+        station.failStopConnector = 1;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43, false);
+        try { new ChargingLimitGuard(station, limits, 250).runCycle(1000L); fail("stop error must be reported"); }
+        catch (IOException expected) {}
+        assertEquals(1, station.stops[2]);
+    }
+
     private static final class FakeStation implements ChargingLimitIo, ChargingSessionIo {
         final int[] limit = new int[] { 0, 0, 0, 0 };
         final int[] power = new int[] { 0, 0, 0, 0 };
         final boolean[] session = new boolean[] { false, false, false, false };
         int stopCount;
         boolean stopEndsSession = true;
+        int failSessionConnector, failPowerConnector, failWriteConnector, failStopConnector;
+        final int[] stops = new int[4];
 
         public int limitKw(int connector) { return limit[connector]; }
 
-        public void setConnectorLimitKw(int connector, int kw) {
+        public void setConnectorLimitKw(int connector, int kw) throws IOException {
+            if (connector == failWriteConnector) throw new IOException("write failed");
             limit[connector] = kw;
         }
 
@@ -320,14 +367,20 @@ public final class ChargingLimitGuardTest {
             limit[connector] = kw;
         }
 
-        public boolean sessionActive(int connector) {
+        public boolean sessionActive(int connector) throws IOException {
+            if (connector == failSessionConnector) throw new IOException("session failed");
             return session[connector] || power[connector] > 0;
         }
 
-        public int powerKw(int connector) { return power[connector]; }
+        public int powerKw(int connector) throws IOException {
+            if (connector == failPowerConnector) throw new IOException("power failed");
+            return power[connector];
+        }
 
-        public void remoteStop(int connector) {
+        public void remoteStop(int connector) throws IOException {
+            if (connector == failStopConnector) throw new IOException("stop failed");
             stopCount++;
+            stops[connector]++;
             if (stopEndsSession) {
                 session[connector] = false;
                 power[connector] = 0;
