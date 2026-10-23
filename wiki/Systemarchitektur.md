@@ -75,6 +75,22 @@ flowchart LR
 
 Das interne **EFACEC CCS V2/V3** ist **nicht** die Protokollversion, die das Fahrzeug per PLC aushandelt. Diese Unterscheidung war zentral bei der Kona-Analyse.
 
+## CCS-Controller / Hardwarezuordnung
+
+Stand: 23.10.2026. Aus der bisherigen Projektrecherche (August 2026) wurde folgende **wahrscheinliche, noch nicht abschließend bestätigte Zuordnung** festgehalten:
+
+| Merkmal | Bisherige Zuordnung |
+|---|---|
+| CCS-/HLC-Controller | **EVAcharge SE** |
+| Herstellerzuordnung | **Auronik / AKKA** |
+| QC45-Platinenbezeichnung | **A19** |
+| Efacec-Teilenummer | **20090007** |
+| Bezeichnung | „CCS Board“ / „EVAcharge SE Board“ |
+
+Die Zuordnung ist eine Projektnotiz aus der damaligen Recherche, kein durch die vorliegenden Logs oder die ZIP-/Codeanalyse bestätigter Hardwarebefund. Zur endgültigen Bestätigung sind Platinenaufdruck/Typenschild oder passende Herstellerunterlagen erforderlich.
+
+Der CCS-/HLC-Controller bildet die Fahrzeugkommunikation über PLC/Green-PHY ab. Er ist vom EVCSD-Java-Prozess und vom EFACEC-Master zu unterscheiden; die internen QuickCharge-Versionen V2/V3 bezeichnen nicht die fahrzeugseitige DIN-/ISO-Protokollversion.
+
 ## Repositories
 
 - QC45 Integration: `https://github.com/BugUser0815/QC45/tree/native-integration`
