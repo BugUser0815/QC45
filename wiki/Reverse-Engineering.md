@@ -41,25 +41,22 @@ Die AVR-Struktur passt zu einem **ATmega1280**. Der untersuchte alte Stand zeigt
 > [!WARNING]
 > Das gefundene Image ist älter als der aktuell laufende Masterstand. Seine Architektur ist ein starker Hinweis, aber kein vollständiger Beweis für die heutige Firmware.
 
-## Wahrscheinlicher CCS-Controller
+## Bestätigtes EVAcharge-SE-System und offene Hardwarezuordnung
 
-Öffentliche Ersatzteilinformationen führen Efacec-Teil **20090007 / A19** als **EVAcharge SE Board**. Damit ist A19 sehr wahrscheinlich der HLC-/Green-PHY-Controller zwischen internem Efacec-QuickCharge-Protokoll und Fahrzeug-PLC.
+Seit der Untersuchung vom **23./24.10.2026** ist das separate Linux-System durch erfolgreichen SSH-Zugang als **EVAcharge SE** bestätigt. Die aktive Anwendung und ihre Ausgabe wurden ermittelt. Die Zuordnung **A19 / 20090007** bleibt bis zur Prüfung des Aufdrucks und der Boardrevision offen.
 
-Final zu bestätigen sind weiterhin:
+Die Anwendungsausgabe lässt sich ohne Neustart aus einer bestehenden `screen`-Sitzung sichern. Der übermittelte Rücklauf zeigt TCP-Verlust nach der Parameterabfrage. Ein PLC-Paketmitschnitt und die statische Analyse der Controllerbibliotheken stehen noch aus.
 
-- Platinenfoto A19
-- Teilenummer und Boardrevision
-- Firmwarestand
-- Verkabelung A5/A19/A21
+**Untersuchungsstand und nächste Schritte:** [CCS-Controller EVAcharge SE](CCS-Controller-EVAcharge-SE).
 
 ## Wichtigste Architekturfolgerung
 
 ```text
 EVCSD / Java
    ↓ proprietäres Efacec QuickCharge V3
-EFACEC Master
-   ↓ seriell
-A19 / CCS Controller
+EFACEC Master / Ladehardware
+   ↓ genauer Übergang zum HLC-Board noch offen
+EVAcharge SE / CCS Controller (A19-Zuordnung offen)
    ↓ DIN 70121 / ISO 15118 über PLC
 Fahrzeug
 ```

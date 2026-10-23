@@ -117,3 +117,11 @@ evcsd.ccsRawTrace.onlyWhenConnected=true
 Für eine gezielte Diagnose vor jeder Kabelerkennung kann diese Property
 vorübergehend auf `false` gesetzt werden. Nach einem Neustart gilt dann
 wieder die kontinuierliche Ausgabe, sofern der jeweilige Tracer aktiviert ist.
+
+## Zusätzliche Diagnose direkt am EVAcharge SE (23./24.10.2026)
+
+Der separate CCS-Controller ist inzwischen per SSH als EVAcharge SE bestätigt. Seine Anwendung protokolliert die Fahrzeugkommunikation in einer bestehenden `screen`-Sitzung. Dieser Zugriff ergänzt RAW2/Full-RX um eine Diagnoseebene hinter dem aggregierten Geode-/QuickCharge-Pfad.
+
+Die übermittelte Ausgabe zeigt zwei TCP-Verluste nach Verarbeitung von `ChargeParameterDiscovery`, vor einer sichtbaren `CableCheck`-Anfrage. Ursache, Verbindungsabbau-Initiator und zeitliche Zuordnung zu einem konkreten Panda-Versuch sind damit noch nicht belegt. Ein vollständiger PLC-Paketmitschnitt steht aus.
+
+**Untersuchungsstand und nächste Schritte:** [CCS-Controller EVAcharge SE](CCS-Controller-EVAcharge-SE).

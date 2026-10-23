@@ -69,7 +69,7 @@ spätestens im nächsten 250-ms-Zyklus.
 ```mermaid
 flowchart LR
   JAVA[EVCSD Java] -->|EFACEC QuickCharge V3\n0x63 … maxPower[kW]| MASTER[EFACEC Master]
-  MASTER -->|serieller QuickCharge-Pfad| SECC[CCS Controller]
+  MASTER -->|Ladehardware; genauer Übergang offen| SECC["EVAcharge SE / CCS Controller"]
   SECC -->|PLC / DIN 70121 / ISO 15118| CAR[Fahrzeug]
 ```
 
@@ -77,19 +77,13 @@ Das interne **EFACEC CCS V2/V3** ist **nicht** die Protokollversion, die das Fah
 
 ## CCS-Controller / Hardwarezuordnung
 
-Stand: 23.10.2026. Aus der bisherigen Projektrecherche (August 2026) wurde folgende **wahrscheinliche, noch nicht abschließend bestätigte Zuordnung** festgehalten:
+Stand: **24.10.2026**. Der separate HLC-Controller wurde durch erfolgreichen SSH-Zugang als **EVAcharge SE** bestätigt. Der Betreiber bestätigte die Ethernet-Verbindung zum internen Switch.
 
-| Merkmal | Bisherige Zuordnung |
-|---|---|
-| CCS-/HLC-Controller | **EVAcharge SE** |
-| Herstellerzuordnung | **Auronik / AKKA** |
-| QC45-Platinenbezeichnung | **A19** |
-| Efacec-Teilenummer | **20090007** |
-| Bezeichnung | „CCS Board“ / „EVAcharge SE Board“ |
+Die Zuordnung **A19 / Efacec 20090007** stammt weiterhin aus Ersatzteilrecherche. Platinenaufdruck und Boardrevision sind noch nicht physisch bestätigt. Die Bestätigung des EVAcharge-Systems bestätigt diese Nummern nicht automatisch.
 
-Die Zuordnung ist eine Projektnotiz aus der damaligen Recherche, kein durch die vorliegenden Logs oder die ZIP-/Codeanalyse bestätigter Hardwarebefund. Zur endgültigen Bestätigung sind Platinenaufdruck/Typenschild oder passende Herstellerunterlagen erforderlich.
+Die Controllerausgabe zeigt in zwei sichtbaren Sitzungen TCP-Verlust nach Verarbeitung von `ChargeParameterDiscovery`, bevor eine empfangene `CableCheck`-Anfrage sichtbar wird. Ursache, Verbindungsabbau-Initiator und zeitliche Zuordnung zu einem konkreten Panda-Versuch sind offen.
 
-Der CCS-/HLC-Controller bildet die Fahrzeugkommunikation über PLC/Green-PHY ab. Er ist vom EVCSD-Java-Prozess und vom EFACEC-Master zu unterscheiden; die internen QuickCharge-Versionen V2/V3 bezeichnen nicht die fahrzeugseitige DIN-/ISO-Protokollversion.
+**Untersuchungsstand, Diagnoseverfahren und nächste Schritte:** [CCS-Controller EVAcharge SE](CCS-Controller-EVAcharge-SE).
 
 ## Repositories
 

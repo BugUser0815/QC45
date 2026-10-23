@@ -24,6 +24,7 @@
 - [SoC-Derating](SoC-Derating)
 
 **CCS & Diagnose**
+- [EVAcharge SE: Zugang & Panda-Diagnose](CCS-Controller-EVAcharge-SE)
 - [CCS QuickCharge V3](CCS-QuickCharge-V3)
 - [EVSE-Limits: Fahrzeugfälle](Hyundai-Kona-CCS-Leistungsbegrenzung)
 - [CCS Raw Tracing](CCS-Raw-Tracing)
