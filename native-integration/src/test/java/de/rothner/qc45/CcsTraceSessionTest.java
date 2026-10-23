@@ -166,6 +166,19 @@ public final class CcsTraceSessionTest {
         }
     }
 
+    static byte[] telemetryMasterFrame(int soc, int voltage, int current, boolean charging) {
+        byte[] quick = new byte[14];
+        quick[0] = 0x63; quick[1] = (byte)(charging ? 0x70 : 0); quick[2] = (byte)soc;
+        quick[9] = (byte)voltage; quick[10] = (byte)(voltage >>> 8); quick[11] = (byte)current;
+        int crc = 0xffff;
+        for (int i = 0; i < 12; i++) {
+            crc ^= quick[i] & 255;
+            for (int bit = 0; bit < 8; bit++) crc = (crc & 1) != 0 ? (crc >>> 1) ^ 0xa001 : crc >>> 1;
+        }
+        quick[12] = (byte)crc; quick[13] = (byte)(crc >>> 8);
+        return master(quick, 0, quick.length, 0x34);
+    }
+
     static byte[] connectedMasterFrame() { return master(CONNECTED, 0, CONNECTED.length, 0x34); }
 
     private static void feed(CcsTraceSession gate, byte[] quick, long now) {

@@ -304,8 +304,9 @@ public final class ChargingLimitCoordinator {
         Exception readFailure = null;
         for (int connector = 1; connector <= (acManaged ? 3 : 2); connector++) {
             try {
-                int observed = clamp(io.limitKw(connector), 0,
-                    connector == 3 ? maxAcKw : maxDcKw);
+                // Compare the actual native value. Clamping here would hide a
+                // firmware-restored limit above our configured maximum.
+                int observed = io.limitKw(connector);
                 applied[connector] = logicalAppliedTarget(connector, observed, expectedTargets[connector]);
             } catch (Exception e) {
                 // Unknown must force a write. In particular, one broken getter

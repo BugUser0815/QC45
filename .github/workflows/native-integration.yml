@@ -6,6 +6,7 @@ on:
   pull_request:
     paths:
       - 'native-integration/**'
+      - 'deploy/qc45-integration/**'
       - '.github/workflows/native-integration.yml'
 
 jobs:
@@ -26,6 +27,8 @@ jobs:
         run: |
           javap -verbose -classpath target/qc45-integration-0.1.0.jar \
             de.rothner.qc45.BootstrapListener | grep -F 'major version: 51'
+      - name: Test deployment health verification
+        run: python3 -m unittest discover -s deploy/qc45-integration/tests -v
       - uses: actions/upload-artifact@v4
         with:
           name: qc45-integration

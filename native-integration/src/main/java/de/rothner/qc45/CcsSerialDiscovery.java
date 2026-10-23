@@ -7,6 +7,7 @@ import java.util.List;
 
 /** Discovers existing master streams; never opens a port or sends a message. */
 final class CcsSerialDiscovery {
+    static final Object STREAM_LOCK = new Object();
     private CcsSerialDiscovery() {}
 
     static Reader[] readers() {

@@ -42,8 +42,13 @@ Transaktions-IDs werden dem jeweiligen Connector zugeordnet und atomar in
 `ocpp.transactionMapFile` persistiert. Damit bleibt ein
 Backend-`RemoteStopTransaction` auch nach einem Webapp-/JVM-Neustart auflösbar.
 Fehlt ein gespeicherter Eintrag, versucht die Bridge die ID aus der laufenden
-EVCSD-Transaktion zu lesen; nur bei genau einer aktiven Session ist zusätzlich
-ein eindeutiger Fallback zulässig.
+EVCSD-Transaktion zu lesen. Eine unbekannte ID wird abgelehnt: Auch genau eine
+aktive Session beweist nicht, dass die angeforderte Transaktion zu ihr gehört.
+Ein verspätetes RemoteStop darf keine inzwischen neu gestartete Ladung beenden.
+
+Ein WebSocket-Timeout vor einem Frame ist normaler Leerlauf. Tritt der Timeout
+nach dem ersten Frame-Byte auf, wird die Verbindung kontrolliert neu aufgebaut;
+verbleibende Nutzdaten werden nicht als Header einer neuen Nachricht interpretiert.
 
 Bei `MeterValues` verwendet die Bridge wieder das am 22. August bewährte
 QC45-Verhalten: Aus einer Meldung wird ausschließlich die erste periodische

@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo {
+public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo, OcppBridgeClient.Station {
     private static final long REMOTE_START_PENDING_GRACE_MS = 60000L;
 
     private final Class<?> centralClass;
@@ -371,7 +371,10 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo 
         if (transactionMethod != null) {
             try {
                 Object tx = transactionMethod.invoke(sat);
-                return sessionEvidence(true, tx != null, powerKw(connector), false);
+                // A known transaction remains active even if its power getter
+                // is broken. The guard must still be able to terminate it.
+                if (tx != null) return true;
+                return powerKw(connector) > 0;
             } catch (Throwable ignored) {
                 // Fall back to the legacy evidence below only when the
                 // authoritative transaction API itself cannot be observed.

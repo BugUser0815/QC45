@@ -79,57 +79,66 @@ final class ChargingLimitGuard extends Thread {
         catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
 
         for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
-            int logicalEffectiveKw = limits.effectiveConnectorKw(connector);
-            int enforcedKw = logicalEffectiveKw <= 0
-                ? (connector == 3 ? ChargingLimitCoordinator.AC_NOTLADEN_KW
-                    : ChargingLimitCoordinator.NOTLADEN_KW) : logicalEffectiveKw;
-            boolean active = station.sessionActive(connector);
-            if (!active) {
-                resetTracking(connector);
-                mismatchLatched[connector] = false;
-                lastStopAttempt[connector] = 0L;
-                continue;
-            }
-
-            int actualKw = station.powerKw(connector);
-            if (connector <= 2 && !limits.dcPermitValid(System.currentTimeMillis())) {
-                // Native 0 kW means "unlimited" on some QC45 firmware, while
-                // physical 5 kW Notladen still allows energy. Stop the
-                // unauthorized transaction immediately, even below 5 kW.
-                if (!mismatchLatched[connector]) {
-                    mismatchLatched[connector] = true;
-                    limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true);
-                    System.err.println("[QC45] DC SESSION WITHOUT EVCC PERMIT connector="
-                        + connector + " actual=" + actualKw + "kW -> RemoteStop");
-                }
-                retryLatchedStop(connector, enforcedKw, actualKw, now);
-                continue;
-            }
-            if (mismatchLatched[connector]) {
-                // A successful RemoteStop request is not proof that the
-                // transaction ended. Keep retrying until the firmware reports
-                // the connector inactive, even after power has fallen back to
-                // the physical Notladen value.
-                retryLatchedStop(connector, enforcedKw, actualKw, now);
-                continue;
-            }
-            if (actualKw <= enforcedKw + POSITIVE_LIMIT_TOLERANCE_KW) {
-                resetTracking(connector);
-                continue;
-            }
-
-            trackRampDown(connector, enforcedKw, actualKw, now);
-            try { limits.reassertConnectorLimit(connector); }
+            try { guardConnector(connector, now); }
             catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
-
-            if (now - lastProgressAt[connector] < POSITIVE_LIMIT_STALL_MS) continue;
-            hardStop(connector, enforcedKw, actualKw, now, reconcileFailure);
         }
 
         try { clearLimitMismatchIfStopped(); }
         catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
 
         if (reconcileFailure != null) throw reconcileFailure;
+    }
+
+    private void guardConnector(int connector, long now) throws Exception {
+        int logicalKw = limits.effectiveConnectorKw(connector);
+        int enforcedKw = logicalKw <= 0
+            ? (connector == 3 ? ChargingLimitCoordinator.AC_NOTLADEN_KW
+                : ChargingLimitCoordinator.NOTLADEN_KW) : logicalKw;
+        boolean active;
+        try { active = station.sessionActive(connector); }
+        catch (Exception error) {
+            // Unknown state is not an inactive confirmation. Keep a previously
+            // latched stop working even if session/power telemetry disappears.
+            if (mismatchLatched[connector]) retryLatchedStop(connector, enforcedKw, -1, now);
+            throw error;
+        }
+        if (!active) {
+            resetTracking(connector);
+            mismatchLatched[connector] = false;
+            lastStopAttempt[connector] = 0L;
+            return;
+        }
+        // Authorization and latched termination never depend on a power read.
+        if (connector <= 2 && !limits.dcPermitValid(System.currentTimeMillis())) {
+            Exception blockFailure = null;
+            if (!mismatchLatched[connector]) {
+                mismatchLatched[connector] = true;
+                try { limits.setBlocked(ChargingLimitCoordinator.LIMIT_MISMATCH, true); }
+                catch (Exception error) { blockFailure = error; }
+                System.err.println("[QC45] DC SESSION WITHOUT EVCC PERMIT connector="
+                    + connector + " -> RemoteStop");
+            }
+            retryLatchedStop(connector, enforcedKw, -1, now);
+            if (blockFailure != null) throw blockFailure;
+            return;
+        }
+        if (mismatchLatched[connector]) {
+            retryLatchedStop(connector, enforcedKw, -1, now);
+            return;
+        }
+        int actualKw = station.powerKw(connector);
+        if (actualKw <= enforcedKw + POSITIVE_LIMIT_TOLERANCE_KW) {
+            resetTracking(connector);
+            return;
+        }
+        trackRampDown(connector, enforcedKw, actualKw, now);
+        Exception writeFailure = null;
+        try { limits.reassertConnectorLimit(connector); }
+        catch (Exception error) { writeFailure = error; }
+        if (now - lastProgressAt[connector] >= POSITIVE_LIMIT_STALL_MS) {
+            hardStop(connector, enforcedKw, actualKw, now, writeFailure);
+        }
+        if (writeFailure != null) throw writeFailure;
     }
 
     private void trackRampDown(int connector, int enforcedKw, int actualKw, long now) {
@@ -187,8 +196,9 @@ final class ChargingLimitGuard extends Thread {
                 || now - lastStopAttempt[connector] >= STOP_RETRY_MS) {
             lastStopAttempt[connector] = now;
             System.err.println("[QC45] LIMIT MISMATCH STOP RETRY connector=" + connector
-                + " effective=" + effectiveKw + "kW actual=" + actualKw
-                + "kW; waiting for inactive confirmation");
+                + " effective=" + effectiveKw + "kW actual="
+                + (actualKw < 0 ? "unknown" : actualKw + "kW")
+                + "; waiting for inactive confirmation");
             station.remoteStop(connector);
         }
     }

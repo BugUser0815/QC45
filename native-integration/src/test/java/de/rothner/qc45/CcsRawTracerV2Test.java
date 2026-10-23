@@ -83,8 +83,8 @@ public final class CcsRawTracerV2Test {
             byte[] bytes = { 0x63, 0x02, 0x05, 0x00, 0x00 };
             channel.out.write(bytes);
             assertArrayEquals(bytes, output.toByteArray());
-            byte[] received = new byte[12];
-            assertEquals(12, reader.in.read(received));
+            byte[] received = new byte[frame().length];
+            assertEquals(received.length, reader.in.read(received));
             assertArrayEquals(frame(), received);
             assertEquals(8, CcsRawTracerV2.livePowerKw()); // RX works with raw logging disabled.
             assertTrue(logs.toString("UTF-8").contains("installed txStreams=1 rxStreams=1"));
@@ -244,7 +244,7 @@ public final class CcsRawTracerV2Test {
     }
 
     private static byte[] frame() {
-        return new byte[] { 0x63, 0x10, 50, 0, 0, 0, 0, 0, 0, (byte)0x90, 0x01, 20 };
+        return CcsTraceSessionTest.telemetryMasterFrame(50, 400, 20, true);
     }
 
     private static Thread worker() throws Exception {
@@ -298,22 +298,55 @@ public final class CcsRawTracerV2Test {
     @Test
     public void liveTelemetrySurvivesSplitSerialReads() {
         CcsRawTracerV2.shutdown();
-        byte[] frame = new byte[12];
-        frame[0] = 0x63;
-        frame[1] = 0x10;
-        frame[2] = 50;
-        frame[9] = (byte)0x90;
-        frame[10] = 0x01; // 400 V, little endian
-        frame[11] = 20;   // 8 kW
+        byte[] frame = frame();
 
         CcsRawTracerV2.observeLiveRx(frame, 0, 5);
         assertFalse(CcsRawTracerV2.hasFreshLiveTelemetry());
-        CcsRawTracerV2.observeLiveRx(frame, 5, 7);
+        CcsRawTracerV2.observeLiveRx(frame, 5, frame.length - 5);
 
         assertTrue(CcsRawTracerV2.hasFreshLiveTelemetry());
         assertEquals(50, CcsRawTracerV2.liveSocPct());
         assertEquals(8, CcsRawTracerV2.livePowerKw());
         CcsRawTracerV2.shutdown();
+    }
+
+    @Test public void telemetryRejectsNoiseForeignDeviceAndBadOuterOrInnerCrc() {
+        byte[] noise = {0x63, 0x10, 50, 0, 0, 0, 0, 0, 0, (byte)0x90, 1, 100};
+        CcsRawTracerV2.observeLiveRx(noise, 0, noise.length);
+        assertFalse(CcsRawTracerV2.hasFreshLiveTelemetry());
+        byte[] valid = frame();
+        byte[] corrupt = valid.clone(); corrupt[corrupt.length - 1] ^= 1;
+        CcsRawTracerV2.observeLiveRx(corrupt, 0, corrupt.length);
+        assertFalse(CcsRawTracerV2.hasFreshLiveTelemetry());
+        CcsRawTracerV2.shutdown();
+        corrupt = valid.clone(); corrupt[6] ^= 1; checksum(corrupt);
+        CcsRawTracerV2.observeLiveRx(corrupt, 0, corrupt.length);
+        assertFalse(CcsRawTracerV2.hasFreshLiveTelemetry());
+        CcsRawTracerV2.shutdown();
+        corrupt = valid.clone(); corrupt[1] = 0x38; checksum(corrupt);
+        CcsRawTracerV2.observeLiveRx(corrupt, 0, corrupt.length);
+        assertFalse(CcsRawTracerV2.hasFreshLiveTelemetry());
+    }
+
+    @Test public void allValidatedStatusesInOneReadAreAppliedAndIdleClearsPower() {
+        byte[] first = frame();
+        byte[] last = CcsTraceSessionTest.telemetryMasterFrame(60, 400, 30, true);
+        byte[] combined = new byte[first.length + last.length];
+        System.arraycopy(first, 0, combined, 0, first.length);
+        System.arraycopy(last, 0, combined, first.length, last.length);
+        CcsRawTracerV2.observeLiveRx(combined, 0, combined.length);
+        assertEquals(60, CcsRawTracerV2.liveSocPct());
+        assertEquals(12, CcsRawTracerV2.livePowerKw());
+        byte[] idle = CcsTraceSessionTest.telemetryMasterFrame(255, 0, 0, false);
+        for (int i = 0; i < idle.length; i++) CcsRawTracerV2.observeLiveRx(idle, i, 1);
+        assertTrue(CcsRawTracerV2.hasFreshLiveTelemetry());
+        assertEquals(0, CcsRawTracerV2.livePowerKw());
+    }
+
+    private static void checksum(byte[] master) {
+        int sum = 0;
+        for (int i = 0; i < master.length - 1; i++) sum += master[i] & 255;
+        master[master.length - 1] = (byte)-sum;
     }
 }
 

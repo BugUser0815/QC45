@@ -22,8 +22,6 @@ public final class CcsRawTracerV2 {
     private static long liveSessionStartMs;
     private static long liveLastIntegrateMs;
     private static double liveEnergyWh;
-    private static final byte[] liveCarry = new byte[11];
-    private static int liveCarryLength;
     private static Object txOwner;
     private static Field txField;
     private static OutputStream txOriginal;
@@ -40,7 +38,7 @@ public final class CcsRawTracerV2 {
         CcsSerialDiscovery.Reader[] readers() throws Exception;
     }
 
-    private static final RuntimeAccess RUNTIME = new RuntimeAccess() {
+    static final RuntimeAccess RUNTIME = new RuntimeAccess() {
         public Object central() throws Exception {
             Class<?> type = Class.forName("pt.efacec.es.mobie.agent.statemachines.CentralModule");
             return type.getMethod("getCurrentModule").invoke(null);
@@ -73,8 +71,10 @@ public final class CcsRawTracerV2 {
         Thread current = installer;
         installer = null;
         if (current != null) current.interrupt();
-        restoreTx();
-        restoreRx();
+        synchronized (CcsSerialDiscovery.STREAM_LOCK) {
+            restoreTx();
+            restoreRx();
+        }
         lastAttachmentStatus = null;
         lastAttachmentLogMs = 0L;
         clearLiveTelemetry();
@@ -92,7 +92,6 @@ public final class CcsRawTracerV2 {
             liveSessionStartMs = 0L;
             liveLastIntegrateMs = 0L;
             liveEnergyWh = 0.0d;
-            liveCarryLength = 0;
         }
     }
 
@@ -172,7 +171,9 @@ public final class CcsRawTracerV2 {
                     synchronized (CcsRawTracerV2.class) {
                         if (installer != self) return;
                         try {
-                            attachAvailable(runtime, repeatMs, logging);
+                            synchronized (CcsSerialDiscovery.STREAM_LOCK) {
+                                attachAvailable(runtime, repeatMs, logging);
+                            }
                         } catch (Exception error) {
                             reportAttachment("waiting reason=" + error, false);
                         }
@@ -281,50 +282,39 @@ public final class CcsRawTracerV2 {
         }
     }
 
-    static void observeLiveRx(byte[] b, int o, int l) {
-        if (b == null || l <= 0) return;
+    static boolean wraps(Object stream, InputStream full) {
+        return stream instanceof TraceInputStream && ((TraceInputStream)stream).source() == full;
+    }
+
+    static void observeLiveRx(byte[] data, int offset, int length) {
+        if (data == null || length <= 0) return;
+        // Connection gating and live telemetry share the validated outer-master
+        // and inner QuickCharge CRC parser, including split serial reads.
+        CcsTraceSession.CURRENT.observeRx(data, offset, length, System.currentTimeMillis());
+    }
+
+    static void observeValidatedStatus(byte[] status, long now) {
+        int flags = status[1] & 255;
+        int soc = status[2] & 255;
+        int voltage = (status[9] & 255) | ((status[10] & 255) << 8);
+        int current = status[11] & 255;
+        if ((soc > 100 && soc != 255) || voltage > 1000 || current > 250
+                || (voltage < 100 && current > 0)) return;
+        boolean charging = (flags & 0x10) != 0;
         synchronized (LIVE_LOCK) {
-            byte[] data = new byte[liveCarryLength + l];
-            System.arraycopy(liveCarry, 0, data, 0, liveCarryLength);
-            System.arraycopy(b, o, data, liveCarryLength, l);
-            int retained = Math.min(liveCarry.length, data.length);
-            System.arraycopy(data, data.length - retained, liveCarry, 0, retained);
-            liveCarryLength = retained;
-
-            int end = data.length;
-            for (int p = 0; p < end; p++) {
-                if ((data[p] & 0xff) != 0x63) continue;
-                if (end - p < 12) continue;
-
-                int flags = data[p + 1] & 0xff;
-                int soc = data[p + 2] & 0xff;
-                int voltage = (data[p + 9] & 0xff) | ((data[p + 10] & 0xff) << 8);
-                int current = data[p + 11] & 0xff;
-
-                // Reject obvious false 0x63 matches in an outer/master frame.
-                if (soc > 100 || voltage < 100 || voltage > 1000 || current > 250) continue;
-
-                boolean charging = (flags & 0x10) != 0;
-                int powerW = voltage * current;
-                long now = System.currentTimeMillis();
-
-                integrateTo(now);
-
-                boolean newSession = charging &&
-                    (liveSessionStartMs <= 0L || liveLastChargingMs <= 0L || now - liveLastChargingMs > 10000L);
-                if (newSession) {
-                    liveSessionStartMs = now;
-                    liveEnergyWh = 0.0d;
-                    liveLastIntegrateMs = now;
-                }
-
-                liveSocPct = soc;
-                livePowerW = charging ? powerW : 0;
-                liveLastRxMs = now;
-                if (charging) liveLastChargingMs = now;
+            integrateTo(now);
+            boolean newSession = charging && (liveSessionStartMs <= 0L
+                || liveLastChargingMs <= 0L || now - liveLastChargingMs > 10000L);
+            if (newSession) {
+                liveSessionStartMs = now;
+                liveEnergyWh = 0.0d;
                 liveLastIntegrateMs = now;
-                return;
             }
+            liveSocPct = soc <= 100 ? soc : 0;
+            livePowerW = charging ? voltage * current : 0;
+            liveLastRxMs = now;
+            if (charging) liveLastChargingMs = now;
+            liveLastIntegrateMs = now;
         }
     }
 
@@ -380,7 +370,6 @@ public final class CcsRawTracerV2 {
             if(!active||b==null||l<=0)return;
             long now=System.currentTimeMillis();
             if("RX".equals(dir)) {
-                CcsTraceSession.CURRENT.observeRx(b,o,l,now);
                 observeLiveRx(b,o,l);
             }
             if(!logging)return;

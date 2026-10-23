@@ -12,6 +12,16 @@ Die Auswahl bevorzugt den Reader der konfigurierten Master-Instanz. Ist diese no
 
 Die RX-Seite wird unabhängig vom Diagnose-Logging eingehängt, weil daraus zusätzlich Live-Telemetrie gewonnen wird. Der Property-Schalter bestimmt nur, ob Raw-Zeilen geschrieben werden.
 
+Live-Leistung und SoC werden ausschließlich aus vollständig geprüften
+Master-Telegrammen für Gerät `0x34` und QuickCharge-V3-Statusmeldungen mit gültiger
+CRC16 gewonnen. Über serielle Reads verteilte Telegramme werden zusammengesetzt;
+Rauschen oder beschädigte Pakete erzeugen keine Ersatz-Telemetrie.
+
+Auch Full-RX verwendet die gemeinsame Reader-Auswahl. Es wartet auf späte
+Reader, unterstützt Runnable- und Thread-Varianten und folgt ersetzten Streams.
+Beide Tracer koordinieren das Einhängen und Entfernen ihrer Wrapper, damit weder
+doppelte Hooks noch zurückgelassene Wrapper entstehen.
+
 ```properties
 evcsd.ccsRawTrace.enabled=true
 evcsd.ccsRawTrace.repeatMs=1000

@@ -32,6 +32,7 @@ public final class Integration {
     private final KsemClient meter;
     private final EvcsdLagMonitor lagMonitor;
     private final RemoteStartAuthorizationFix remoteStartAuthorizationFix;
+    private boolean startupHealthy = true;
 
     private Integration(ChargingLimitCoordinator limits,
                         ChargingLimitGuard limitGuard,
@@ -272,6 +273,7 @@ public final class Integration {
 
         OcppBridgeClient ocppBridge = null;
         Ocpp15BridgeServer ocpp15Bridge = null;
+        boolean communicationsReady = true;
         if (optionalEnabled(p, "ocpp.enabled", true)) {
             try {
                 ocppBridge = new OcppBridgeClient(
@@ -297,6 +299,7 @@ public final class Integration {
                 }
             } catch (Throwable e) {
                 System.err.println("[QC45] OCPP integration disabled after startup error; grid safety remains active: " + e);
+                communicationsReady = false;
                 e.printStackTrace();
                 if (ocpp15Bridge != null) try { ocpp15Bridge.shutdown(); } catch (Throwable ignored) {}
                 if (ocppBridge != null) try { ocppBridge.shutdown(); } catch (Throwable ignored) {}
@@ -317,6 +320,7 @@ public final class Integration {
                 modbus.start();
             } catch (Throwable e) {
                 System.err.println("[QC45] Modbus integration disabled after startup error: " + e);
+                communicationsReady = false;
                 modbus = null;
             }
         }
@@ -342,6 +346,7 @@ public final class Integration {
         Integration integration = new Integration(
             limits, limitGuard, modbus, ocppBridge, ocpp15Bridge,
             loadManager, failback, meter, lagMonitor, authFix);
+        integration.startupHealthy = safetyReady && communicationsReady;
         if (safetyReady) {
             System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
             System.out.println("[QC45] power requests DC=AUTO " + maxDcKw
@@ -374,6 +379,16 @@ public final class Integration {
 
     void enterPersistentDegradedSafety(String message, Throwable error) {
         enterDegradedSafety(limits, message, error);
+    }
+
+    boolean isHealthy() {
+        return startupHealthy && !limits.isBlockedBy(ChargingLimitCoordinator.CONFIGURATION)
+            && !limits.isBlockedBy(ChargingLimitCoordinator.SHUTDOWN)
+            && limitGuard != null && limitGuard.isAlive()
+            && (loadManager == null || loadManager.isAlive())
+            && (failback == null || failback.isAlive())
+            && (modbus == null || modbus.isAlive())
+            && (ocppBridge == null || ocppBridge.isAlive());
     }
 
     static void validateFailbackThresholds(double reduceA, double tripA,

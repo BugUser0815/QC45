@@ -8,6 +8,7 @@ public final class BootstrapListener implements ServletContextListener {
     private volatile Integration integration;
     private volatile AcPowerTelemetry acPowerTelemetry;
     private volatile AcFixedPowerBridge acFixedPowerBridge;
+    private volatile IntegrationHealth health;
 
     public void contextInitialized(ServletContextEvent event) {
         try {
@@ -21,6 +22,9 @@ public final class BootstrapListener implements ServletContextListener {
 
         try {
             integration = Integration.start();
+            // Establish the independent safety guard before status-file I/O.
+            try { health = IntegrationHealth.startDefault(); }
+            catch (Exception error) { System.err.println("[QC45] deployment health unavailable: " + error); }
 
             // Type2 is configured by the operator in the stock QC45. Do not
             // start the bridge that overwrites ACMaxPowerFixed/maxPowerAC or
@@ -51,7 +55,15 @@ public final class BootstrapListener implements ServletContextListener {
                 System.err.println("[QC45] CCS-FULL-RX tracer failed to install: " + traceError);
                 traceError.printStackTrace();
             }
+            if (health != null) {
+                final Integration started = integration;
+                final AcPowerTelemetry telemetry = acPowerTelemetry;
+                health.ready(new IntegrationHealth.Check() {
+                    public boolean healthy() { return started.isHealthy() && telemetry.isAlive(); }
+                });
+            }
         } catch (Throwable e) {
+            if (health != null) health.degraded();
             AcPowerTelemetry telemetry = acPowerTelemetry;
             acPowerTelemetry = null;
             if (telemetry != null) {
@@ -95,6 +107,7 @@ public final class BootstrapListener implements ServletContextListener {
     }
 
     public void contextDestroyed(ServletContextEvent event) {
+        if (health != null) health.shutdown();
         AcPowerTelemetry telemetry = acPowerTelemetry;
         acPowerTelemetry = null;
         if (telemetry != null) {

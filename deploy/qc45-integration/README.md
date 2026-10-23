@@ -22,7 +22,7 @@ gestartet**. Ein reiner Prüflauf ohne Quelländerung löst keinen Reboot aus.
 - Sicherung der vorhandenen JAR und atomarer Austausch
 - vollständiger Systemneustart der QC45
 - Prüfung einer geänderten Kernel-Boot-ID
-- Warten auf SSH, EVCSD und den Start der nativen Integration
+- Warten auf SSH, EVCSD und drei aufeinanderfolgende erfolgreiche Statusprüfungen
 - automatisches JAR-Rollback mit erneutem Komplettneustart, wenn der neue Stand
   nicht sauber startet
 - Aufbewahrung der fünf neuesten Sicherungen
@@ -75,6 +75,27 @@ Sicherung der bisherigen Konfiguration erstellt.
 
 Der Befehl endet erst erfolgreich, wenn die Station tatsächlich herunter- und
 wieder hochgefahren ist und die Integration zusammen mit EVCSD läuft.
+
+Die Integration veröffentlicht nach dem vollständigen Bootstrap einen atomaren
+Status unter `/home/mobie/evcsd/qc45-integration-health.properties`. Er enthält
+die Kernel-Boot-ID, die JVM-Prozess-ID, den SHA-256 der geladenen JAR und den
+Zustand `starting`, `ready`, `degraded` oder `stopped`. Ein kleiner, begrenzter
+Status wird alle fünf Sekunden erneuert. Der Deployer akzeptiert nur einen
+höchstens zehn Sekunden alten `ready`-Status für die aktuelle Boot-ID, eine
+lebende JVM und die erwartete JAR. Gestorbene Schutz-/Steuerthreads oder ein
+fehlgeschlagener erforderlicher Bootstrap verhindern damit den Deployment-Erfolg.
+Ein gültiger Netzschutz-Stopp ist für sich kein Software-Startfehler.
+
+Logrotation, Kürzung und alte Startmeldungen beeinflussen die Prüfung nicht.
+Bei einem Rollback auf eine ältere JAR ohne Status-Unterstützung werden als
+ausdrücklich protokollierter Kompatibilitätsfall nur JAR-Prüfsumme und
+EVCSD-Prozess geprüft; neue Deployments verwenden immer die vollständige Prüfung.
+
+Tests der Prüfung ohne Station:
+
+```bash
+python3 -m unittest discover -s deploy/qc45-integration/tests -v
+```
 
 ## Automatik
 

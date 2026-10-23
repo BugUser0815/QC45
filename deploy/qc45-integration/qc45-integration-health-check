@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+active_jar=$1
+expected_sha256=$2
+health_file=$3
+mode=${4:-ready}
+proc_root=${QC45_HEALTH_PROC_ROOT:-/proc}
+
+test "$(sha256sum "$active_jar" | awk '{print $1}')" = "$expected_sha256"
+# Only rollback to a pre-health-status JAR uses this compatibility mode. The
+# caller separately verifies the stock EVCSD process; new deploys require ready.
+if [ "$mode" = legacy-rollback ]; then exit 0; fi
+test "$mode" = ready
+test -r "$health_file"
+health=$(cat "$health_file")
+property() {
+    printf '%s\n' "$health" | awk -F= -v key="$1" '
+        $1 == key { count++; value = substr($0, length(key) + 2) }
+        END { if (count == 1) print value; else exit 1 }'
+}
+test "$(property schema)" = 1
+test "$(property state)" = ready
+test "$(property jarSha256)" = "$expected_sha256"
+boot_id=$(cat "$proc_root/sys/kernel/random/boot_id")
+test -n "$boot_id"
+test "$(property bootId)" = "$boot_id"
+pid=$(property pid)
+case "$pid" in ''|*[!0-9]*) exit 1;; esac
+test "${#pid}" -le 10 && test "$pid" -gt 0
+kill -0 "$pid"
+updated=$(property updatedAtMillis)
+case "$updated" in ''|*[!0-9]*) exit 1;; esac
+test "${#updated}" -le 15
+age=$(( $(date +%s) - updated / 1000 ))
+test "$age" -ge 0 && test "$age" -le 10
