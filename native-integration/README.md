@@ -119,6 +119,18 @@ Typical persistent integration log:
 /home/mobie/evcsd/qc45-integration.log
 ```
 
+The log rotates **while the integration is running**, before the active file
+exceeds 10 MiB. Three backups (`.1` newest through `.3` oldest) are kept;
+the oldest backup is deleted automatically. The active file and its backups
+therefore use at most 40 MiB, including timestamps and full RX diagnostics.
+No cron job, reboot, or configuration change is needed for ongoing rotation.
+
+On startup, oversized files left by older versions are reduced in place to
+their newest 10 MiB before rotation. This also reclaims space when the card
+is already full without creating a large temporary copy. Rotation closes and
+reopens the active file, so space is not retained by a deleted open log.
+When following the active filename across rotations, use `tail -F`.
+
 ## OCPP behavior
 
 The native bridge supports the station functions required by the current installation, including:
