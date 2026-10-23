@@ -28,6 +28,19 @@ public final class CcsFullRxTracer {
 
     private CcsFullRxTracer() {}
 
+    // The raw hook monitor must recognize this optional outer wrapper instead
+    // of installing another raw wrapper on every tick.
+    static boolean wraps(Object stream, InputStream raw) {
+        return stream instanceof TraceInputStream && ((TraceInputStream)stream).source() == raw;
+    }
+
+    static synchronized void restoreRaw(Object stream, InputStream raw, InputStream original) {
+        if (wraps(stream, raw)) {
+            ((TraceInputStream)stream).replaceSource(original);
+            if (originalInput == raw) originalInput = original;
+        }
+    }
+
     public static synchronized void installFromDefaultConfig() throws Exception {
         Properties p = new Properties();
         String explicit = System.getProperty("qc45.integration.config");
@@ -53,6 +66,8 @@ public final class CcsFullRxTracer {
                 hookedField.setAccessible(true);
                 if (hookedField.get(hookedReader) == wrapperInput) {
                     hookedField.set(hookedReader, originalInput);
+                } else {
+                    CcsRawTracerV2.restoreFull(hookedField.get(hookedReader), wrapperInput, originalInput);
                 }
             }
         } catch (Throwable e) {
@@ -143,6 +158,9 @@ public final class CcsFullRxTracer {
             super(in);
             this.state = state;
         }
+
+        InputStream source() { return in; }
+        void replaceSource(InputStream source) { in = source; }
 
         public int read() throws IOException {
             int value = in.read();
@@ -314,3 +332,4 @@ public final class CcsFullRxTracer {
         return Math.max(min, Math.min(max, value));
     }
 }
+
