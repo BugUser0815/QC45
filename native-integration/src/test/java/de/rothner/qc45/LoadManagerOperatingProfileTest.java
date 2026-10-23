@@ -55,7 +55,7 @@ public final class LoadManagerOperatingProfileTest {
     @Test
     public void commandCeilingStillOverridesScheduleWhenLower() {
         long sunday = localTime(2026, Calendar.SEPTEMBER, 13, 12, 0);
-        assertEquals(33.1d, LoadManager.phaseTargetA(sunday, 34.0d, 34.0d, 0.8d), 0.000001d);
+        assertEquals(34.0d, LoadManager.phaseTargetA(sunday, 34.0d, 34.0d, 0.8d), 0.000001d);
     }
 
     @Test
@@ -67,9 +67,9 @@ public final class LoadManagerOperatingProfileTest {
     }
 
     @Test
-    public void liveConfigurationUsesThirtyThreePointFourInsteadOfThirtyFourPointNine() {
+    public void liveConfigurationKeepsConfiguredTargetAndUsesHysteresisAsHoldBand() {
         long liveSession = utcTime(2026, Calendar.OCTOBER, 23, 17, 30, 0);
-        assertEquals(33.4d, LoadManager.operatingTargetA(
+        assertEquals(34.0d, LoadManager.operatingTargetA(
             liveSession, 34.0d, 35.0d, 1.5d), 0.000001d);
     }
 
@@ -78,6 +78,16 @@ public final class LoadManagerOperatingProfileTest {
         long daytime = localTime(2026, Calendar.SEPTEMBER, 7, 12, 0);
         assertEquals(23.0d, LoadManager.phaseTargetA(
             daytime, 23.0d, 35.0d, 1.5d), 0.000001d);
+    }
+
+    @Test
+    public void fiftyAmpInstallationUsesConfiguredDaytimeAndNightTargets() {
+        long daytime = localTime(2026, Calendar.SEPTEMBER, 7, 12, 0);
+        long evening = localTime(2026, Calendar.SEPTEMBER, 7, 20, 0);
+        assertEquals(45.0d, LoadManager.phaseTargetA(
+            daytime, 49.0d, 50.0d, 1.5d, 45.0d), 0.000001d);
+        assertEquals(49.0d, LoadManager.phaseTargetA(
+            evening, 49.0d, 50.0d, 1.5d, 45.0d), 0.000001d);
     }
 
     private static long localTime(int year, int month, int day, int hour, int minute) {

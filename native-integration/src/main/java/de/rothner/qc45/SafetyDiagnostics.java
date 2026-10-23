@@ -150,13 +150,6 @@ final class SafetyDiagnostics {
                 HEALTHY_READS_TO_RESUME, UNIT_READS);
         }
 
-        if (booleanField(failback, "overLimitPaused", false)) {
-            int reads = intField(failback, "goodOverLimitReads", 0);
-            return new Snapshot(STATE_GRID_OVER_LIMIT,
-                clamp(reads, 0, HEALTHY_READS_TO_RESUME),
-                HEALTHY_READS_TO_RESUME, UNIT_READS);
-        }
-
         return new Snapshot(STATE_BLOCKED, 0, 0, UNIT_NONE);
     }
 

@@ -11,7 +11,6 @@ final class KsemDcAllocator {
     // Reserve for rectifier losses, voltage variation and delayed KSEM samples.
     static final double DC_KW_PER_GRID_A = 0.60d;
     private static final double RAMP_HEADROOM_FACTOR = 0.75d;
-    private static final double MAX_HOLD_BAND_A = 0.5d;
     private static final int CATCHUP_TOLERANCE_KW = 1;
 
     private KsemDcAllocator() {}
@@ -33,7 +32,7 @@ final class KsemDcAllocator {
         // Logical zero still means physical 5-kW Notladen on this hardware.
         int releasedKw = clamp(commandedKw, minDcKw, maxDcKw);
         double headroomA = phaseTargetA - criticalA;
-        double holdBandA = Math.min(hysteresisA, MAX_HOLD_BAND_A);
+        double holdBandA = Math.min(hysteresisA, phaseTargetA * 0.05d);
         int targetKw = releasedKw;
 
         if (headroomA < -holdBandA) {

@@ -86,20 +86,31 @@ ksem.currentScale=0.001
 # 32-bit unsigned current registers. HIGH_LOW prevents rollover above 65.535 A.
 ksem.wordOrder=HIGH_LOW
 
+# Installed upstream SLS. Existing configurations without these keys use E35.
+# Set the actual installed rating; all thermal/magnetic calculations use it.
+sls.nominalA=35.0
+sls.characteristic=E
+# Supplemental software I^2/cooling policy, NOT a fitted Hager trip curve.
+# 1000..30000 ms; smaller values intervene earlier on sustained overload.
+sls.thermalTimeConstantMs=30000
+
 # Native DC load manager
 # DC is released directly from the remaining current headroom of the most
-# heavily loaded KSEM phase. The live controller targets 35 A/phase and caps
-# the QC45 at 35 kW. SMA/BYD capability is deliberately not configured here:
+# heavily loaded KSEM phase. The configured target is bounded by the SLS
+# rating; the QC45 DC power remains capped at 35 kW. SMA/BYD capability is not configured here:
 # battery support is already visible as reduced KSEM grid current. If the
 # battery is empty, the higher KSEM current automatically lowers the DC target.
 # Type2/AC remains operator-fixed and is therefore treated as normal site load.
-# Legacy target/demand parameters remain for compatibility. The ramp setting
-# IS ACTIVE: every authorized CHAdeMO/CCS transaction starts at 5 kW, then
-# increases by at most 5 kW per 1000-ms cycle; reductions are immediate.
+# Target, grid limit and hysteresis are active. Demand parameters are legacy.
+# Every authorized CHAdeMO/CCS transaction starts at 5 kW; further increases
+# require two DC catch-up readings and fit the available KSEM headroom.
 loadmanager.enabled=true
 loadmanager.targetA=34.0
-loadmanager.gridLimitA=38.0
-loadmanager.hysteresisA=0.8
+loadmanager.gridLimitA=35.0
+# Mo-Sa 06:30-18:00 Europe/Berlin; otherwise targetA/gridLimitA apply.
+loadmanager.daytimeTargetA=25.0
+# Hold band, bounded to 5% of the active target; not subtracted from targetA.
+loadmanager.hysteresisA=1.5
 loadmanager.minDcKw=5
 loadmanager.maxDcKw=35
 loadmanager.minAcKw=5
@@ -110,27 +121,31 @@ loadmanager.demandStableMs=5000
 loadmanager.demandReserveKw=2
 
 # Independent grid failback
-# 36 A starts the reduction stage; 38 A immediately pauses charging. The
-# separate 175 A threshold remains the lower magnetic E35 hard-trip boundary.
+# Both reduceA and tripA trigger proportional reductions, at most once/s.
+# tripA is the faster trigger, NOT an immediate pause or fixed 5-kW command.
+# With omitted keys defaults are In+1 A, In+3 A, and 5*In respectively.
+# Explicit lower thresholds remain effective, including instantTripA.
 failback.enabled=true
 failback.reduceA=36.0
 failback.reduceDelayMs=500
+# Lower bounds of progressive reduction: 0 or technical minimum, never a raise.
 failback.reduceDcKw=5
 failback.reduceAcKw=5
 failback.tripA=38.0
-# Compatibility minimum for timed E35 overload bands. The conservative instant
-# trip at the lower magnetic boundary remains immediate.
 failback.tripDelayMs=250
-# Fixed 5 x In lower E35 magnetic boundary for an assumed preloaded 35A SLS.
-# Historical 38A and 218.75A instantTripA values are migrated automatically.
+# At most the lower magnetic boundary 5*In (175 A for E35, 250 A for E50).
+# An explicit smaller value is respected; sustained overload also trips thermally.
 failback.instantTripA=175.0
 failback.intervalMs=100
-# A hard trip resets automatically after this many ms continuously below reduceA.
-# Every current at/above reduceA and every failed KSEM read restarts the timer.
-# The minimum and default are 60000 ms.
+# Hard-trip reset requires thermal recovery, inactive sessions and this many ms
+# continuously below min(reduceA, In). Meter failures restart the reset timer.
+# Minimum/default 60000 ms. Missing data never counts as thermal cooling.
 failback.resetDelayMs=60000
-# Any KSEM communication/read failure pauses AC and DC immediately at 0 kW
-# while the OCPP transactions remain active.
+# KSEM/control failure blocks managed outputs immediately (physical 5-kW floor).
+# Five healthy readings are required before a fresh 5-kW start.
+# For a future E50 replacement, also review the explicit values above:
+# sls.nominalA=50, targetA=49, gridLimitA=50,
+# reduceA=51, tripA=53, instantTripA=250; daytimeTargetA is independently chosen.
 
 # DC requires an explicit positive evcc budget written to Modbus register 110.
 # On startup the DC budget is 0; KSEM cannot grant power by itself.

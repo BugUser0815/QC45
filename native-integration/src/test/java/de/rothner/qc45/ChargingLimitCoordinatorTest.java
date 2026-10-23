@@ -6,6 +6,7 @@ import java.util.List;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -322,6 +323,26 @@ public final class ChargingLimitCoordinatorTest {
         assertEquals(5, limits.acMobiBusTargetKw());
         limits.clearStageCaps();
         assertEquals(20, limits.acMobiBusTargetKw());
+    }
+
+    @Test
+    public void releasingProtectionCapsKeepsCurrentAllocationWithoutRestoringOldTargets()
+            throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.requestBudgets(50, 43);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setGridTargets(1, true, 35, 22);
+        limits.setStageCaps(32, 20);
+        limits.releaseStageCapsAtCurrentTargets();
+        assertEquals(32, limits.effectiveDcKw());
+        assertEquals(20, limits.effectiveAcKw());
+        assertFalse(limits.snapshot().stageLimited);
+        assertEquals(32, limits.snapshot().gridDcKw);
+        assertEquals(20, limits.snapshot().gridAcKw);
+        limits.setGridTargets(1, true, 33, 21);
+        assertEquals(33, limits.effectiveDcKw());
+        assertEquals(21, limits.effectiveAcKw());
     }
 
     @Test

@@ -11,11 +11,6 @@ public final class Integration {
     private static final int DEFAULT_MAX_DC_KW = 50;
     private static final int DEFAULT_MIN_AC_KW = 5;
     private static final int DEFAULT_MAX_AC_KW = 43;
-    private static final double MAX_GRID_LIMIT_A = 38.0d;
-    private static final double MAX_CONTROL_TARGET_A = 34.0d;
-    private static final double MAX_REDUCE_THRESHOLD_A = 36.0d;
-    private static final double SLS_E_INSTANT_TRIP_A = GridFailback.SLS_E_INSTANT_A;
-    private static final double MIN_FAILBACK_GAP_A = 0.1d;
     private static final double KSEM_CURRENT_SCALE = 0.001d;
     private static final int MAX_KSEM_TIMEOUT_MS = 1000;
     private static final int MAX_FAILBACK_INTERVAL_MS = 100;
@@ -124,25 +119,14 @@ public final class Integration {
         try {
             boolean loadManagerEnabled = bool(p, "loadmanager.enabled", true);
             boolean failbackEnabled = bool(p, "failback.enabled", true);
-            double configuredFailbackReduceA = positiveDecimal(p, "failback.reduceA", 36.0d);
-            double configuredFailbackTripA = positiveDecimal(p, "failback.tripA", 38.0d);
-            double configuredFailbackInstantTripA = positiveDecimal(p, "failback.instantTripA",
-                SLS_E_INSTANT_TRIP_A);
-            double[] failbackThresholds = conservativeFailbackThresholds(
-                configuredFailbackReduceA, configuredFailbackTripA,
-                configuredFailbackInstantTripA);
-            double failbackReduceA = failbackThresholds[0];
-            double failbackTripA = failbackThresholds[1];
-            double failbackInstantTripA = failbackThresholds[2];
-            if (failbackReduceA != configuredFailbackReduceA
-                    || failbackTripA != configuredFailbackTripA
-                    || failbackInstantTripA != configuredFailbackInstantTripA) {
-                System.err.println("[QC45] failback threshold compatibility migration: configured "
-                    + thresholdValues(configuredFailbackReduceA, configuredFailbackTripA,
-                        configuredFailbackInstantTripA)
-                    + " -> effective " + thresholdValues(failbackReduceA, failbackTripA,
-                        failbackInstantTripA));
-            }
+            GridSettings grid = gridSettings(p);
+            double failbackReduceA = grid.reduceA;
+            double failbackTripA = grid.tripA;
+            double failbackInstantTripA = grid.instantA;
+            System.out.println("[QC45] grid settings SLS=E" + grid.nominalA
+                + "A target=" + grid.targetA + "A ceiling=" + grid.ceilingA
+                + "A daytime=" + grid.daytimeA + "A hysteresis=" + grid.hysteresisA
+                + "A " + thresholdValues(grid.reduceA, grid.tripA, grid.instantA));
             long configuredFailbackReduceDelayMs = nonNegativeInt(p, "failback.reduceDelayMs", 500);
             long configuredFailbackTripDelayMs = nonNegativeInt(p, "failback.tripDelayMs", 250);
             int configuredFailbackIntervalMs = positiveInt(p, "failback.intervalMs", 100);
@@ -199,33 +183,13 @@ public final class Integration {
                     failbackReduceA, failbackReduceDelayMs,
                     failbackTripA, failbackTripDelayMs, failbackInstantTripA,
                     reduceDcKw, reduceAcKw, failbackIntervalMs,
-                    resetDelayMs);
+                    resetDelayMs, grid.nominalA, grid.thermalTimeConstantMs);
                 // Close the scheduling gap before the failback thread performs
                 // its first read and establishes its own startup pause.
                 limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
             }
 
             if (loadManagerEnabled) {
-                double configuredGridLimitA = positiveDecimal(p, "loadmanager.gridLimitA", 38.0d);
-                if (configuredGridLimitA > MAX_GRID_LIMIT_A) {
-                    throw new IllegalArgumentException("loadmanager.gridLimitA must not exceed 38A");
-                }
-                double commandCeilingA = failbackEnabled
-                    ? Math.min(configuredGridLimitA, failbackReduceA)
-                    : configuredGridLimitA;
-                double configuredTargetA = positiveDecimal(p, "loadmanager.targetA", 34.0d);
-                if (configuredTargetA > MAX_CONTROL_TARGET_A) {
-                    throw new IllegalArgumentException("loadmanager.targetA must not exceed 34A");
-                }
-                double hysteresisA = nonNegativeDecimal(p, "loadmanager.hysteresisA", 0.8d);
-                double targetA = conservativeLoadManagerTargetA(
-                    configuredTargetA, commandCeilingA, hysteresisA);
-                if (targetA != configuredTargetA) {
-                    System.err.println("[QC45] loadmanager target compatibility migration: configured target="
-                        + configuredTargetA + "A -> effective target=" + targetA
-                        + "A because command ceiling=" + commandCeilingA
-                        + "A and hysteresis=" + hysteresisA + "A");
-                }
                 int legacyRampKw = positiveInt(p, "loadmanager.rampUpKwPerLoop", 5);
                 int rampKw = effectiveRampUpKw(legacyRampKw);
                 if (legacyRampKw != rampKw) {
@@ -243,9 +207,9 @@ public final class Integration {
                 }
                 loadManager = new LoadManager(
                     station, meter, limits,
-                    targetA, commandCeilingA, hysteresisA,
+                    grid.targetA, grid.ceilingA, grid.hysteresisA,
                     minDcKw, maxDcKw, minAcKw, maxAcKw,
-                    rampKw, intervalMs, demandStableMs, demandReserveKw);
+                    rampKw, intervalMs, demandStableMs, demandReserveKw, grid.daytimeA);
             } else {
                 System.err.println("[QC45] LoadManager disabled: startup safety block remains active; charging stays at 0kW");
             }
@@ -391,46 +355,86 @@ public final class Integration {
             && (ocppBridge == null || ocppBridge.isAlive());
     }
 
+    static final class GridSettings {
+        final double nominalA, reduceA, tripA, instantA, ceilingA, targetA, hysteresisA, daytimeA;
+        final long thermalTimeConstantMs;
+
+        GridSettings(Properties p) {
+            nominalA = positiveDecimal(p, "sls.nominalA", 35.0d);
+            String characteristic = p.getProperty("sls.characteristic", "E").trim();
+            if (!"E".equalsIgnoreCase(characteristic)) {
+                throw new IllegalArgumentException("only sls.characteristic=E is supported");
+            }
+            thermalTimeConstantMs = positiveInt(p, "sls.thermalTimeConstantMs", 30000);
+            // Validates the rated-current range and a conservative time constant.
+            new SlsThermalModel(nominalA, thermalTimeConstantMs);
+            double configuredReduce = positiveDecimal(p, "failback.reduceA", nominalA + 1.0d);
+            double configuredTrip = positiveDecimal(p, "failback.tripA", nominalA + 3.0d);
+            double configuredInstant = positiveDecimal(p, "failback.instantTripA",
+                nominalA * SlsThermalModel.E_MAGNETIC_MULTIPLE);
+            double[] thresholds = conservativeFailbackThresholds(
+                configuredReduce, configuredTrip, configuredInstant, nominalA);
+            reduceA = thresholds[0];
+            tripA = thresholds[1];
+            instantA = thresholds[2];
+            if (reduceA != configuredReduce || tripA != configuredTrip || instantA != configuredInstant) {
+                System.err.println("[QC45] SLS configuration bounded by E" + nominalA
+                    + ": configured " + thresholdValues(configuredReduce, configuredTrip, configuredInstant)
+                    + " -> " + thresholdValues(reduceA, tripA, instantA));
+            }
+            double configuredCeiling = positiveDecimal(p, "loadmanager.gridLimitA", nominalA);
+            ceilingA = Math.min(nominalA, bool(p, "failback.enabled", true)
+                ? Math.min(configuredCeiling, reduceA) : configuredCeiling);
+            double configuredTarget = positiveDecimal(p, "loadmanager.targetA", nominalA - 1.0d);
+            hysteresisA = nonNegativeDecimal(p, "loadmanager.hysteresisA", 0.8d);
+            targetA = conservativeLoadManagerTargetA(configuredTarget, ceilingA, hysteresisA);
+            double configuredDaytime = positiveDecimal(p, "loadmanager.daytimeTargetA",
+                Math.min(25.0d, nominalA));
+            daytimeA = Math.min(configuredDaytime, ceilingA);
+            if (ceilingA != configuredCeiling || targetA != configuredTarget
+                    || daytimeA != configuredDaytime) {
+                System.out.println("[QC45] load-manager configured target=" + configuredTarget
+                    + "A ceiling=" + configuredCeiling + "A daytime=" + configuredDaytime
+                    + "A -> effective target=" + targetA + "A ceiling=" + ceilingA
+                    + "A daytime=" + daytimeA + "A for SLS=" + nominalA + "A");
+            }
+        }
+    }
+
+    static GridSettings gridSettings(Properties p) { return new GridSettings(p); }
+
     static void validateFailbackThresholds(double reduceA, double tripA,
-                                           double instantTripA) {
+                                           double instantTripA, double nominalA) {
         String values = thresholdValues(reduceA, tripA, instantTripA);
-        if (reduceA <= 0.0d || tripA <= 0.0d || instantTripA <= 0.0d
-                || Double.isNaN(reduceA) || Double.isNaN(tripA)
-                || Double.isNaN(instantTripA) || Double.isInfinite(reduceA)
-                || Double.isInfinite(tripA) || Double.isInfinite(instantTripA)) {
-            throw new IllegalArgumentException("failback thresholds must be finite and > 0 "
-                + "(configured " + values + ")");
+        if (!SlsThermalModel.finite(nominalA) || nominalA < 16.0d || nominalA > 100.0d
+                || !SlsThermalModel.finite(reduceA) || reduceA <= 0.0d
+                || !SlsThermalModel.finite(tripA) || tripA <= 0.0d
+                || !SlsThermalModel.finite(instantTripA) || instantTripA <= 0.0d) {
+            throw new IllegalArgumentException("SLS rating and failback thresholds must be finite and > 0");
         }
         if (!(reduceA < tripA && tripA < instantTripA)) {
             throw new IllegalArgumentException("failback thresholds must satisfy "
                 + "reduceA < tripA < instantTripA (configured " + values + ")");
         }
-        if (reduceA > MAX_REDUCE_THRESHOLD_A || tripA > MAX_GRID_LIMIT_A) {
-            throw new IllegalArgumentException("failback reduction and pause thresholds may only be made "
-                + "more conservative than 36/38A (configured " + values + ")");
-        }
-        if (Math.abs(instantTripA - SLS_E_INSTANT_TRIP_A) > 0.000001d) {
-            throw new IllegalArgumentException("failback.instantTripA is fixed at the conservative "
-                + "lower 35A SLS-E magnetic boundary of " + SLS_E_INSTANT_TRIP_A
-                + "A (configured " + values + ")");
+        if (reduceA > nominalA * 1.05d || tripA > nominalA * 1.2d
+                || instantTripA > nominalA * SlsThermalModel.E_MAGNETIC_MULTIPLE) {
+            throw new IllegalArgumentException("failback thresholds exceed the configured SLS E rating");
         }
     }
 
     static double[] conservativeFailbackThresholds(double reduceA, double tripA,
-                                                    double instantTripA) {
-        // Reject nonsensical values instead of hiding them, but migrate every
-        // historical instant threshold to the conservative lower E35 boundary.
-        if (reduceA <= 0.0d || tripA <= 0.0d || instantTripA <= 0.0d
-                || Double.isNaN(reduceA) || Double.isNaN(tripA)
-                || Double.isNaN(instantTripA) || Double.isInfinite(reduceA)
-                || Double.isInfinite(tripA) || Double.isInfinite(instantTripA)) {
-            validateFailbackThresholds(reduceA, tripA, instantTripA);
+                                                    double instantTripA, double nominalA) {
+        if (!SlsThermalModel.finite(reduceA) || reduceA <= 0.0d
+                || !SlsThermalModel.finite(tripA) || tripA <= 0.0d
+                || !SlsThermalModel.finite(instantTripA) || instantTripA <= 0.0d
+                || !SlsThermalModel.finite(nominalA) || nominalA < 16.0d || nominalA > 100.0d) {
+            throw new IllegalArgumentException("SLS rating and failback thresholds must be finite and > 0");
         }
-        double safeInstant = SLS_E_INSTANT_TRIP_A;
-        double safeTrip = Math.min(tripA, MAX_GRID_LIMIT_A);
-        double safeReduce = Math.min(Math.min(reduceA, MAX_REDUCE_THRESHOLD_A),
-            safeTrip - MIN_FAILBACK_GAP_A);
-        validateFailbackThresholds(safeReduce, safeTrip, safeInstant);
+        double safeReduce = Math.min(reduceA, nominalA * 1.05d);
+        double safeTrip = Math.min(tripA, nominalA * 1.2d);
+        double safeInstant = Math.min(instantTripA, nominalA * SlsThermalModel.E_MAGNETIC_MULTIPLE);
+        // Explicit conservative values are never silently raised.
+        validateFailbackThresholds(safeReduce, safeTrip, safeInstant, nominalA);
         return new double[] { safeReduce, safeTrip, safeInstant };
     }
 
@@ -442,18 +446,15 @@ public final class Integration {
     static double conservativeLoadManagerTargetA(double configuredTargetA,
                                                  double commandCeilingA,
                                                  double hysteresisA) {
-        if (configuredTargetA <= 0.0d || configuredTargetA > MAX_CONTROL_TARGET_A
+        if (configuredTargetA <= 0.0d
                 || commandCeilingA <= 0.0d || hysteresisA < 0.0d
                 || Double.isNaN(configuredTargetA) || Double.isInfinite(configuredTargetA)
                 || Double.isNaN(commandCeilingA) || Double.isInfinite(commandCeilingA)
                 || Double.isNaN(hysteresisA) || Double.isInfinite(hysteresisA)) {
             throw new IllegalArgumentException("invalid loadmanager target/ceiling/hysteresis");
         }
-        double safeMaximumA = commandCeilingA - hysteresisA - MIN_FAILBACK_GAP_A;
-        if (safeMaximumA <= 0.0d) {
-            throw new IllegalArgumentException("loadmanager command ceiling leaves no positive control target");
-        }
-        return Math.min(configuredTargetA, safeMaximumA);
+        // Hysteresis is a hold band around the target, not a permanent derating.
+        return Math.min(configuredTargetA, commandCeilingA);
     }
 
     private static String thresholdValues(double reduceA, double tripA,

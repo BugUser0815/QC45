@@ -12,13 +12,8 @@ import java.util.TimeZone;
  * is calculated from the most heavily loaded phase only.
  */
 public final class LoadManager extends Thread {
-    interface CurrentSource {
-        KsemClient.Currents readCurrents() throws Exception;
-    }
-
     private static final int HEALTHY_READS_TO_RESUME = 5;
     static final double DAYTIME_PHASE_TARGET_A = 25.0d;
-    static final double OFF_HOURS_PHASE_TARGET_A = 35.0d;
     static final int DC_HARD_MAX_KW = 35;
 
     private static final String OPERATING_TIME_ZONE = "Europe/Berlin";
@@ -26,11 +21,12 @@ public final class LoadManager extends Thread {
     private static final int DAYTIME_CLOSE_MINUTE = 18 * 60;
 
     private final ChargingSessionIo station;
-    private final CurrentSource meter;
+    private final GridCurrentIo meter;
     private final ChargingLimitCoordinator limits;
     private final double configuredTargetA;
     private final double commandCeilingA;
     private final double hysteresisA;
+    private final double daytimeTargetA;
     private final int minDcKw;
     private final int maxDcKw;
     private final int intervalMs;
@@ -57,12 +53,35 @@ public final class LoadManager extends Thread {
             rampUpKwPerLoop, intervalMs, demandStableMs, demandReserveKw);
     }
 
-    LoadManager(ChargingSessionIo station, CurrentSource meter,
+    public LoadManager(ReflectionQC45 station, KsemClient meter,
+                       ChargingLimitCoordinator limits,
+                       double targetA, double commandCeilingA, double hysteresisA,
+                       int minDcKw, int maxDcKw, int minAcKw, int maxAcKw,
+                       int rampUpKwPerLoop, int intervalMs,
+                       long demandStableMs, int demandReserveKw, double daytimeTargetA) {
+        this((ChargingSessionIo) station, (GridCurrentIo) meter, limits,
+            targetA, commandCeilingA, hysteresisA,
+            minDcKw, maxDcKw, minAcKw, maxAcKw,
+            rampUpKwPerLoop, intervalMs, demandStableMs, demandReserveKw, daytimeTargetA);
+    }
+
+    LoadManager(ChargingSessionIo station, GridCurrentIo meter,
                 ChargingLimitCoordinator limits,
                 double targetA, double commandCeilingA, double hysteresisA,
                 int minDcKw, int maxDcKw, int minAcKw, int maxAcKw,
                 int rampUpKwPerLoop, int intervalMs,
                 long demandStableMs, int demandReserveKw) {
+        this(station, meter, limits, targetA, commandCeilingA, hysteresisA,
+            minDcKw, maxDcKw, minAcKw, maxAcKw, rampUpKwPerLoop, intervalMs,
+            demandStableMs, demandReserveKw, Math.min(DAYTIME_PHASE_TARGET_A, commandCeilingA));
+    }
+
+    LoadManager(ChargingSessionIo station, GridCurrentIo meter,
+                ChargingLimitCoordinator limits,
+                double targetA, double commandCeilingA, double hysteresisA,
+                int minDcKw, int maxDcKw, int minAcKw, int maxAcKw,
+                int rampUpKwPerLoop, int intervalMs,
+                long demandStableMs, int demandReserveKw, double daytimeTargetA) {
         super("QC45-LoadManager");
         setDaemon(true);
         if (station == null || meter == null || limits == null) {
@@ -82,6 +101,11 @@ public final class LoadManager extends Thread {
         Integration.conservativeLoadManagerTargetA(targetA, commandCeilingA, hysteresisA);
         this.commandCeilingA = commandCeilingA;
         this.hysteresisA = hysteresisA;
+        if (!SlsThermalModel.finite(daytimeTargetA) || daytimeTargetA <= 0.0d
+                || daytimeTargetA > commandCeilingA) {
+            throw new IllegalArgumentException("daytime target must fit the configured ceiling");
+        }
+        this.daytimeTargetA = daytimeTargetA;
         this.minDcKw = minDcKw;
         this.maxDcKw = Math.min(DC_HARD_MAX_KW, maxDcKw);
         this.intervalMs = intervalMs;
@@ -95,8 +119,8 @@ public final class LoadManager extends Thread {
 
     public void run() {
         System.out.println("[QC45] LoadManager started direct-KSEM DC control daytime="
-            + one(DAYTIME_PHASE_TARGET_A) + "A Mo-Sa 06:30-18:00 "
-            + OPERATING_TIME_ZONE + " offHours=" + one(OFF_HOURS_PHASE_TARGET_A)
+            + one(daytimeTargetA) + "A Mo-Sa 06:30-18:00 "
+            + OPERATING_TIME_ZONE + " offHours=" + one(Math.min(configuredTargetA, commandCeilingA))
             + "A hardMax=" + maxDcKw + "kW interval=" + intervalMs
             + "ms prearm=" + minDcKw + "kW DC rampUp="
             + rampUpKwPerLoop + "kW/loop configuredTarget="
@@ -118,8 +142,8 @@ public final class LoadManager extends Thread {
     }
 
     void runCycle(long now) {
-        double activePhaseTargetA = operatingTargetA(
-            now, configuredTargetA, commandCeilingA, hysteresisA);
+        double activePhaseTargetA = phaseTargetA(
+            now, configuredTargetA, commandCeilingA, hysteresisA, daytimeTargetA);
         try {
             KsemClient.Currents currents = meter.readCurrents();
             markMeterReadHealthy();
@@ -149,20 +173,6 @@ public final class LoadManager extends Thread {
             }
 
             double criticalA = currents.max();
-            if (criticalA >= commandCeilingA) {
-                previousActualDcKw = -1;
-                limits.setGridTargetsAndPrearm(active.dcConnector, active.ac,
-                    active.dcConnector > 0 ? minDcKw : 0, 0,
-                    active.dcConnector == 0 ? minDcKw : 0, 0, false);
-                releasePreparedMeterBlocks();
-                previousDcConnector = active.dcConnector;
-                System.err.println("[QC45] LoadManager GUARD KSEM L1=" + one(currents.l1)
-                    + "A L2=" + one(currents.l2) + "A L3=" + one(currents.l3)
-                    + "A max=" + one(criticalA) + "A -> DC Notladen="
-                    + minDcKw + "kW");
-                return;
-            }
-
             if (active.dcConnector == 0) {
                 previousActualDcKw = -1;
                 // Do not pre-arm the unused CHAdeMO/CCS outputs with the full
@@ -284,8 +294,14 @@ public final class LoadManager extends Thread {
 
     static double phaseTargetA(long epochMillis, double configuredTargetA,
                                double commandCeilingA, double hysteresisA) {
+        return phaseTargetA(epochMillis, configuredTargetA, commandCeilingA, hysteresisA,
+            Math.min(DAYTIME_PHASE_TARGET_A, commandCeilingA));
+    }
+
+    static double phaseTargetA(long epochMillis, double configuredTargetA,
+                               double commandCeilingA, double hysteresisA, double daytimeTargetA) {
         double scheduledTarget = isDaytimeBuffer(epochMillis)
-            ? DAYTIME_PHASE_TARGET_A : OFF_HOURS_PHASE_TARGET_A;
+            ? daytimeTargetA : commandCeilingA;
         return Math.min(scheduledTarget, Integration.conservativeLoadManagerTargetA(
             configuredTargetA, commandCeilingA, hysteresisA));
     }

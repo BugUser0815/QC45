@@ -1,18 +1,16 @@
 package de.rothner.qc45;
 
-/** Independent, KSEM-backed last-resort protection for AC and DC. */
+/** Independent, KSEM-backed proportional protection and thermal hard-trip. */
 public final class GridFailback extends Thread {
     private static final int HEALTHY_READS_TO_RESUME = 5;
+    private static final long REDUCTION_SETTLE_MS = 1000L;
     static final long MIN_HARD_TRIP_RESET_DELAY_MS = 60000L;
-    static final double SLS_NOMINAL_A = 35.0d;
-    // Use the lower current boundary of the magnetic E-characteristic. This
-    // deliberately assumes a preloaded SLS instead of a cold upper tolerance.
-    static final double SLS_E_INSTANT_MULTIPLIER = 5.0d;
-    static final double SLS_E_INSTANT_A = SLS_NOMINAL_A * SLS_E_INSTANT_MULTIPLIER;
 
-    private final ReflectionQC45 station;
-    private final KsemClient meter;
+    private final ChargingSessionIo station;
+    private final GridCurrentIo meter;
     private final ChargingLimitCoordinator limits;
+    private final double nominalA;
+    private final SlsThermalModel thermal;
     private final double reduceA;
     private final long reduceDelayMs;
     private final double tripA;
@@ -26,39 +24,54 @@ public final class GridFailback extends Thread {
     private volatile boolean running = true;
     private volatile boolean tripped;
     private volatile boolean meterPaused = true;
-    private volatile boolean overLimitPaused;
-    private long reduceSince;
-    private long tripSince;
-    private long currentTripDelayMs = Long.MAX_VALUE;
+    private long reduceSince = -1L;
+    private long tripSince = -1L;
+    private long lastReductionAt = -1L;
     private long resetSince;
     private long lastGridLog;
-    private long lastControlErrorLog;
-    private long lastMeterErrorLog;
+    private long lastErrorLog;
     private long lastResetDeferredLog;
     private long lastStopErrorLog;
     private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
     private int goodMeterReads;
-    private int goodOverLimitReads;
+    private int goodRecoveryReads;
     private boolean stageReduced;
+    private int dcCapKw = Integer.MAX_VALUE;
+    private int acCapKw = Integer.MAX_VALUE;
 
     public GridFailback(ReflectionQC45 station, KsemClient meter,
                         ChargingLimitCoordinator limits,
                         double reduceA, long reduceDelayMs,
                         double tripA, long tripDelayMs, double instantTripA,
                         int reduceDcKw, int reduceAcKw, int intervalMs,
-                        long resetDelayMs) {
+                        long resetDelayMs, double nominalA, long thermalTimeConstantMs) {
+        this((ChargingSessionIo)station, (GridCurrentIo)meter, limits,
+            reduceA, reduceDelayMs, tripA, tripDelayMs, instantTripA,
+            reduceDcKw, reduceAcKw, intervalMs, resetDelayMs, nominalA, thermalTimeConstantMs);
+    }
+
+    GridFailback(ChargingSessionIo station, GridCurrentIo meter,
+                 ChargingLimitCoordinator limits,
+                 double reduceA, long reduceDelayMs,
+                 double tripA, long tripDelayMs, double instantTripA,
+                 int reduceDcKw, int reduceAcKw, int intervalMs,
+                 long resetDelayMs, double nominalA, long thermalTimeConstantMs) {
         super("QC45-Grid-Failback");
         setDaemon(true);
-        if (station == null || meter == null || limits == null) throw new IllegalArgumentException("station, meter and limits are required");
-        if (reduceA <= 0.0d || reduceA >= tripA || tripA >= instantTripA
-                || reduceDelayMs < 0L || tripDelayMs < 0L || intervalMs <= 0
+        if (station == null || meter == null || limits == null) {
+            throw new IllegalArgumentException("station, meter and limits are required");
+        }
+        Integration.validateFailbackThresholds(reduceA, tripA, instantTripA, nominalA);
+        if (reduceDelayMs < 0L || tripDelayMs < 0L || intervalMs <= 0
                 || reduceDcKw < 0 || reduceAcKw < 0
                 || resetDelayMs < MIN_HARD_TRIP_RESET_DELAY_MS) {
-            throw new IllegalArgumentException("invalid failback thresholds or timing");
+            throw new IllegalArgumentException("invalid failback timing or power limits");
         }
         this.station = station;
         this.meter = meter;
         this.limits = limits;
+        this.nominalA = nominalA;
+        this.thermal = new SlsThermalModel(nominalA, thermalTimeConstantMs);
         this.reduceA = reduceA;
         this.reduceDelayMs = reduceDelayMs;
         this.tripA = tripA;
@@ -72,7 +85,8 @@ public final class GridFailback extends Thread {
 
     public boolean isTripped() { return tripped; }
     public boolean isMeterPaused() { return meterPaused; }
-    public boolean isChargingBlocked() { return tripped || meterPaused || overLimitPaused; }
+    public boolean isChargingBlocked() { return tripped || meterPaused; }
+    double thermalExposure() { return thermal.exposure(); }
 
     public void shutdown() {
         safeSetBlocked(true);
@@ -82,53 +96,38 @@ public final class GridFailback extends Thread {
 
     public void run() {
         safeSetBlocked(true);
-        System.out.println("[QC45] GridFailback started AC+DC hard-trip-reset="
-            + "timed(" + resetDelayMs + "ms)"
-            + " stable-below=" + one(reduceA) + "A SLS=E35 instant="
-            + one(instantTripA) + "A");
-
+        System.out.println("[QC45] GridFailback started SLS=E" + one(nominalA)
+            + " reduce=" + one(reduceA) + "A fastReduce=" + one(tripA)
+            + "A instant=" + one(instantTripA) + "A proportional=true thermal=per-phase"
+            + " reset=" + resetDelayMs + "ms");
         while (running) {
-            long now = System.currentTimeMillis();
-            KsemClient.Currents currents;
-            try {
-                currents = meter.readCurrents();
-            } catch (Throwable e) {
-                onMeterFailure(now, e);
-                if (tripped) retryRemoteStops(now);
-                sleepLoop();
-                continue;
-            }
+            runCycle(System.currentTimeMillis());
+            try { Thread.sleep(intervalMs); }
+            catch (InterruptedException e) { if (!running) break; }
+        }
+        System.out.println("[QC45] GridFailback stopped");
+    }
 
+    void runCycle(long now) {
+        try {
+            KsemClient.Currents currents = meter.readCurrents();
+            thermal.update(now, currents);
             double max = currents.max();
             if (now - lastGridLog >= 5000L) {
                 System.out.println("[QC45] Grid L1=" + one(currents.l1) + "A L2="
                     + one(currents.l2) + "A L3=" + one(currents.l3) + "A max="
-                    + one(max) + "A" + stateSuffix());
+                    + one(max) + "A SLS=" + one(nominalA)
+                    + "A thermal=" + one(100.0d * thermal.exposure()) + "%"
+                    + (tripped ? " HARD-TRIPPED" : meterPaused ? " METER-PAUSED"
+                        : stageReduced ? " PROPORTIONALLY-REDUCED" : ""));
                 lastGridLog = now;
             }
-
-            try {
-                evaluate(now, max);
-            } catch (Throwable e) {
-                safeSetBlocked(true);
-                if (now - lastControlErrorLog >= 5000L) {
-                    System.err.println("[QC45] GridFailback control failure -> AC/DC=0kW: " + e);
-                    lastControlErrorLog = now;
-                }
-            }
-            try {
-                limits.reconcile();
-            } catch (Throwable e) {
-                safeSetBlocked(true);
-                if (now - lastControlErrorLog >= 5000L) {
-                    System.err.println("[QC45] GridFailback limit reconciliation failed -> AC/DC=0kW: " + e);
-                    lastControlErrorLog = now;
-                }
-            }
-            if (tripped) retryRemoteStops(now);
-            sleepLoop();
+            evaluate(now, max);
+            limits.reconcile();
+        } catch (Throwable error) {
+            onMeterOrControlFailure(now, error);
         }
-        System.out.println("[QC45] GridFailback stopped");
+        if (tripped) retryRemoteStops(now);
     }
 
     private void evaluate(long now, double max) throws Exception {
@@ -136,58 +135,25 @@ public final class GridFailback extends Thread {
             evaluateHardTripReset(now, max);
             return;
         }
-
         if (max >= instantTripA) {
             hardTrip("instant phase current " + one(max) + "A >= " + one(instantTripA) + "A");
             return;
         }
-
-        if (max >= tripA) {
-            goodOverLimitReads = 0;
-            goodMeterReads = 0;
-            long requiredDelayMs = requiredHardTripDelayMs(max, tripDelayMs);
-            if (!overLimitPaused) {
-                overLimitPaused = true;
-                meterPaused = false;
-                safeSetBlocked(true);
-                System.err.println("[QC45] GRID FAILBACK OVER-LIMIT PAUSE: " + one(max)
-                    + "A >= " + one(tripA) + "A -> AC/DC=0kW; SLS-E hard-trip="
-                    + delayDescription(requiredDelayMs));
-            }
-            if (requiredDelayMs == Long.MAX_VALUE) {
-                // Up to 1.05 x In is inside the SLS-E non-tripping test range.
-                // The charging pause stays active, but it must not accumulate a
-                // latched trip that would require an E-STOP reset.
-                tripSince = 0L;
-                currentTripDelayMs = Long.MAX_VALUE;
-            } else if (tripSince == 0L) {
-                tripSince = now;
-                currentTripDelayMs = requiredDelayMs;
-            } else {
-                currentTripDelayMs = requiredDelayMs;
-                if (now - tripSince >= requiredDelayMs) {
-                    hardTrip("SLS-E time/current envelope exceeded at " + one(max)
-                        + "A after " + (now - tripSince) + "ms (required "
-                        + requiredDelayMs + "ms)");
-                }
-            }
+        if (thermal.overloaded()) {
+            hardTrip("accumulated SLS E" + one(nominalA) + " thermal exposure at "
+                + one(max) + "A");
             return;
         }
 
-        // A trip timer represents continuous exposure and must also reset in
-        // the 34..35 A band.
-        tripSince = 0L;
-        currentTripDelayMs = Long.MAX_VALUE;
-
         if (meterPaused) {
-            if (max < reduceA) {
+            if (max < Math.min(reduceA, nominalA)) {
                 goodMeterReads++;
                 if (goodMeterReads >= HEALTHY_READS_TO_RESUME) {
                     prepareSafeResume();
                     limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
                     meterPaused = false;
                     goodMeterReads = 0;
-                    System.out.println("[QC45] GRID FAILBACK KSEM RECOVERED: five valid reads; charging may ramp");
+                    System.out.println("[QC45] GRID FAILBACK KSEM RECOVERED: five valid reads");
                 }
             } else {
                 goodMeterReads = 0;
@@ -195,55 +161,90 @@ public final class GridFailback extends Thread {
             return;
         }
 
-        if (overLimitPaused) {
-            if (max < reduceA) {
-                goodOverLimitReads++;
-                if (goodOverLimitReads >= HEALTHY_READS_TO_RESUME) {
-                    prepareSafeResume();
-                    limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
-                    overLimitPaused = false;
-                    goodOverLimitReads = 0;
-                    System.out.println("[QC45] GRID FAILBACK OVER-LIMIT RECOVERED: five reads below "
-                        + one(reduceA) + "A");
-                }
-            } else {
-                goodOverLimitReads = 0;
-            }
-            return;
+        if (max >= reduceA) {
+            goodRecoveryReads = 0;
+            if (reduceSince < 0L || now < reduceSince) reduceSince = now;
+        } else {
+            reduceSince = -1L;
+        }
+        if (max >= tripA) {
+            goodRecoveryReads = 0;
+            if (tripSince < 0L || now < tripSince) tripSince = now;
+        } else {
+            tripSince = -1L;
         }
 
-        if (max >= reduceA) {
-            if (reduceSince == 0L) reduceSince = now;
-            if (!stageReduced && now - reduceSince >= reduceDelayMs) {
-                limits.setStageCaps(reduceDcKw, reduceAcKw);
-                stageReduced = true;
-                System.err.println("[QC45] GRID FAILBACK REDUCE: DC<=" + reduceDcKw
-                    + "kW AC<=" + reduceAcKw + "kW");
+        boolean fastReduction = tripSince >= 0L && now - tripSince >= tripDelayMs;
+        boolean reduction = reduceSince >= 0L && now - reduceSince >= reduceDelayMs;
+        if (fastReduction || reduction) {
+            if (now < lastReductionAt) lastReductionAt = -1L;
+            if (lastReductionAt < 0L || now - lastReductionAt >= REDUCTION_SETTLE_MS) {
+                reduceProportionally(now, max, fastReduction);
+            }
+        } else if (max < Math.min(reduceA, nominalA) && stageReduced) {
+            if (++goodRecoveryReads >= HEALTHY_READS_TO_RESUME) {
+                // Keep the present allocation. Clearing a cap must neither
+                // restore an old high value nor reset a good session to 5 kW.
+                limits.releaseStageCapsAtCurrentTargets();
+                stageReduced = false;
+                dcCapKw = Integer.MAX_VALUE;
+                acCapKw = Integer.MAX_VALUE;
+                lastReductionAt = -1L;
+                goodRecoveryReads = 0;
+                System.out.println("[QC45] GRID FAILBACK REDUCTION CLEARED at current targets");
             }
         } else {
-            reduceSince = 0L;
-            if (stageReduced) {
-                prepareSafeResume();
-                limits.clearStageCaps();
-                stageReduced = false;
-                System.out.println("[QC45] GRID FAILBACK REDUCTION CLEARED");
-            }
+            goodRecoveryReads = 0;
         }
     }
 
-    private void onMeterFailure(long now, Throwable error) {
-        goodMeterReads = 0;
-        resetSince = 0L;
-        tripSince = 0L;
-        currentTripDelayMs = Long.MAX_VALUE;
-        if (!tripped) {
-            meterPaused = true;
-            overLimitPaused = false;
+    private void reduceProportionally(long now, double max, boolean fast) throws Exception {
+        ChargingLimitCoordinator.Snapshot snapshot = limits.snapshot();
+        double excessA = Math.max(0.0d, max - Math.min(nominalA, reduceA));
+        int nextDc = dcCapKw;
+        int nextAc = acCapKw;
+        if (snapshot.activeDcConnector > 0) {
+            nextDc = reducedCap(snapshot.activeDcConnector,
+                snapshot.effectiveDcKw, dcCapKw, reduceDcKw, excessA, 0.692820323d);
         }
+        if (limits.acManaged() && snapshot.acActive) {
+            nextAc = reducedCap(3, snapshot.effectiveAcKw, acCapKw,
+                reduceAcKw, excessA, 0.23d);
+        }
+        lastReductionAt = now;
+        if (nextDc == dcCapKw && nextAc == acCapKw) return;
+        limits.setStageCaps(nextDc, nextAc);
+        dcCapKw = nextDc;
+        acCapKw = nextAc;
+        stageReduced = true;
+        System.err.println("[QC45] GRID FAILBACK PROPORTIONAL REDUCE max=" + one(max)
+            + "A SLS=" + one(nominalA) + "A fast=" + fast + " DCcap=" + cap(nextDc)
+            + " ACcap=" + cap(nextAc) + " thermal=" + one(100.0d * thermal.exposure()) + "%");
+    }
+
+    private int reducedCap(int connector, int enforcedKw, int previousCapKw,
+                           int floorKw, double excessA, double kwPerA) throws Exception {
+        int actualKw = station.powerKw(connector);
+        if (actualKw < 0) throw new IllegalArgumentException("invalid connector power");
+        int decrement = Math.max(1, (int)Math.ceil(excessA * kwPerA));
+        // An unimplemented decrease is not subtracted from the command again.
+        int respondingKw = Math.max(enforcedKw, actualKw);
+        int next = Math.max(floorKw, respondingKw - decrement);
+        return Math.min(previousCapKw, Math.min(Math.max(floorKw, enforcedKw), next));
+    }
+
+    private void onMeterOrControlFailure(long now, Throwable error) {
+        goodMeterReads = 0;
+        goodRecoveryReads = 0;
+        resetSince = 0L;
+        reduceSince = -1L;
+        tripSince = -1L;
+        thermal.forgetReading();
+        if (!tripped) meterPaused = true;
         safeSetBlocked(true);
-        if (now - lastMeterErrorLog >= 5000L) {
-            System.err.println("[QC45] GridFailback KSEM failure -> AC/DC=0kW: " + error);
-            lastMeterErrorLog = now;
+        if (now - lastErrorLog >= 5000L) {
+            System.err.println("[QC45] GridFailback measurement/control failure -> Notladen: " + error);
+            lastErrorLog = now;
         }
     }
 
@@ -251,28 +252,22 @@ public final class GridFailback extends Thread {
         if (tripped) return;
         tripped = true;
         meterPaused = false;
-        overLimitPaused = false;
         resetSince = 0L;
         safeSetBlocked(true);
         System.err.println("[QC45] GRID FAILBACK HARD TRIP: " + reason
-            + " [latched; automatic reset after " + resetDelayMs
-            + "ms continuously below " + one(reduceA) + "A]");
+            + " [latched; reset after cooling and " + resetDelayMs + "ms stable readings]");
     }
 
     private void evaluateHardTripReset(long now, double max) throws Exception {
-        if (max >= reduceA) {
+        if (max >= Math.min(reduceA, nominalA) || thermal.exposure() > 0.25d) {
             resetSince = 0L;
             return;
         }
-
-        if (resetSince == 0L) {
-            resetSince = now;
-        } else if (now - resetSince >= resetDelayMs) {
-            clearHardTrip("grid stable for " + (now - resetSince) + "ms");
-        }
+        if (resetSince == 0L || now < resetSince) resetSince = now;
+        else if (now - resetSince >= resetDelayMs) clearHardTrip();
     }
 
-    private synchronized void clearHardTrip(String reason) throws Exception {
+    private synchronized void clearHardTrip() throws Exception {
         if (!tripped) return;
         if (anySessionActive()) {
             long now = System.currentTimeMillis();
@@ -286,24 +281,27 @@ public final class GridFailback extends Thread {
         limits.clearStageCaps();
         limits.setBlocked(ChargingLimitCoordinator.FAILBACK, false);
         tripped = false;
-        reduceSince = 0L;
-        tripSince = 0L;
-        currentTripDelayMs = Long.MAX_VALUE;
+        reduceSince = -1L;
+        tripSince = -1L;
+        lastReductionAt = -1L;
         resetSince = 0L;
         stageReduced = false;
-        System.out.println("[QC45] GRID FAILBACK RESET: " + reason);
+        dcCapKw = Integer.MAX_VALUE;
+        acCapKw = Integer.MAX_VALUE;
+        // Retain actual thermal history; a reset is not instantaneous cooling.
+        System.out.println("[QC45] GRID FAILBACK RESET: grid stable and thermal exposure recovered");
     }
 
     private void retryRemoteStops(long now) {
         for (int connector = 1; connector <= (limits.acManaged() ? 3 : 2); connector++) {
-            if (now - lastStopAttempt[connector] < 2000L) continue;
+            if (lastStopAttempt[connector] > 0L && now - lastStopAttempt[connector] < 2000L) continue;
             lastStopAttempt[connector] = now;
             try {
                 if (station.sessionActive(connector)) station.remoteStop(connector);
-            } catch (Throwable e) {
+            } catch (Throwable error) {
                 if (now - lastStopErrorLog >= 5000L) {
                     System.err.println("[QC45] hard-trip RemoteStop retry connector="
-                        + connector + " failed: " + e);
+                        + connector + " failed: " + error);
                     lastStopErrorLog = now;
                 }
             }
@@ -318,69 +316,19 @@ public final class GridFailback extends Thread {
     }
 
     private void prepareSafeResume() throws Exception {
-        // Never expose an allocation calculated before the safety block. The
-        // LoadManager must publish a fresh target from a post-recovery reading.
         limits.setGridTargets(0, false, 0, 0);
     }
 
     private void safeSetBlocked(boolean blocked) {
         try { limits.setBlocked(ChargingLimitCoordinator.FAILBACK, blocked); }
-        catch (Throwable e) { System.err.println("[QC45] failback limit enforcement failed: " + e); }
-    }
-
-    private String stateSuffix() {
-        if (tripped) return " HARD-TRIPPED";
-        if (meterPaused) return " METER-PAUSED";
-        if (overLimitPaused) return " OVER-LIMIT-PAUSED";
-        if (stageReduced) return " REDUCED";
-        return "";
-    }
-
-    private void sleepLoop() {
-        long sleepMs = intervalMs;
-        long now = System.currentTimeMillis();
-        if (!tripped && overLimitPaused && tripSince > 0L) {
-            long remaining = currentTripDelayMs - (now - tripSince);
-            if (remaining > 0L) sleepMs = Math.min(sleepMs, remaining);
-        }
-        if (!tripped && !stageReduced && reduceSince > 0L) {
-            long remaining = reduceDelayMs - (now - reduceSince);
-            if (remaining > 0L) sleepMs = Math.min(sleepMs, remaining);
-        }
-        try { Thread.sleep(Math.max(1L, sleepMs)); }
-        catch (InterruptedException e) { if (!running) return; }
+        catch (Throwable error) { System.err.println("[QC45] failback limit enforcement failed: " + error); }
     }
 
     private static String one(double value) {
         return String.format(java.util.Locale.US, "%.1f", Double.valueOf(value));
     }
 
-    /**
-     * Conservative software envelope derived from the SLS E time/current
-     * characteristic. The charger is already blocked at tripA; this delay only
-     * decides whether the event must additionally become a latched hard trip.
-     */
-    static long requiredHardTripDelayMs(double currentA, long minimumDelayMs) {
-        double multiple = currentA / SLS_NOMINAL_A;
-        long characteristicDelayMs;
-        if (multiple < 1.05d) return Long.MAX_VALUE;
-        if (multiple < 1.20d) characteristicDelayMs = 3600000L;
-        else if (multiple < 1.50d) characteristicDelayMs = 300000L;
-        else if (multiple < 2.00d) characteristicDelayMs = 60000L;
-        else if (multiple < 3.00d) characteristicDelayMs = 10000L;
-        else if (multiple < 5.00d) characteristicDelayMs = 1000L;
-        else characteristicDelayMs = 100L;
-        return Math.max(minimumDelayMs, characteristicDelayMs);
-    }
-
-    private static String delayDescription(long delayMs) {
-        if (delayMs == Long.MAX_VALUE) return "disabled below 1.05xIn";
-        if (delayMs >= 60000L && delayMs % 60000L == 0L) {
-            return (delayMs / 60000L) + "min continuous";
-        }
-        if (delayMs >= 1000L && delayMs % 1000L == 0L) {
-            return (delayMs / 1000L) + "s continuous";
-        }
-        return delayMs + "ms continuous";
+    private static String cap(int kw) {
+        return kw == Integer.MAX_VALUE ? "none" : kw + "kW";
     }
 }

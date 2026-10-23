@@ -195,6 +195,14 @@ public final class ChargingLimitCoordinator {
         apply(false);
     }
 
+    /** Release protection caps without restoring an older, higher grid target. */
+    public synchronized void releaseStageCapsAtCurrentTargets() throws Exception {
+        int[] current = targets();
+        if (activeDcConnector > 0) gridDcKw = Math.min(gridDcKw, current[activeDcConnector]);
+        if (acActive) gridAcKw = Math.min(gridAcKw, current[3]);
+        clearStageCaps();
+    }
+
     public synchronized void setBlocked(String source, boolean blocked) throws Exception {
         if (source == null || source.trim().length() == 0) throw new IllegalArgumentException("block source is required");
         boolean changed = blocked ? blockers.add(source) : blockers.remove(source);

@@ -183,15 +183,15 @@ wenn zwei aufeinanderfolgende Leistungswerte die letzte Vorgabe bis auf 1 kW
 erreicht haben. Das gilt auch nach einer Reduzierung. Nahe dem Zielstrom werden
 die Schritte zusätzlich anhand des verfügbaren Stromabstands verkleinert.
 
-Der wirksame Stromsollwert ist das Minimum aus dem Zeitprofil (25 A Mo–Sa
-06:30–18:00 Uhr Europe/Berlin, sonst 35 A), `loadmanager.targetA` und
-`commandCeilingA - loadmanager.hysteresisA - 0,1 A`. Die Freigabegrenze
-`commandCeilingA` ist das Minimum aus `loadmanager.gridLimitA` und der
-Failback-Reduktionsschwelle. Bei 35 A Freigabegrenze, 34 A konfiguriertem Ziel
-und 1,5 A Hysterese ergibt das abends **33,4 A**.
+Der wirksame Stromsollwert ist das Minimum aus dem Zeitprofil,
+`loadmanager.targetA` und der Freigabegrenze. Tagsüber (Mo–Sa 06:30–18:00 Uhr
+Europe/Berlin) gilt `loadmanager.daytimeTargetA`, standardmäßig 25 A. Die
+Freigabegrenze ist das Minimum aus `sls.nominalA`, `loadmanager.gridLimitA`
+und bei aktivem Failback dessen Reduktionsschwelle. 34 A Ziel und 1,5 A
+Hysterese ergeben abends ein **34-A-Ziel mit 32,5–35,5-A-Haltebereich**.
 
-Ein Haltebereich von höchstens ±0,5 A (bei kleinerer Hysterese entsprechend
-schmaler) verhindert wiederholte 1-kW-Korrekturen durch kleine Messschwankungen.
+Der Haltebereich beträgt ±`min(loadmanager.hysteresisA, 5 % des Sollwerts)`
+und verhindert wiederholte 1-kW-Korrekturen durch kleine Messschwankungen.
 Bereits freigegebene, noch nicht abgerufene DC-Leistung wird mit konservativen
 0,60 kW je zusätzlichem Netzampere reserviert. Neue Erhöhungen müssen unter
 dem Sollwert selbst bleiben; der Haltebereich dient nur bestehenden Vorgaben.
@@ -199,8 +199,11 @@ Reduktionen werden aus der beobachteten Leistung berechnet, damit eine noch
 nicht umgesetzte Reduktion nicht in jedem Zyklus erneut abgezogen wird.
 
 Reduzierungen, Stopp, KSEM-Ausfall sowie evcc-Freigabeentzug umgehen die
-Aufwärtsrampe. Die sofortige 5-kW-Reduktion ab der Freigabegrenze und der
-separate GridFailback bleiben als Schutzpfade aktiv. Die DC-Ausgänge werden
+Aufwärtsrampe. Der separate GridFailback reduziert bei seinen konfigurierten
+Schwellen proportional, mit einer Sekunde Reaktionszeit zwischen Reduktionen.
+Nach Erholung setzt die Regelung bei der aktuellen Leistung fort. Ein
+thermisches I²-Modell mit Abkühlung je Phase und die Instant-Schwelle bleiben
+als Hard-Trip-Pfade aktiv. Die DC-Ausgänge werden
 im Ruhezustand höchstens mit dem physischen 5-kW-Notlade-Schutzwert
 vorgeladen, nicht mit dem verfügbaren KSEM-Maximum.
 
@@ -208,3 +211,11 @@ Der physische 5-kW-Schutzwert ist kein sicheres Aus. Für aktive DC-Sitzungen
 ohne gültige evcc-Freigabe ist weiterhin der separate RemoteStop-Wächter
 zuständig. Die Parametrierung muss vor öffentlichem Ladebetrieb im
 realen CHAdeMO- und CCS-Ladetest überprüft werden.
+
+`sls.nominalA` (Standard 35 A) skaliert die E-Überwachung und die magnetische
+Grenze `5 × In`; bei E50 also auf 250 A. Explizite Ziel-/Schutzwerte bleiben
+wirksam und werden nicht automatisch angehoben. Das thermische Modell ist eine
+zusätzliche Software-Schutzstrategie, keine exakte Hager-Kennlinie. Details,
+Herstellerquellen und ein 50-A-Beispiel stehen unter
+[`Grid-Failback`](../wiki/Grid-Failback.md) und
+[`Konfiguration und Betrieb`](../wiki/Konfiguration-und-Betrieb.md).

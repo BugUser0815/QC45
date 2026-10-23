@@ -38,15 +38,16 @@ public final class KsemDcAllocatorTest {
     }
 
     @Test
-    public void smallExcessGetsAProportionalReductionInsteadOfNotladen() {
-        assertEquals(33, plan(34, 34, 34.1d, 5));
+    public void configuredHoldBandToleratesLightExcess() {
+        assertEquals(34, plan(34, 34, 34.1d, 5));
+        assertEquals(32, plan(34, 34, 35.1d, 5));
     }
 
     @Test
     public void doesNotRepeatReductionBeforeOutputHasFallen() {
-        int first = plan(34, 34, 34.1d, 5);
-        assertEquals(33, first);
-        assertEquals(first, plan(first, 34, 34.1d, 5));
+        int first = plan(34, 34, 35.1d, 5);
+        assertEquals(32, first);
+        assertEquals(first, plan(first, 34, 35.1d, 5));
     }
 
     @Test
@@ -68,14 +69,14 @@ public final class KsemDcAllocatorTest {
 
     @Test
     public void pendingOutputIsReservedEvenWhenMeasuredCurrentIsInsideHoldBand() {
-        assertEquals(30, plan(35, 30, 33.1d, 5));
+        assertEquals(31, plan(35, 30, 33.1d, 5));
     }
 
     @Test
     public void undrawnPowerFitsConservativePhaseProjection() {
         int next = plan(20, 15, 28.0d, 5);
         double projectedA = 28.0d + Math.max(0, next - 15) / 0.60d;
-        assertTrue(projectedA <= 33.9d);
+        assertTrue(projectedA <= 34.9d);
     }
 
     @Test
