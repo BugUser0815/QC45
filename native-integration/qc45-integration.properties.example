@@ -18,6 +18,19 @@ ocpp15.loopback.path=/QC45
 ocpp15.loopback.heartbeatInterval=60
 ocpp15.bridge.timeoutMs=10000
 
+# Internal fleet AutoCharge (CCS / DIN only). Opt in after backend enrollment.
+# EVCCID -> per-vehicle backend idTag mapping is local; every attempt still
+# requires a fresh OCPP Authorize Accepted. No offline/cached authorization.
+autocharge.enabled=false
+# Use a persistent Geode internal address reachable from EVAcharge SE.
+# Loopback is suitable only with an explicitly configured local tunnel.
+autocharge.bindAddress=127.0.0.1
+autocharge.port=15119
+autocharge.allowedPeer=127.0.0.1
+autocharge.keyFile=/home/mobie/evcsd/qc45-autocharge-observer.key
+autocharge.vehiclesFile=/home/mobie/evcsd/qc45-autocharge-vehicles.properties
+autocharge.authorizeTimeoutMs=10000
+
 # Dashboard / Akkuboost
 dashboard.akkuboost.url=http://10.0.20.131:7070
 

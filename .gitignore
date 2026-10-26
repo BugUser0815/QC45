@@ -1,3 +1,8 @@
 native-integration/target/
 ui-patch/target/
 __pycache__/
+
+*.pyc
+observer.key
+agent.json
+qc45-autocharge-vehicles.properties

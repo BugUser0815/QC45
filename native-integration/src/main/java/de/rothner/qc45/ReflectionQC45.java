@@ -17,6 +17,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo,
     private final Class<?> configurationClass;
     private final Set<Integer> remoteConnectors = new HashSet<Integer>();
     private final Map<Integer,Long> remoteStartedAt = new HashMap<Integer,Long>();
+    private final Map<Integer,String> remoteStartedTags = new HashMap<Integer,String>();
     private final Set<Integer> remoteSessionObserved = new HashSet<Integer>();
 
     public ReflectionQC45() throws Exception {
@@ -469,6 +470,7 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo,
     private void clearRemoteMarker(Integer key) {
         remoteConnectors.remove(key);
         remoteStartedAt.remove(key);
+        remoteStartedTags.remove(key);
         remoteSessionObserved.remove(key);
     }
 
@@ -622,8 +624,16 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo,
             Integer key = Integer.valueOf(connector);
             remoteConnectors.add(key);
             remoteStartedAt.put(key, Long.valueOf(System.currentTimeMillis()));
+            remoteStartedTags.put(key, idTag);
             remoteSessionObserved.remove(key);
         }
+    }
+
+    /** Abort only the remote start carrying this tag, including its pending native phase. */
+    public synchronized void stopAutoChargeIfOwned(String expectedTag) throws Exception {
+        if (!expectedTag.equals(remoteStartedTags.get(Integer.valueOf(2))) || !isRemoteSession(2)) return;
+        String liveTag = idTag(2);
+        if (liveTag.length() == 0 || expectedTag.equals(liveTag)) remoteStop(2);
     }
 
     public void remoteStop(int connector) throws Exception {

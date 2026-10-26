@@ -51,6 +51,7 @@ public final class Ocpp15BridgeServer {
     private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private final Map<Integer,String> lastForwardedStatus = new HashMap<Integer,String>();
     private final Set<Integer> endingConnectors = new HashSet<Integer>();
+    private volatile FleetAutoCharge autoCharge;
     private HttpServer server;
     private ExecutorService executor;
 
@@ -73,6 +74,8 @@ public final class Ocpp15BridgeServer {
         this.station = station;
         this.limits = limits;
     }
+
+    void setAutoCharge(FleetAutoCharge policy) { autoCharge = policy; }
 
     public synchronized void start() throws Exception {
         if (server != null) return;
@@ -187,8 +190,17 @@ public final class Ocpp15BridgeServer {
             String json = "{" + n("connectorId", connector) + "," + q("idTag", idTag) + ","
                 + q("timestamp", ts) + "," + n("meterStart", longText(xml, "meterStart", 0))
                 + optionalNumber(xml, "reservationId") + "}";
-            String result = upstream.call("StartTransaction", json, timeoutMs);
-            int tx = fieldInt(result, "transactionId", -1);
+            String result;
+            try { result = upstream.call("StartTransaction", json, timeoutMs); }
+            catch (Exception e) {
+                FleetAutoCharge policy = autoCharge;
+                if (policy != null) policy.transactionStarted(connector, idTag, -1, false);
+                throw e;
+            }
+            int tx = OcppAuthorization.transactionId(result);
+            FleetAutoCharge policy = autoCharge;
+            if (policy != null) policy.transactionStarted(connector, idTag, tx,
+                OcppAuthorization.accepted(result, System.currentTimeMillis()));
             String authorization = nestedIdTagField(result, "status", "Invalid");
             if ("Accepted".equalsIgnoreCase(authorization) && tx >= 0) {
                 upstream.rememberTransaction(tx, connector);
@@ -201,7 +213,8 @@ public final class Ocpp15BridgeServer {
                 sendDerivedStatusBestEffort(connector);
             }
             return soapEnvelope("<startTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
-                + value("transactionId", String.valueOf(tx)) + idTagInfoXml(result, "Accepted")
+                + value("transactionId", String.valueOf(tx)) + (tx >= 0 ? idTagInfoXml(result, "Invalid")
+                    : "<idTagInfo><status>Invalid</status></idTagInfo>")
                 + "</startTransactionResponse>");
         }
         if ("meterValues".equals(op)) {
@@ -232,6 +245,8 @@ public final class Ocpp15BridgeServer {
             String reason = elementText(xml, "reason"); if (reason.length() > 0) json += "," + q("reason", reason);
             json += "}";
             String result = upstream.call("StopTransaction", json, timeoutMs);
+            FleetAutoCharge policy = autoCharge;
+            if (policy != null) policy.transactionEnded(tx);
             if (connector != null && connector.intValue() > 0) sendFinishingBestEffort(connector.intValue());
             if (result.indexOf("idTagInfo") >= 0) {
                 return soapEnvelope("<stopTransactionResponse xmlns=\"" + OCPP15_NS + "\">" + idTagInfoXml(result, "Accepted") + "</stopTransactionResponse>");

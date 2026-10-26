@@ -27,6 +27,7 @@ public final class Integration {
     private final KsemClient meter;
     private final EvcsdLagMonitor lagMonitor;
     private final RemoteStartAuthorizationFix remoteStartAuthorizationFix;
+    private AutoChargeServer autoCharge;
     private boolean startupHealthy = true;
 
     private Integration(ChargingLimitCoordinator limits,
@@ -310,6 +311,22 @@ public final class Integration {
         Integration integration = new Integration(
             limits, limitGuard, modbus, ocppBridge, ocpp15Bridge,
             loadManager, failback, meter, lagMonitor, authFix);
+        if (optionalEnabled(p, "autocharge.enabled", false)) {
+            try {
+                if (!safetyReady || !ccsV3Available || authFix == null || ocppBridge == null || ocpp15Bridge == null) {
+                    throw new IllegalStateException("AutoCharge requires healthy CCS, RemoteStart helper and both OCPP bridges");
+                }
+                integration.autoCharge = AutoChargeServer.configured(p, station, ocppBridge);
+                ocpp15Bridge.setAutoCharge(integration.autoCharge.policy);
+                integration.autoCharge.open();
+            } catch (Exception e) {
+                if (integration.autoCharge != null) integration.autoCharge.shutdown();
+                if (ocpp15Bridge != null) ocpp15Bridge.setAutoCharge(null);
+                integration.autoCharge = null;
+                communicationsReady = false;
+                System.err.println("[QC45] AutoCharge disabled after startup error; normal authorization remains available: " + e);
+            }
+        }
         integration.startupHealthy = safetyReady && communicationsReady;
         if (safetyReady) {
             System.out.println("[QC45] native integration started safety=fail-closed AC+DC coordinator=active");
@@ -351,6 +368,7 @@ public final class Integration {
             && limitGuard != null && limitGuard.isAlive()
             && (loadManager == null || loadManager.isAlive())
             && (failback == null || failback.isAlive())
+            && (autoCharge == null || autoCharge.healthy())
             && (modbus == null || modbus.isAlive())
             && (ocppBridge == null || ocppBridge.isAlive());
     }
@@ -499,6 +517,7 @@ public final class Integration {
         try { limits.setBlocked(ChargingLimitCoordinator.SHUTDOWN, true); }
         catch (Throwable e) { System.err.println("[QC45] shutdown safety zero failed: " + e); }
 
+        try { if (autoCharge != null) autoCharge.shutdown(); } catch (Throwable ignored) {}
         try { if (remoteStartAuthorizationFix != null) remoteStartAuthorizationFix.shutdown(); } catch (Throwable ignored) {}
         try { if (lagMonitor != null) lagMonitor.shutdown(); } catch (Throwable ignored) {}
         try { if (loadManager != null) loadManager.shutdown(); } catch (Throwable ignored) {}

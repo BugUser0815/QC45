@@ -1,0 +1,6 @@
+{
+  "host": "geode.internal.example",
+  "port": 15119,
+  "interface": "qca0",
+  "key_file": "/home/qc45-autocharge/observer.key"
+}

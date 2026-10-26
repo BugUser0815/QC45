@@ -1,0 +1,91 @@
+{
+  "generator": "EXIficient EXICodec 1.55",
+  "messages": [
+    {
+      "name": "din-short",
+      "namespace": "urn:din:70121:2012:MsgDef",
+      "decoded": {
+        "V2G_Message": {
+          "Header": {
+            "SessionID": "00"
+          },
+          "Body": {
+            "SessionSetupReq": {
+              "EVCCID": "020000000001"
+            }
+          }
+        }
+      },
+      "exi": "809a004011d01808000000000400"
+    },
+    {
+      "name": "din-eight",
+      "namespace": "urn:din:70121:2012:MsgDef",
+      "decoded": {
+        "V2G_Message": {
+          "Header": {
+            "SessionID": "0000000000000000"
+          },
+          "Body": {
+            "SessionSetupReq": {
+              "EVCCID": "020000000002"
+            }
+          }
+        }
+      },
+      "exi": "809a02000000000000000011d01808000000000800"
+    },
+    {
+      "name": "din-resume",
+      "namespace": "urn:din:70121:2012:MsgDef",
+      "decoded": {
+        "V2G_Message": {
+          "Header": {
+            "SessionID": "0100000000000000"
+          },
+          "Body": {
+            "SessionSetupReq": {
+              "EVCCID": "020000000001"
+            }
+          }
+        }
+      },
+      "exi": "809a02004000000000000011d01808000000000400"
+    },
+    {
+      "name": "iso2",
+      "namespace": "urn:iso:15118:2:2013:MsgDef",
+      "decoded": {
+        "V2G_Message": {
+          "Header": {
+            "SessionID": "0000000000000000"
+          },
+          "Body": {
+            "SessionSetupReq": {
+              "EVCCID": "020000000001"
+            }
+          }
+        }
+      },
+      "exi": "809802000000000000000011d01808000000000400"
+    },
+    {
+      "name": "sap",
+      "namespace": "urn:iso:15118:2:2010:AppProtocol",
+      "decoded": {
+        "supportedAppProtocolReq": {
+          "AppProtocol": [
+            {
+              "ProtocolNamespace": "urn:din:70121:2012:MsgDef",
+              "VersionNumberMajor": 2,
+              "VersionNumberMinor": 0,
+              "SchemaID": 1,
+              "Priority": 1
+            }
+          ]
+        }
+      },
+      "exi": "8000dbab9371d3234b71d1b981899189d191818991d26b9b3a232b30020000040040"
+    }
+  ]
+}
