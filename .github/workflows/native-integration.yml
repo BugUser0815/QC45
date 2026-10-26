@@ -7,6 +7,7 @@ on:
     paths:
       - 'native-integration/**'
       - 'deploy/qc45-integration/**'
+      - 'controller/autocharge/**'
       - '.github/workflows/native-integration.yml'
 
 jobs:
@@ -29,6 +30,12 @@ jobs:
             de.rothner.qc45.BootstrapListener | grep -F 'major version: 51'
       - name: Test deployment health verification
         run: python3 -m unittest discover -s deploy/qc45-integration/tests -v
+      - name: Test controller AutoCharge observer
+        run: |
+          python3 -m unittest discover -s controller/autocharge/tests -v
+          sh -n controller/autocharge/install.sh
+          sh -n controller/autocharge/run-agent.sh
+          sh -n controller/autocharge/qc45-autocharge-agent.init
       - uses: actions/upload-artifact@v4
         with:
           name: qc45-integration

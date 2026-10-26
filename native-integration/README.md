@@ -131,6 +131,16 @@ is already full without creating a large temporary copy. Rotation closes and
 reopens the active file, so space is not retained by a deleted open log.
 When following the active filename across rotations, use `tail -F`.
 
+## Fleet AutoCharge
+
+Optional CCS AutoCharge uses the observed EVCCID directly as the OCPP idTag
+(12 uppercase hex digits, no prefix or separators). Vehicle enrollment and
+authorization are handled by the backend. There is no local mapping or vehicle
+list. Every attempt requires fresh OCPP authorization; native EVCSD
+continues to own StartTransaction, MeterValues and StopTransaction. The feature
+is disabled by default and requires a separate passive observer on EVAcharge SE.
+See [setup and live acceptance steps](../controller/autocharge/README.md).
+
 ## OCPP behavior
 
 The native bridge supports the station functions required by the current installation, including:

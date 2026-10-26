@@ -1,0 +1,35 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          qc45-autocharge-agent
+# Required-Start:    $network
+# Required-Stop:     $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Read-only EVAcharge fleet identity observer
+### END INIT INFO
+set -eu
+pidfile=/run/qc45-autocharge-agent.pid
+runner=/home/qc45-autocharge/run-agent.sh
+owned_pid() {
+    [ -r "$pidfile" ] || return 1
+    pid=$(cat "$pidfile")
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    [ "$(tr '\000' '\n' < "/proc/$pid/cmdline" | sed -n '2p')" = "$runner" ]
+}
+case "${1:-}" in
+    start)
+        if owned_pid; then exit 0; fi
+        if [ -e "$pidfile" ]; then rm "$pidfile"; fi
+        /sbin/start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" --startas /bin/sh -- "$runner"
+        ;;
+    stop)
+        if owned_pid; then
+            /sbin/start-stop-daemon --stop --pidfile "$pidfile" --retry TERM/8/KILL/2
+            rm "$pidfile"
+        fi
+        ;;
+    restart) "$0" stop; "$0" start;;
+    status) if owned_pid; then echo 'AutoCharge observer supervisor running'; else echo 'AutoCharge observer stopped'; exit 3; fi;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2;;
+esac
