@@ -5,4 +5,3 @@ __pycache__/
 *.pyc
 observer.key
 agent.json
-qc45-autocharge-vehicles.properties

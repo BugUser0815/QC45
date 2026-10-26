@@ -5,17 +5,20 @@ noch keine Abnahme auf der echten QC45 oder am produktiven OCPP-Backend.
 
 ## Freigabe und Buchung
 
-Jedes Flottenfahrzeug erhält eine eigene OCPP-`idTag` im Backend. Eine lokale
-Datei ordnet seine EVCCID dieser Backend-Kennung zu. Die Zuordnung ist keine
-lokale Ladefreigabe: **Jeder neue Versuch benötigt ein frisches, erfolgreiches
-OCPP-`Authorize`**. Ablehnung, Timeout, Verbindungsfehler und ungültige Antworten
-geben keine automatische Ladung frei. Autorisierungen werden nicht gecacht.
+Die **EVCCID selbst ist das OCPP-Token (`idTag`)**: zwölf Hex-Zeichen in
+Großbuchstaben, ohne Präfix oder Trennzeichen. Dieselbe Kennung wird für
+`Authorize` und den nativen Start verwendet. Es gibt keine lokale Fahrzeugliste
+und keine Zuordnungsdatei. Registrierung, Freigabe und Kontozuordnung erfolgen
+ausschließlich im Backend. **Jeder neue Versuch benötigt ein frisches,
+erfolgreiches OCPP-`Authorize`**. Ablehnung, Timeout, Verbindungsfehler und
+ungültige Antworten geben keine automatische Ladung frei. Autorisierungen
+werden nicht gecacht.
 
 | Schritt | Ausführung |
 |---|---|
 | Fahrzeug erkennen | Python-Beobachter liest auf EVAcharge SE passiv die EVCCID aus einer neuen DIN-`SessionSetupReq` auf `qca0` |
-| Fahrzeug zuordnen | Geode sucht die EVCCID in der konfigurierten Flottendatei |
-| Autorisieren | Bestehende OCPP-1.6-WSS-Verbindung sendet `Authorize` mit der individuellen Fahrzeug-`idTag` |
+| Token verwenden | Geode verwendet die empfangene EVCCID direkt als `idTag` |
+| Autorisieren | Bestehende OCPP-1.6-WSS-Verbindung sendet `Authorize` mit dieser EVCCID; das Backend entscheidet |
 | Starten | Erst nach `Accepted` ruft die Integration den vorhandenen nativen RemoteStart für CCS-Connector 2 auf |
 | Transaktion anlegen | Original-EVCSD sendet `StartTransaction`; die bestehende SOAP-/JSON-Brücke reicht Kennung, Zeit und Zählerstand ans Backend weiter |
 | Energie und Ende buchen | Original-EVCSD und die vorhandene Brücke senden `MeterValues` und `StopTransaction` mit Backend-Transaktionsnummer |
@@ -29,9 +32,11 @@ Start-Tags und des aktuellen nativen Benutzers geschützt. Ein Backend-Ausfall
 während einer bereits bestätigten Transaktion bleibt im vorhandenen nativen
 OCPP-Lebenszyklus; diese Erweiterung ist keine neue Offline-Abrechnungsqueue.
 
-Für die Flottenauswertung müssen die einzelnen Backend-Kennungen dem richtigen
-Fahrzeug bzw. Firmenkonto zugeordnet sein. Die spätere Vollständigkeit von
-Zeit, Zählerständen und Energie ist Bestandteil des realen Abnahmetests.
+Für die Flottenauswertung werden die EVCCIDs im Backend den Fahrzeugen bzw.
+dem Firmenkonto zugeordnet. Auch eine dort noch nicht registrierte EVCCID wird
+zur Autorisierung ans Backend gesendet; eine Ablehnung startet keine Ladung.
+Die spätere Vollständigkeit von Zeit, Zählerständen und Energie ist Bestandteil
+des realen Abnahmetests.
 
 ## Grenzen und Sitzungszuordnung
 
@@ -49,7 +54,7 @@ Zeit, Zählerständen und Energie ist Bestandteil des realen Abnahmetests.
   Fahrzeug abstecken und neu verbinden.
 - Pro Verbindung gibt es höchstens einen Autorisierungsversuch. Nach
   Backend-Ablehnung, Timeout oder manuellem Stopp wird nicht automatisch erneut
-  gestartet. Nach Korrektur der Backend-Zuordnung neu verbinden.
+  gestartet. Nach Korrektur der Backend-Registrierung neu verbinden.
 - Die EVCCID muss am Fahrzeug über mehrere Plug-ins, Schlaf-/Neustartzyklen
   und später erneut auf Stabilität geprüft werden. Eine EVCCID ist kopierbar
   und kein kryptografischer Fahrzeugnachweis. Dies ist MAC-/EVCCID-basiertes
@@ -76,25 +81,17 @@ Mit Strg-C beenden. Vorgang nach Fahrzeugschlaf und erneutem Verbinden
 wiederholen. Die vollständige Fahrzeugkennung wird nur in diesem ausdrücklich
 gewählten Erfassungsmodus ausgegeben.
 
-Im OCPP-Backend pro Fahrzeug eine individuelle Kennung registrieren und dem
-Firmenkonto/Fahrzeug zuweisen. Beispiel ausschließlich mit synthetischer
-Kennung: `EV020000000001`. Das Backend muss die Kennung für diese Station
-autorisieren und seine Transaktionen dem gewünschten Konto zuordnen.
-Falls das Backend andere Kartenformate verlangt, kann die rechte Seite der
-Zuordnung eine passende vorhandene **fahrzeugspezifische** Kennung enthalten.
+Im OCPP-Backend **genau den ausgegebenen EVCCID-Wert** als Token registrieren
+und dem Firmenkonto/Fahrzeug zuweisen. Beispiel ausschließlich mit
+synthetischer Kennung: `02AABBCCDDEE`. Die OCPP-Nachrichten verwenden direkt
+`"idTag":"02AABBCCDDEE"`; es wird kein `EV`-Präfix ergänzt und keine andere
+Kartenkennung eingesetzt. Das Backend muss diese Kennung für die Station
+autorisieren und ihre Transaktionen dem gewünschten Konto zuordnen.
 
-Auf dem Geode eine private Datei
-`/home/mobie/evcsd/qc45-autocharge-vehicles.properties` anlegen:
-
-```properties
-# Synthetisches Beispiel, durch tatsächliche Fahrzeug-/Backend-Zuordnung ersetzen.
-020000000001=EV020000000001
-```
-
-Jede EVCCID und jede `idTag` darf nur einmal vorkommen. Die Backend-Kennung
-darf 1–20 Zeichen aus Buchstaben, Ziffern, `_` und `-` enthalten. Die Datei
-wird beim Start geladen; Änderungen benötigen einen Integrationsneustart.
-Fahrzeuglisten, Schlüssel und produktive Konfiguration gehören nicht ins Repo.
+Auf Geode und EVAcharge ist keine Fahrzeugregistrierung erforderlich.
+Änderungen an der Flotte erfolgen im Backend und benötigen keinen
+Integrationsneustart. Echte Fahrzeugkennungen, Schlüssel und produktive
+Konfiguration gehören nicht ins Repo.
 
 ## 2. Beobachterverbindung einrichten
 
@@ -133,8 +130,8 @@ dieser Installer verändert keine Netzwerkschnittstelle.
 
 Die neue `qc45-integration.jar` mit dem vorhandenen Deployment-Verfahren
 ausliefern. Die Funktion ist standardmäßig aus. Erst mit vorbereiteten
-Backend-Kennungen und Dateien in der privaten Integrationskonfiguration
-aktivieren:
+EVCCIDs im Backend und dem gemeinsamen Beobachterschlüssel in der privaten
+Integrationskonfiguration aktivieren:
 
 ```properties
 autocharge.enabled=true
@@ -142,7 +139,6 @@ autocharge.bindAddress=<ERREICHBARE_INTERNE_GEODE_ADRESSE>
 autocharge.port=15119
 autocharge.allowedPeer=<INTERNE_EVAcharge_QUELLADRESSE>
 autocharge.keyFile=/home/mobie/evcsd/qc45-autocharge-observer.key
-autocharge.vehiclesFile=/home/mobie/evcsd/qc45-autocharge-vehicles.properties
 autocharge.authorizeTimeoutMs=10000
 ```
 
@@ -175,13 +171,14 @@ Geode-Log und der reale Fahrzeugtest geprüft werden.
 
 1. Im Geode-Log `AutoCharge fleet receiver started` prüfen. Geode-Uhrzeit und
    Backend-Verbindung kontrollieren. Fahrzeug frisch verbinden.
-2. Registriertes Fahrzeug: im Backend `Authorize` mit seiner Kennung und
+2. Registriertes Fahrzeug: im Backend `Authorize` mit seiner EVCCID und
    `Accepted`, anschließend genau einen akzeptierten `StartTransaction` für
    Connector 2 mit **derselben Kennung** nachweisen.
 3. `MeterValues` mit Energie/Zeit erfassen und ein reguläres Ladeende prüfen:
    `StopTransaction`, passende Transaktionsnummer und plausibler Endzählerstand.
-4. Nicht registriertes Fahrzeug und im Backend gesperrte Kennung: keine
-   automatische Ladung. Normale autorisierte Kartenfreigabe separat testen.
+4. Nicht registriertes Fahrzeug und im Backend gesperrte EVCCID: das Backend
+   muss `Authorize` ablehnen; keine automatische Ladung. Normale autorisierte
+   Kartenfreigabe separat testen.
 5. Backend vor Start nicht erreichbar, abstecken während `Authorize`, Neustart
    von Beobachter/Geode und manueller Backend-Stopp: keine alte Kennung darf
    neu starten. Backend-Transaktionsablehnung/-Timeout muss zum Stopp führen.

@@ -1,10 +1,6 @@
 package de.rothner.qc45;
 
-import java.util.Collections;
 import java.util.LinkedHashSet;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
 import java.util.Set;
 
 /** Connector-2 AutoCharge policy. All authorizations are fresh backend decisions. */
@@ -20,16 +16,15 @@ final class FleetAutoCharge {
     private final Backend backend;
     private final Station station;
     private final Clock clock;
-    private final Map<String,String> vehicles;
     private final long observationTimeoutMs, transactionTimeoutMs;
     private final Set<String> attempted = new LinkedHashSet<String>();
     private Observation current;
     private Owned owned;
     private boolean running = true;
 
-    FleetAutoCharge(Backend backend, Station station, Clock clock, Properties vehicles,
+    FleetAutoCharge(Backend backend, Station station, Clock clock,
                     long observationTimeoutMs, long transactionTimeoutMs) {
-        if (backend == null || station == null || clock == null || vehicles == null
+        if (backend == null || station == null || clock == null
                 || observationTimeoutMs < 1000 || observationTimeoutMs > 5000
                 || transactionTimeoutMs < 1000 || transactionTimeoutMs > 30000) {
             throw new IllegalArgumentException("invalid AutoCharge policy");
@@ -37,24 +32,8 @@ final class FleetAutoCharge {
         this.backend = backend;
         this.station = station;
         this.clock = clock;
-        this.vehicles = vehicleMap(vehicles);
         this.observationTimeoutMs = observationTimeoutMs;
         this.transactionTimeoutMs = transactionTimeoutMs;
-    }
-
-    static Map<String,String> vehicleMap(Properties properties) {
-        Map<String,String> result = new HashMap<String,String>();
-        Set<String> tags = new LinkedHashSet<String>();
-        for (String key : properties.stringPropertyNames()) {
-            String id = evccId(key);
-            String tag = properties.getProperty(key).trim();
-            if (!tag.matches("[A-Za-z0-9_-]{1,20}") || result.containsKey(id) || !tags.add(tag)) {
-                throw new IllegalArgumentException("AutoCharge requires unique EVCCIDs and per-vehicle OCPP idTags (1..20 ASCII characters)");
-            }
-            result.put(id, tag);
-        }
-        if (result.isEmpty()) throw new IllegalArgumentException("AutoCharge fleet is empty");
-        return Collections.unmodifiableMap(result);
     }
 
     static String evccId(String input) {
@@ -90,8 +69,7 @@ final class FleetAutoCharge {
         synchronized (this) {
             candidate = current;
             if (!fresh(candidate) || owned != null || attempted.contains(candidate.token)) return;
-            tag = vehicles.get(candidate.evccId);
-            if (tag == null) { rememberAttempt(candidate.token); log("vehicle outside configured fleet; normal authorization remains available"); return; }
+            tag = candidate.evccId;
         }
         if (!station.available()) return;
         synchronized (this) {

@@ -35,9 +35,6 @@ final class AutoChargeServer extends Thread {
         if (timeout < 1000 || timeout > 10000) throw new IllegalArgumentException("AutoCharge Authorize timeout must be 1000..10000 ms");
         final int authorizeTimeout = timeout;
         byte[] key = readKey(new File(required(properties, "autocharge.keyFile")));
-        Properties vehicles = new Properties();
-        InputStream in = new FileInputStream(required(properties, "autocharge.vehiclesFile"));
-        try { vehicles.load(in); } finally { in.close(); }
         FleetAutoCharge policy = new FleetAutoCharge(new FleetAutoCharge.Backend() {
             public String authorize(String idTag) throws Exception {
                 return backend.call("Authorize", "{\"idTag\":\"" + idTag + "\"}", authorizeTimeout);
@@ -56,7 +53,7 @@ final class AutoChargeServer extends Thread {
         }, new FleetAutoCharge.Clock() {
             public long monotonicMillis() { return System.nanoTime() / 1000000L; }
             public long wallMillis() { return System.currentTimeMillis(); }
-        }, vehicles, 3000L, 15000L);
+        }, 3000L, 15000L);
         return new AutoChargeServer(InetAddress.getByName(bind), port,
             InetAddress.getByName(peer), key, policy);
     }

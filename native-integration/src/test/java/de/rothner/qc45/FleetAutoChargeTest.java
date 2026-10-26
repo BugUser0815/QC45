@@ -1,12 +1,11 @@
 package de.rothner.qc45;
 
 import java.io.ByteArrayInputStream;
-import java.util.Properties;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
 public final class FleetAutoChargeTest {
-    private static final String ID = "020000000001", TAG = "EV020000000001";
+    private static final String ID = "02AABBCCDDEE", TAG = ID;
     private static final String TOKEN = "00000000000000000000000000000001";
     private static final String OTHER = "00000000000000000000000000000002";
     private static final String YES = "{\"idTagInfo\":{\"status\":\"Accepted\"}}";
@@ -15,18 +14,17 @@ public final class FleetAutoChargeTest {
         long time = 1000;
         int authorizations, starts, stops;
         boolean available = true, throwsAuthorize;
-        String answer = YES, tag;
+        String answer = YES, tag, expectedTag = ID;
         Runnable duringAuthorize, duringStart;
         final Object source = new Object();
         final FleetAutoCharge policy;
         Rig() {
-            Properties vehicles = new Properties(); vehicles.setProperty(ID, TAG);
-            policy = new FleetAutoCharge(this, this, this, vehicles, 3000L, 15000L);
+            policy = new FleetAutoCharge(this, this, this, 3000L, 15000L);
         }
         public long monotonicMillis() { return time; }
         public long wallMillis() { return 1793000000000L; }
         public String authorize(String value) throws Exception {
-            authorizations++; assertEquals(TAG, value);
+            authorizations++; assertEquals(expectedTag, value);
             if (duringAuthorize != null) duringAuthorize.run();
             if (throwsAuthorize) throw new java.io.IOException("offline");
             return answer;
@@ -46,9 +44,11 @@ public final class FleetAutoChargeTest {
         rig.observe(); rig.policy.authorizeCurrent(); assertEquals(1, rig.authorizations);
     }
 
-    @Test public void unknownVehicleDoesNotCallBackendOrStart() throws Exception {
-        Rig rig = new Rig(); rig.policy.observe(rig.source, TOKEN, "020000000002"); rig.policy.authorizeCurrent();
-        assertEquals(0, rig.authorizations); assertEquals(0, rig.starts);
+    @Test public void vehicleIsSentDirectlyToBackendAndRejectedThere() throws Exception {
+        Rig rig = new Rig(); rig.expectedTag = "02AABBCCDD01";
+        rig.answer = "{\"idTagInfo\":{\"status\":\"Invalid\"}}";
+        rig.policy.observe(rig.source, TOKEN, rig.expectedTag); rig.policy.authorizeCurrent();
+        assertEquals(1, rig.authorizations); assertEquals(0, rig.starts);
     }
 
     @Test public void everyBackendDenialAndMalformedReplyKeepsChargeLocked() throws Exception {
@@ -181,9 +181,17 @@ public final class FleetAutoChargeTest {
         Rig rig = new Rig(); rig.observe(); rig.policy.observe(rig.source, TOKEN, "020000000002");
     }
 
-    @Test(expected=IllegalArgumentException.class) public void sharedFleetTagIsRejectedForVehicleAccounting() {
-        Properties properties = new Properties(); properties.setProperty(ID, TAG); properties.setProperty("020000000002", TAG);
-        FleetAutoCharge.vehicleMap(properties);
+    @Test public void anotherVehicleRequiresNoLocalEnrollmentAndUsesItsOwnEvccid() throws Exception {
+        Rig rig = new Rig(); rig.expectedTag = "02AABBCCDD01";
+        rig.policy.observe(rig.source, TOKEN, rig.expectedTag); rig.policy.authorizeCurrent();
+        assertEquals(1, rig.authorizations); assertEquals(rig.expectedTag, rig.tag);
+    }
+
+    @Test public void evccidTokenUsesUppercaseHexWithNoPrefixOrSeparators() throws Exception {
+        Rig rig = new Rig();
+        rig.policy.observe(rig.source, TOKEN, ID.toLowerCase(java.util.Locale.ROOT));
+        rig.policy.authorizeCurrent();
+        assertEquals("02AABBCCDDEE", rig.tag);
     }
 
     @Test public void observerAuthenticationMatchesPythonHmacAndLineLimits() throws Exception {
