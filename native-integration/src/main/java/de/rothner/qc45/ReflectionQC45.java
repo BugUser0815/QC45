@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo, OcppBridgeClient.Station {
+public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIdentityIo, OcppBridgeClient.Station {
     private static final long REMOTE_START_PENDING_GRACE_MS = 60000L;
 
     private final Class<?> centralClass;
@@ -58,6 +58,20 @@ public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIo,
     public int powerKw(int connector) throws Exception {
         Object sat = satellite(connector);
         return Math.max(0, ((Number) sat.getClass().getMethod("getCurrentPower").invoke(sat)).intValue());
+    }
+
+    public String sessionIdentity(int connector) throws Exception {
+        Object sat = satellite(connector);
+        Object transaction = sat.getClass().getMethod("getActiveTransaction").invoke(sat);
+        return transactionIdentity(transaction);
+    }
+
+    static String transactionIdentity(Object transaction) throws Exception {
+        if (transaction == null) return null;
+        Object id = transaction.getClass().getMethod("getUniqueId").invoke(transaction);
+        if (id == null) return null;
+        String value = String.valueOf(id).trim();
+        return value.length() == 0 || "0".equals(value) || "-1".equals(value) ? null : value;
     }
 
     public int limitKw(int connector) throws Exception {

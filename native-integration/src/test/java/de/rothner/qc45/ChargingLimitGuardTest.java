@@ -347,7 +347,99 @@ public final class ChargingLimitGuardTest {
         assertEquals(1, station.stops[2]);
     }
 
-    private static final class FakeStation implements ChargingLimitIo, ChargingSessionIo {
+    @Test public void networkTimeoutKeepsTheSamePermittedDcTransactionAtFiveKw() throws Exception {
+        for (int connector = 1; connector <= 2; connector++) {
+            FakeStation station = new FakeStation();
+            ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+            limits.initializeNotladen(); limits.setCcsAvailable(true);
+            limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+            limits.requestDcBudget(35); limits.setGridTargets(connector, false, 20, 0);
+            station.session[connector] = true; station.power[connector] = 20;
+            ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+            guard.runCycle(1000L);
+            expire(limits);
+            limits.setBlocked(ChargingLimitCoordinator.LOAD_METER, true);
+            guard.runCycle(2000L);
+            station.power[connector] = 5;
+            guard.runCycle(4000L); guard.runCycle(120000L);
+            assertEquals(0, station.stopCount);
+            assertEquals(5, station.limit[connector]);
+            assertTrue(!limits.snapshot().limitMismatchBlocked);
+        }
+    }
+
+    @Test public void explicitZeroStillStopsAPreviouslyPermittedFallbackSession() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); station.session[2] = true; station.power[2] = 5;
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L); expire(limits); guard.runCycle(2000L);
+        assertEquals(0, station.stopCount);
+        limits.requestDcBudget(0); guard.runCycle(3000L);
+        assertEquals(1, station.stopCount);
+    }
+
+    @Test public void networkFallbackCannotAuthorizeANewlyObservedSession() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); expire(limits);
+        station.session[2] = true; station.power[2] = 5;
+        new ChargingLimitGuard(station, limits, 250).runCycle(1000L);
+        assertEquals(1, station.stopCount);
+    }
+
+    @Test public void missingTransactionIdentityCannotCreateContinuationPermission() throws Exception {
+        FakeStation station = new FakeStation(); station.identity[2] = null;
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); station.session[2] = true; station.power[2] = 5;
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L); expire(limits); guard.runCycle(2000L);
+        assertEquals(1, station.stopCount);
+    }
+
+    @Test public void replacementTransactionCannotInheritFallbackEvenWithoutAnIdleSample() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); station.session[2] = true; station.power[2] = 5;
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L); expire(limits);
+        station.identity[2] = "replacement-transaction";
+        guard.runCycle(2000L);
+        assertEquals(1, station.stopCount);
+    }
+
+    @Test public void unpluggingClearsFallbackEvenIfTheNextTransactionReusesItsIdentifier() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); station.session[2] = true; station.power[2] = 5;
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L); expire(limits);
+        station.session[2] = false; station.power[2] = 0;
+        guard.runCycle(2000L);
+        station.session[2] = true; station.power[2] = 5;
+        guard.runCycle(3000L);
+        assertEquals(1, station.stopCount);
+    }
+
+    @Test public void aRealLimitMismatchStillStopsDuringNetworkFallback() throws Exception {
+        FakeStation station = new FakeStation();
+        ChargingLimitCoordinator limits = new ChargingLimitCoordinator(station, 5, 50, 5, 43);
+        limits.requestDcBudget(35); station.session[2] = true; station.power[2] = 20;
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.setGridTargets(2, false, 20, 0); limits.setCcsAvailable(true);
+        ChargingLimitGuard guard = new ChargingLimitGuard(station, limits, 250);
+        guard.runCycle(1000L); expire(limits);
+        guard.runCycle(2000L); guard.runCycle(7100L);
+        assertEquals(1, station.stopCount);
+        assertTrue(limits.snapshot().limitMismatchBlocked);
+    }
+
+    private static void expire(ChargingLimitCoordinator limits) throws Exception {
+        limits.expireDcRequestIfStale(System.currentTimeMillis()
+            + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
+    }
+
+    private static final class FakeStation implements ChargingLimitIo, ChargingSessionIdentityIo {
         final int[] limit = new int[] { 0, 0, 0, 0 };
         final int[] power = new int[] { 0, 0, 0, 0 };
         final boolean[] session = new boolean[] { false, false, false, false };
@@ -355,6 +447,9 @@ public final class ChargingLimitGuardTest {
         boolean stopEndsSession = true;
         int failSessionConnector, failPowerConnector, failWriteConnector, failStopConnector;
         final int[] stops = new int[4];
+        final String[] identity = { null, "transaction-1", "transaction-2", "transaction-3" };
+
+        public String sessionIdentity(int connector) { return identity[connector]; }
 
         public int limitKw(int connector) { return limit[connector]; }
 

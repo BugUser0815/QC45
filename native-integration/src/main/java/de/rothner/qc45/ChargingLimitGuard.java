@@ -29,6 +29,8 @@ final class ChargingLimitGuard extends Thread {
     private final int[] trackedLimitKw = new int[] { -1, -1, -1, -1 };
     private final long[] lastStopAttempt = new long[] { 0L, 0L, 0L, 0L };
     private final boolean[] mismatchLatched = new boolean[] { false, false, false, false };
+    private final String[] permittedDcSession = new String[3];
+    private final boolean[] continuingDcSession = new boolean[3];
     private volatile boolean running = true;
     private long lastErrorLog;
 
@@ -70,10 +72,10 @@ final class ChargingLimitGuard extends Thread {
     }
 
     void runCycle(long now) throws Exception {
-        // A forgotten evcc value must never survive loss of the controller.
-        // A valid permit must be refreshed by repeated Modbus budget writes.
+        // Missing evcc refreshes cap power at 5 kW. Only an already observed
+        // permitted transaction may continue through that network fallback.
         Exception reconcileFailure = null;
-        try { limits.expireDcRequestIfStale(System.currentTimeMillis()); }
+        try { limits.expireDcRequestIfStale(); }
         catch (Exception e) { reconcileFailure = e; }
         try { limits.reconcile(); }
         catch (Exception e) { if (reconcileFailure == null) reconcileFailure = e; }
@@ -103,13 +105,18 @@ final class ChargingLimitGuard extends Thread {
             throw error;
         }
         if (!active) {
+            if (connector <= 2) {
+                permittedDcSession[connector] = null;
+                continuingDcSession[connector] = false;
+            }
             resetTracking(connector);
             mismatchLatched[connector] = false;
             lastStopAttempt[connector] = 0L;
             return;
         }
-        // Authorization and latched termination never depend on a power read.
-        if (connector <= 2 && !limits.dcPermitValid(System.currentTimeMillis())) {
+        // A network failure cannot stop the same permitted transaction, nor
+        // grant its continuation to a replacement vehicle or a new session.
+        if (connector <= 2 && !dcSessionPermitted(connector)) {
             Exception blockFailure = null;
             if (!mismatchLatched[connector]) {
                 mismatchLatched[connector] = true;
@@ -139,6 +146,30 @@ final class ChargingLimitGuard extends Thread {
             hardStop(connector, enforcedKw, actualKw, now, writeFailure);
         }
         if (writeFailure != null) throw writeFailure;
+    }
+
+    private boolean dcSessionPermitted(int connector) throws Exception {
+        String identity = null;
+        if (station instanceof ChargingSessionIdentityIo) {
+            try { identity = ((ChargingSessionIdentityIo)station).sessionIdentity(connector); }
+            catch (Exception ignored) { /* Unknown identity cannot inherit fallback. */ }
+        }
+        ChargingLimitCoordinator.DcPermitState permit = limits.dcPermitState();
+        if (permit == ChargingLimitCoordinator.DcPermitState.FRESH) {
+            if (identity != null && !identity.equals(permittedDcSession[connector])) {
+                System.out.println("[QC45] DC session continuity registered connector=" + connector);
+            }
+            permittedDcSession[connector] = identity;
+            continuingDcSession[connector] = false;
+            return true;
+        }
+        boolean continuing = permit == ChargingLimitCoordinator.DcPermitState.NETWORK_FALLBACK && identity != null
+            && identity.equals(permittedDcSession[connector]);
+        if (continuing && !continuingDcSession[connector]) {
+            System.out.println("[QC45] DC network fallback continuing the same transaction at 5kW connector=" + connector);
+        }
+        continuingDcSession[connector] = continuing;
+        return continuing;
     }
 
     private void trackRampDown(int connector, int enforcedKw, int actualKw, long now) {
