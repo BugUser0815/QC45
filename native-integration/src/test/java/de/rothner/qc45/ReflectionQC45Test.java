@@ -3,8 +3,25 @@ package de.rothner.qc45;
 import org.junit.Test;
 
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 public final class ReflectionQC45Test {
+    @Test public void continuationUsesTheNativeTransactionIdentity() throws Exception {
+        assertEquals("12345", ReflectionQC45.transactionIdentity(new Transaction("12345")));
+        assertNull(ReflectionQC45.transactionIdentity(null));
+        assertNull(ReflectionQC45.transactionIdentity(new Transaction(null)));
+        assertNull(ReflectionQC45.transactionIdentity(new Transaction("")));
+        assertNull(ReflectionQC45.transactionIdentity(new Transaction("0")));
+        assertNull(ReflectionQC45.transactionIdentity(new Transaction("-1")));
+    }
+
+    public static final class Transaction {
+        private final String id;
+        public Transaction(String id) { this.id = id; }
+        public String getUniqueId() { return id; }
+    }
+
     @Test
     public void zeroTargetCanNeverAuthorizeCcsControl() {
         assertTrue(!ReflectionQC45.ccsControlAuthorized(0, true, true, true));

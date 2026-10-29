@@ -155,14 +155,18 @@ failback.intervalMs=100
 # Minimum/default 60000 ms. Missing data never counts as thermal cooling.
 failback.resetDelayMs=60000
 # KSEM/control failure blocks managed outputs immediately (physical 5-kW floor).
-# Five healthy readings are required before a fresh 5-kW start.
+# Five healthy readings qualify recovery; existing authorized charges continue
+# at physical 5kW during a measurement/network outage.
 # For a future E50 replacement, also review the explicit values above:
 # sls.nominalA=50, targetA=49, gridLimitA=50,
 # reduceA=51, tripA=53, instantTripA=250; daytimeTargetA is independently chosen.
 
 # DC requires an explicit positive evcc budget written to Modbus register 110.
 # On startup the DC budget is 0; KSEM cannot grant power by itself.
-# Positive DC permits expire 30 seconds after the last evcc write. The evcc
-# driver must refresh them at least every 5-10 seconds. An unauthorized active
-# CHAdeMO/CCS transaction receives RemoteStop (5kW native floor is NOT off).
+# After 30 seconds without refresh, the budget is capped at 5kW. Only the same
+# native transaction previously observed with a valid permit may continue.
+# The evcc driver should refresh every 5-10 seconds to allow normal ramping.
+# An explicit zero budget still revokes the permit immediately. A new or
+# unauthorized CHAdeMO/CCS transaction receives RemoteStop; fallback cannot
+# authorize a vehicle or survive a JVM restart (5kW native floor is NOT off).
 # AC Type2 remains operator-fixed and is NOT controlled by this DC lease.
