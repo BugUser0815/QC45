@@ -14,6 +14,18 @@ public final class IntegrationConfigTest {
         assertEquals(36.0d, s.reduceA, 0.000001d);
         assertEquals(38.0d, s.tripA, 0.000001d);
         assertEquals(175.0d, s.instantA, 0.000001d);
+        assertEquals(30000L, s.thermalTimeConstantMs);
+        assertEquals(600000L, s.mildThermalTimeConstantMs);
+    }
+
+    @Test public void existingFastSettingDoesNotRestoreEarlyMildOverloadStops() {
+        Properties p = new Properties();
+        p.setProperty("sls.thermalTimeConstantMs", "1000");
+        Integration.GridSettings s = Integration.gridSettings(p);
+        assertEquals(1000L, s.thermalTimeConstantMs);
+        assertEquals(600000L, s.mildThermalTimeConstantMs);
+        p.setProperty("sls.mildThermalTimeConstantMs", "900000");
+        assertEquals(900000L, Integration.gridSettings(p).mildThermalTimeConstantMs);
     }
 
     @Test public void liveTargetAndHysteresisArePreserved() {
@@ -86,6 +98,9 @@ public final class IntegrationConfigTest {
             { "sls.characteristic", "B" }, { "sls.nominalA", "NaN" },
             { "sls.nominalA", "0" }, { "sls.nominalA", "101" },
             { "sls.thermalTimeConstantMs", "30001" },
+            { "sls.mildThermalTimeConstantMs", "599999" },
+            { "sls.mildThermalTimeConstantMs", "3600001" },
+            { "sls.mildThermalTimeConstantMs", "NaN" },
             { "loadmanager.targetA", "Infinity" }, { "loadmanager.hysteresisA", "-1" },
             { "failback.reduceA", "0" }, { "failback.tripA", "36" },
             { "failback.instantTripA", "35" }

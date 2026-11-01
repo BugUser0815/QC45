@@ -100,6 +100,7 @@ oberhalb 65,535 A.
 sls.nominalA=35.0
 sls.characteristic=E
 sls.thermalTimeConstantMs=30000
+sls.mildThermalTimeConstantMs=600000
 loadmanager.enabled=true
 loadmanager.targetA=34.0
 loadmanager.gridLimitA=35.0
@@ -159,10 +160,17 @@ beziehungsweise `5 × In` begrenzt und protokolliert. Danach muss
 `0 < reduceA < tripA < instantTripA` gelten. Ein kleinerer konfigurierter
 Instant-Grenzwert wird nicht mehr automatisch auf 175 A angehoben.
 
-Die zusätzliche thermische Softwareüberwachung berücksichtigt I²-Belastung
-und Abkühlung jeder Phase. `sls.thermalTimeConstantMs` ist auf 1000–30000 ms
-begrenzt (Standard 30000); kleinere Werte führen bei anhaltender Überlast zu
-früheren Eingriffen. Das Modell ist keine kalibrierte Herstellerkennlinie.
+Die zusätzliche Softwareüberwachung berücksichtigt I²-Belastung und Abkühlung
+jeder Phase. Leichte Überschreitungen verwenden eine längere Zeitbasis:
+`sls.mildThermalTimeConstantMs=600000` (600000–3600000 ms). Zwischen
+`1,05 × In` und `1,20 × In` wird linear zur schnellen Zeitbasis übergegangen.
+Ab `1,20 × In` bleibt `sls.thermalTimeConstantMs` mit 1000–30000 ms
+(Standard 30000) wirksam. Bestehende 30000-ms-Konfigurationen aktivieren somit
+keine schnelle Abschaltung bei leichtem Pendeln mehr. Beide Werte sind
+Zeitkonstanten, keine zugesicherten Haltezeiten. Die Logangabe `softwareExposure`
+ist ein berechneter Softwarezustand, keine SLS-Temperatur. Das Modell ist keine
+kalibrierte Herstellerkennlinie; Kühlung erfolgt ebenfalls auf der langsamen
+Zeitbasis, sodass kurze Stromrückgänge die Vorgeschichte nicht löschen.
 Details und Hager-Quellen: [Grid-Failback](Grid-Failback).
 
 Mess-/Steuerungsfehler sperren sofort und werden erst nach fünf sicheren

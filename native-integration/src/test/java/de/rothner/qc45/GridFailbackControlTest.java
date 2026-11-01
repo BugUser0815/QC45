@@ -8,6 +8,42 @@ import static org.junit.Assert.assertTrue;
 
 /** Complete protection cycles, including the hardware writer and stop retries. */
 public final class GridFailbackControlTest {
+    @Test public void novemberFirstLoadSequenceDoesNotAbortTheSession() throws Exception {
+        // KSEM maxima from 2026-11-01 15:05:27..15:06:47 UTC, rounded
+        // to 100 ms. The DC output had already reached 5 kW at +23 s.
+        double[][] events = {
+            {0, 33.0, 33}, {3300, 39.8, 33}, {5000, 34.5, 29},
+            {5700, 38.5, 29}, {8900, 39.0, 25}, {9900, 36.2, 21},
+            {10100, 34.0, 19}, {10900, 30.7, 19}, {14500, 38.3, 20},
+            {15000, 38.6, 20}, {15100, 37.1, 17}, {15500, 36.1, 16},
+            {16000, 33.2, 15}, {17000, 35.9, 15}, {18000, 35.4, 12},
+            {19100, 36.7, 12}, {20100, 35.2, 11}, {20200, 34.8, 11},
+            {21100, 38.0, 9}, {23100, 38.3, 5}, {25300, 37.4, 5},
+            {35400, 37.4, 5}, {45600, 37.2, 5}, {60700, 37.1, 5},
+            {65800, 37.2, 5}, {75900, 37.3, 5}, {80300, 37.1, 5}
+        };
+        for (double nominal : new double[] { 35, 50 }) {
+            Fixture f = new Fixture(nominal, nominal + 1, nominal + 3, nominal * 5);
+            // Already rated-load warm, rather than assuming a cold SLS.
+            for (int i = 0; i < 600; i++) f.tick(nominal, 33);
+            int event = 0;
+            for (long elapsed = 0; elapsed <= 80300; elapsed += 100) {
+                while (event + 1 < events.length && events[event + 1][0] <= elapsed) event++;
+                f.tick(events[event][1] * nominal / 35.0d, (int)events[event][2]);
+                assertFalse("unexpected replay stop at " + elapsed + " ms, E" + nominal,
+                    f.guard.isTripped());
+            }
+            assertTrue("proportional reduction must remain effective", f.limits.effectiveDcKw() <= 5);
+            assertEquals(0, f.station.stops);
+            // A small sustained excess cannot turn into a stop one minute later either.
+            for (int i = 0; i < 600; i++) f.tick(37.2 * nominal / 35.0d, 5);
+            assertFalse(f.guard.isTripped());
+            for (int i = 0; i < 600; i++) f.tick(32 * nominal / 35.0d, 5);
+            assertFalse(f.guard.isChargingBlocked());
+            assertEquals(0, f.station.stops);
+        }
+    }
+
     @Test public void aSmallCrossingOfRatedCurrentDoesNotResetChargingToFiveKw() throws Exception {
         Fixture f = new Fixture(35, 36, 38, 175);
         for (int i = 0; i < 50; i++) f.tick(35.1d, 35);

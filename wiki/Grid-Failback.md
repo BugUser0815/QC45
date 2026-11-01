@@ -55,12 +55,27 @@ h_neu = h_alt * exp(-dt / tau) + (I / In)^2 * (1 - exp(-dt / tau))
 
 Für das vergangene Messintervall wird vorsichtig der größere der beiden
 angrenzenden Stromwerte verwendet. Bei Start gilt `h=1` (bereits mit Nennstrom
-belastet), die Eingriffsschwelle ist `h > 1,05²`. `tau` wird über
-`sls.thermalTimeConstantMs` vorgegeben (Standard/Maximum 30000 ms, Minimum
-1000 ms). Kleinere Werte beschleunigen die Reaktion auf anhaltende Überlast.
-Dies ist eine bewusst schnelle **Software-Schutzstrategie**, keine kalibrierte
-Hager-Kennlinie und keine zugesicherte physikalische Auslösezeit. Die originale
-SLS-Schutzeinrichtung bleibt maßgeblich.
+belastet), die Eingriffsschwelle ist `h > 1,05²`.
+Die Zeitbasis `tau` hängt vom Stromvielfachen **derselben Phase** ab:
+
+| Phasenstrom | Zeitbasis |
+|---|---|
+| bis `1,05 × In`, einschließlich Abkühlung | `sls.mildThermalTimeConstantMs`, Standard 600000 ms, zulässig 600000–3600000 ms |
+| zwischen `1,05 × In` und `1,20 × In` | linearer Übergang von der langsamen zur schnellen Zeitbasis |
+| ab `1,20 × In` | bisheriges `sls.thermalTimeConstantMs`, Standard/Maximum 30000 ms, Minimum 1000 ms |
+
+Damit führen kleine Überschreitungen wie 37,1–37,4 A an E35 nicht mehr nach
+knapp einer Minute zum Sitzungsabbruch. Proportionale Reduktion und
+LoadManager arbeiten währenddessen weiter. Anhaltende Überlast akkumuliert
+weiterhin und kann einen Hard Trip auslösen; ab 42 A bleibt die schnelle
+Zeitbasis wirksam. Alle Verhältnisse skalieren mit dem konfigurierten Nennstrom
+(bei E50 beginnt die schnelle Zeitbasis entsprechend bei 60 A).
+
+Die Zeitkonstanten sind **keine erlaubten Überlastdauern**. Dieses Modell ist
+eine zusätzliche Softwarestrategie, keine kalibrierte Hager-Kennlinie und
+keine zugesicherte physikalische Auslösezeit. Die originale SLS-Schutzeinrichtung
+bleibt maßgeblich. `softwareExposure=100%` im Log bezeichnet die berechnete
+Software-Abschaltschwelle und keine gemessene Temperatur des SLS.
 
 Leichtes Pendeln um den Nennstrom wird zugelassen. Wiederholte Belastungen
 akkumulieren sich; ein einzelner niedriger Messwert setzt den Zustand nicht
