@@ -104,8 +104,12 @@ ksem.wordOrder=HIGH_LOW
 sls.nominalA=35.0
 sls.characteristic=E
 # Supplemental software I^2/cooling policy, NOT a fitted Hager trip curve.
-# 1000..30000 ms; smaller values intervene earlier on sustained overload.
+# Fast time base at >=1.20*In: 1000..30000 ms (existing setting retained).
 sls.thermalTimeConstantMs=30000
+# Mild excess/cooling: 600000..3600000 ms, default 600000 (10 min).
+# Between 1.05*In and 1.20*In interpolate toward the fast time base.
+# Time constants are NOT permitted overload durations or manufacturer trip times.
+sls.mildThermalTimeConstantMs=600000
 
 # Native DC load manager
 # DC is released directly from the remaining current headroom of the most

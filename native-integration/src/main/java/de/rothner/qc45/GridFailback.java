@@ -10,6 +10,7 @@ public final class GridFailback extends Thread {
     private final GridCurrentIo meter;
     private final ChargingLimitCoordinator limits;
     private final double nominalA;
+    private final long mildThermalTimeConstantMs;
     private final SlsThermalModel thermal;
     private final double reduceA;
     private final long reduceDelayMs;
@@ -50,12 +51,37 @@ public final class GridFailback extends Thread {
             reduceDcKw, reduceAcKw, intervalMs, resetDelayMs, nominalA, thermalTimeConstantMs);
     }
 
+    public GridFailback(ReflectionQC45 station, KsemClient meter,
+                        ChargingLimitCoordinator limits,
+                        double reduceA, long reduceDelayMs,
+                        double tripA, long tripDelayMs, double instantTripA,
+                        int reduceDcKw, int reduceAcKw, int intervalMs,
+                        long resetDelayMs, double nominalA, long thermalTimeConstantMs,
+                        long mildThermalTimeConstantMs) {
+        this((ChargingSessionIo)station, (GridCurrentIo)meter, limits,
+            reduceA, reduceDelayMs, tripA, tripDelayMs, instantTripA,
+            reduceDcKw, reduceAcKw, intervalMs, resetDelayMs, nominalA,
+            thermalTimeConstantMs, mildThermalTimeConstantMs);
+    }
+
     GridFailback(ChargingSessionIo station, GridCurrentIo meter,
                  ChargingLimitCoordinator limits,
                  double reduceA, long reduceDelayMs,
                  double tripA, long tripDelayMs, double instantTripA,
                  int reduceDcKw, int reduceAcKw, int intervalMs,
                  long resetDelayMs, double nominalA, long thermalTimeConstantMs) {
+        this(station, meter, limits, reduceA, reduceDelayMs, tripA, tripDelayMs,
+            instantTripA, reduceDcKw, reduceAcKw, intervalMs, resetDelayMs,
+            nominalA, thermalTimeConstantMs, SlsThermalModel.DEFAULT_MILD_TIME_CONSTANT_MS);
+    }
+
+    GridFailback(ChargingSessionIo station, GridCurrentIo meter,
+                 ChargingLimitCoordinator limits,
+                 double reduceA, long reduceDelayMs,
+                 double tripA, long tripDelayMs, double instantTripA,
+                 int reduceDcKw, int reduceAcKw, int intervalMs,
+                 long resetDelayMs, double nominalA, long thermalTimeConstantMs,
+                 long mildThermalTimeConstantMs) {
         super("QC45-Grid-Failback");
         setDaemon(true);
         if (station == null || meter == null || limits == null) {
@@ -71,7 +97,8 @@ public final class GridFailback extends Thread {
         this.meter = meter;
         this.limits = limits;
         this.nominalA = nominalA;
-        this.thermal = new SlsThermalModel(nominalA, thermalTimeConstantMs);
+        this.thermal = new SlsThermalModel(nominalA, thermalTimeConstantMs, mildThermalTimeConstantMs);
+        this.mildThermalTimeConstantMs = mildThermalTimeConstantMs;
         this.reduceA = reduceA;
         this.reduceDelayMs = reduceDelayMs;
         this.tripA = tripA;
@@ -99,6 +126,7 @@ public final class GridFailback extends Thread {
         System.out.println("[QC45] GridFailback started SLS=E" + one(nominalA)
             + " reduce=" + one(reduceA) + "A fastReduce=" + one(tripA)
             + "A instant=" + one(instantTripA) + "A proportional=true thermal=per-phase"
+            + " mildThermalTimeConstantMs=" + mildThermalTimeConstantMs
             + " reset=" + resetDelayMs + "ms");
         while (running) {
             runCycle(System.currentTimeMillis());
@@ -117,7 +145,7 @@ public final class GridFailback extends Thread {
                 System.out.println("[QC45] Grid L1=" + one(currents.l1) + "A L2="
                     + one(currents.l2) + "A L3=" + one(currents.l3) + "A max="
                     + one(max) + "A SLS=" + one(nominalA)
-                    + "A thermal=" + one(100.0d * thermal.exposure()) + "%"
+                    + "A softwareExposure=" + one(100.0d * thermal.exposure()) + "%"
                     + (tripped ? " HARD-TRIPPED" : meterPaused ? " METER-PAUSED"
                         : stageReduced ? " PROPORTIONALLY-REDUCED" : ""));
                 lastGridLog = now;
@@ -140,7 +168,7 @@ public final class GridFailback extends Thread {
             return;
         }
         if (thermal.overloaded()) {
-            hardTrip("accumulated SLS E" + one(nominalA) + " thermal exposure at "
+            hardTrip("accumulated software overload exposure for SLS E" + one(nominalA) + " at "
                 + one(max) + "A");
             return;
         }
@@ -219,7 +247,7 @@ public final class GridFailback extends Thread {
         stageReduced = true;
         System.err.println("[QC45] GRID FAILBACK PROPORTIONAL REDUCE max=" + one(max)
             + "A SLS=" + one(nominalA) + "A fast=" + fast + " DCcap=" + cap(nextDc)
-            + " ACcap=" + cap(nextAc) + " thermal=" + one(100.0d * thermal.exposure()) + "%");
+            + " ACcap=" + cap(nextAc) + " softwareExposure=" + one(100.0d * thermal.exposure()) + "%");
     }
 
     private int reducedCap(int connector, int enforcedKw, int previousCapKw,

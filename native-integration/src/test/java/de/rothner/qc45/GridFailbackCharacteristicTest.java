@@ -25,11 +25,37 @@ public final class GridFailbackCharacteristicTest {
         }
     }
 
+    @Test public void smallPersistentExcessHasMinutesToRegulateBeforeAnyStop() {
+        for (double nominal : new double[] { 35, 50 }) {
+            SlsThermalModel model = new SlsThermalModel(nominal, 30000L);
+            for (long now = 0; now <= 120000L; now += 100L) {
+                model.update(now, phase(nominal * (37.4d / 35.0d)));
+                assertFalse("small excess stopped before controller could settle", model.overloaded());
+            }
+            assertTrue("sustained excess must still be accounted for", model.exposure() > 0);
+        }
+    }
+
+    @Test public void changingMildTimeConstantCannotSlowTheStrongOverloadPath() {
+        SlsThermalModel normal = new SlsThermalModel(35, 30000, 600000);
+        SlsThermalModel slower = new SlsThermalModel(35, 30000, 3600000);
+        for (long now = 0; now <= 10000; now += 100) {
+            normal.update(now, phase(42));
+            slower.update(now, phase(42));
+            assertEquals(normal.exposure(), slower.exposure(), 0.000001d);
+            assertEquals(normal.overloaded(), slower.overloaded());
+        }
+        assertTrue(normal.overloaded());
+    }
+
     @Test public void sustainedOverloadTripsEarlierAsCurrentRises() {
+        long at107 = tripTime(35, 37.4d);
         long at110 = tripTime(35, 38.5d);
         long at120 = tripTime(35, 42.0d);
         long at150 = tripTime(35, 52.5d);
         long at200 = tripTime(35, 70.0d);
+        assertTrue("mild persistent overload must remain bounded", at107 < 1800000L);
+        assertTrue(at107 > at110);
         assertTrue(at110 > at120);
         assertTrue(at120 > at150);
         assertTrue(at150 > at200);
@@ -85,7 +111,7 @@ public final class GridFailbackCharacteristicTest {
 
     private static long tripTime(double nominal, double amps) {
         SlsThermalModel model = new SlsThermalModel(nominal, 30000L);
-        for (long now = 0; now < 120000; now += 10) {
+        for (long now = 0; now < 7200000; now += 100) {
             model.update(now, phase(amps));
             if (model.overloaded()) return now;
         }

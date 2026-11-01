@@ -184,7 +184,8 @@ public final class Integration {
                     failbackReduceA, failbackReduceDelayMs,
                     failbackTripA, failbackTripDelayMs, failbackInstantTripA,
                     reduceDcKw, reduceAcKw, failbackIntervalMs,
-                    resetDelayMs, grid.nominalA, grid.thermalTimeConstantMs);
+                    resetDelayMs, grid.nominalA, grid.thermalTimeConstantMs,
+                    grid.mildThermalTimeConstantMs);
                 // Close the scheduling gap before the failback thread performs
                 // its first read and establishes its own startup pause.
                 limits.setBlocked(ChargingLimitCoordinator.FAILBACK, true);
@@ -380,7 +381,7 @@ public final class Integration {
 
     static final class GridSettings {
         final double nominalA, reduceA, tripA, instantA, ceilingA, targetA, hysteresisA, daytimeA;
-        final long thermalTimeConstantMs;
+        final long thermalTimeConstantMs, mildThermalTimeConstantMs;
 
         GridSettings(Properties p) {
             nominalA = positiveDecimal(p, "sls.nominalA", 35.0d);
@@ -389,8 +390,9 @@ public final class Integration {
                 throw new IllegalArgumentException("only sls.characteristic=E is supported");
             }
             thermalTimeConstantMs = positiveInt(p, "sls.thermalTimeConstantMs", 30000);
-            // Validates the rated-current range and a conservative time constant.
-            new SlsThermalModel(nominalA, thermalTimeConstantMs);
+            mildThermalTimeConstantMs = positiveInt(p, "sls.mildThermalTimeConstantMs",
+                (int)SlsThermalModel.DEFAULT_MILD_TIME_CONSTANT_MS);
+            new SlsThermalModel(nominalA, thermalTimeConstantMs, mildThermalTimeConstantMs);
             double configuredReduce = positiveDecimal(p, "failback.reduceA", nominalA + 1.0d);
             double configuredTrip = positiveDecimal(p, "failback.tripA", nominalA + 3.0d);
             double configuredInstant = positiveDecimal(p, "failback.instantTripA",
