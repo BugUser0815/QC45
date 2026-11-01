@@ -91,6 +91,14 @@ Ein eingehendes OCPP-1.5-`Occupied` wird in Richtung 1.6 zunächst als `Preparin
 - CA-Datei konfigurierbar
 - optional `tls.insecure=true` für Diagnose, nicht für Normalbetrieb empfohlen
 - Reconnect mit exponentiellem Backoff bis 30 s
+- Unabhängiger 100-ms-Deadline-Wächter: Ein ausbleibendes OCPP-Ergebnis
+  schließt den betroffenen Transport und löst Reconnect aus, auch bei einem
+  blockierten Schreibzugriff. Das Zeitbudget umfasst Senden und Warten und
+  verwendet eine monotone Uhr. Standard: `ocpp15.bridge.timeoutMs=10000`.
+- Keine automatische Wiederholung eines fehlgeschlagenen CALLs, insbesondere
+  kein blindes erneutes `StartTransaction`. EVCSD erhält weiterhin einen Fehler
+  und behält die Verantwortung für seinen Transaktionsablauf.
+- TCP-Verbindungsaufbau und TLS-/Upgrade-Lesezugriffe sind auf 10 s begrenzt.
 - Prüfung der TLS-Hostname-Identität und des vom Backend bestätigten
   `ocpp1.6`-Subprotokolls
 - Reassembly fragmentierter Textnachrichten bis maximal 1 MiB
@@ -98,6 +106,26 @@ Ein eingehendes OCPP-1.5-`Occupied` wird in Richtung 1.6 zunächst als `Preparin
 Der lokale SOAP-Endpunkt darf ausschließlich an eine Loopback-Adresse binden,
 begrenzt Requests auf 1 MiB und nutzt einen begrenzten Vier-Thread-Executor.
 Beim Shutdown werden HTTP-Executor und WebSocket-Thread beendet.
+
+## Kommunikationszustand
+
+`/home/mobie/evcsd/qc45-integration-health.properties` ergänzt den lokalen
+Prozess-/Deploymentstatus um folgende Felder:
+
+| Feld | Bedeutung |
+|---|---|
+| `ocpp.state` | `disconnected`, `awaiting-response`, `ready`, `unresponsive`, `stopped` oder `disabled` |
+| `ocpp.connected` | aktueller Transport offen; allein noch kein Beweis für erfolgreiche OCPP-Kommunikation |
+| `ocpp.responseAgeMs` | monotones Alter der letzten zugeordneten CALLRESULT-/CALLERROR-Antwort; `-1` ohne Antwort auf dieser Verbindung |
+| `ocpp.connections` | Anzahl erfolgreicher Verbindungsaufbauten seit JVM-Start |
+| `ocpp.responseTimeouts` | Anzahl wegen überschrittener Antwortfrist abgebrochener Verbindungen |
+
+`ready` erfordert eine Antwort auf der aktuellen Verbindung innerhalb der
+letzten 120 s (bei regulären 60-s-Heartbeats). Ein erreichbarer Backendfehler
+(`CALLERROR`) zählt als Kommunikationsnachweis und erzwingt keinen Reconnect.
+Der allgemeine `state` bleibt der Zustand der lokalen Schutz-/Steuerthreads;
+ein externer Netzausfall löst dadurch keinen JAR-Rollback oder Stationsreboot
+aus. Der Deadline-Wächter gehört zu den überwachten lokalen Threads.
 
 Quellcode:
 
