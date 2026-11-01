@@ -58,6 +58,11 @@ public final class BootstrapListener implements ServletContextListener {
             if (health != null) {
                 final Integration started = integration;
                 final AcPowerTelemetry telemetry = acPowerTelemetry;
+                health.communicationDetails(new IntegrationHealth.Details() {
+                    public void describe(java.util.Properties properties) {
+                        started.writeCommunicationHealth(properties);
+                    }
+                });
                 health.ready(new IntegrationHealth.Check() {
                     public boolean healthy() { return started.isHealthy() && telemetry.isAlive(); }
                 });

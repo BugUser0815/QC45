@@ -86,6 +86,12 @@ lebende JVM und die erwartete JAR. Gestorbene Schutz-/Steuerthreads oder ein
 fehlgeschlagener erforderlicher Bootstrap verhindern damit den Deployment-Erfolg.
 Ein gültiger Netzschutz-Stopp ist für sich kein Software-Startfehler.
 
+Die zusätzlichen `ocpp.*`-Felder zeigen den tatsächlichen Kommunikationszustand,
+das Alter der letzten Backendantwort, Verbindungsaufbauten und Antwort-Timeouts.
+Eine nur offene TCP-Verbindung wird ohne OCPP-Antwort nicht als `ocpp.state=ready`
+gemeldet. Der Deploymentstatus bleibt davon unabhängig: Ein vorübergehender
+Netz-/Backendausfall soll keinen automatischen Rollback mit Reboot auslösen.
+
 Logrotation, Kürzung und alte Startmeldungen beeinflussen die Prüfung nicht.
 Bei einem Rollback auf eine ältere JAR ohne Status-Unterstützung werden als
 ausdrücklich protokollierter Kompatibilitätsfall nur JAR-Prüfsumme und

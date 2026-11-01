@@ -55,6 +55,19 @@ public final class IntegrationHealthTest {
         health.shutdown();
     }
 
+    @Test public void communicationsAreReportedWithoutTurningNetworkLossIntoDeploymentRollback() throws Exception {
+        File jar = temporary.newFile("integration.jar");
+        File status = new File(temporary.getRoot(), "health.properties");
+        IntegrationHealth health = new IntegrationHealth(status, jar, "boot", "123");
+        health.communicationDetails(new IntegrationHealth.Details() {
+            public void describe(Properties p) { p.setProperty("ocpp.state", "disconnected"); }
+        });
+        health.ready(new IntegrationHealth.Check() { public boolean healthy() { return true; } });
+        assertEquals("ready", read(status).getProperty("state"));
+        assertEquals("disconnected", read(status).getProperty("ocpp.state"));
+        health.shutdown();
+    }
+
     private static Properties read(File file) throws Exception {
         Properties p = new Properties(); FileInputStream in = new FileInputStream(file);
         try { p.load(in); } finally { in.close(); } return p;

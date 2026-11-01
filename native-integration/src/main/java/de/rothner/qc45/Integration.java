@@ -362,6 +362,11 @@ public final class Integration {
         enterDegradedSafety(limits, message, error);
     }
 
+    void writeCommunicationHealth(Properties properties) {
+        if (ocppBridge == null) properties.setProperty("ocpp.state", "disabled");
+        else ocppBridge.writeHealth(properties);
+    }
+
     boolean isHealthy() {
         return startupHealthy && !limits.isBlockedBy(ChargingLimitCoordinator.CONFIGURATION)
             && !limits.isBlockedBy(ChargingLimitCoordinator.SHUTDOWN)
@@ -370,7 +375,7 @@ public final class Integration {
             && (failback == null || failback.isAlive())
             && (autoCharge == null || autoCharge.healthy())
             && (modbus == null || modbus.isAlive())
-            && (ocppBridge == null || ocppBridge.isAlive());
+            && (ocppBridge == null || ocppBridge.isWorkerHealthy());
     }
 
     static final class GridSettings {

@@ -17,6 +17,7 @@ import java.util.Properties;
 final class IntegrationHealth {
     static final String DEFAULT_PATH = "/home/mobie/evcsd/qc45-integration-health.properties";
     interface Check { boolean healthy(); }
+    interface Details { void describe(Properties properties); }
     private final File file;
     private final String jarSha256;
     private final String bootId;
@@ -26,6 +27,7 @@ final class IntegrationHealth {
     private volatile boolean complete;
     private volatile boolean failed;
     private volatile Check check;
+    private volatile Details details;
     private volatile long lastError;
 
     static IntegrationHealth startDefault() throws Exception {
@@ -61,6 +63,8 @@ final class IntegrationHealth {
         publishBestEffort();
     }
 
+    void communicationDetails(Details details) { this.details = details; }
+
     void degraded() { failed = true; publishBestEffort(); }
 
     void shutdown() {
@@ -82,6 +86,11 @@ final class IntegrationHealth {
         p.setProperty("pid", pid);
         p.setProperty("jarSha256", jarSha256);
         p.setProperty("updatedAtMillis", String.valueOf(System.currentTimeMillis()));
+        Details description = details;
+        if (description != null) {
+            try { description.describe(p); }
+            catch (RuntimeException unavailable) { p.setProperty("ocpp.state", "unavailable"); }
+        }
         File temp = new File(file.getPath() + ".tmp");
         try {
             FileOutputStream out = new FileOutputStream(temp);

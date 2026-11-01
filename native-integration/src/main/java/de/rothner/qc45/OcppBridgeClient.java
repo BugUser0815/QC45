@@ -2,12 +2,15 @@ package de.rothner.qc45;
 
 import java.io.*;
 import java.net.URI;
+import java.net.Socket;
+import java.net.InetSocketAddress;
 import java.nio.charset.Charset;
 import java.security.*;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.*;
 import javax.net.ssl.*;
 
@@ -20,6 +23,7 @@ public final class OcppBridgeClient extends Thread {
         int connectorForTransactionId(int transactionId);
     }
     private static final Charset UTF8 = Charset.forName("UTF-8");
+    private static final long RESPONSE_FRESH_MS = 120000L;
     private final Station station;
     private final URI uri;
     private final String username, password, caFile;
@@ -29,6 +33,9 @@ public final class OcppBridgeClient extends Thread {
     private final Map<Integer,Integer> txConnector = new HashMap<Integer,Integer>();
     private volatile boolean running = true;
     private volatile WebSocket ws;
+    private volatile Thread requestWatchdog;
+    private final AtomicInteger connections = new AtomicInteger();
+    private final AtomicInteger responseTimeouts = new AtomicInteger();
 
     public OcppBridgeClient(ReflectionQC45 station, String url, String username, String password,
                             String caFile, boolean insecure,
@@ -61,7 +68,7 @@ public final class OcppBridgeClient extends Thread {
         running = false;
         interrupt();
         WebSocket s = ws;
-        if (s != null) s.close();
+        if (s != null) s.abort();
         synchronized (pending) {
             for (Pending p : pending.values()) p.fail("bridge stopped");
             pending.clear();
@@ -69,45 +76,107 @@ public final class OcppBridgeClient extends Thread {
     }
 
     public boolean isConnected() { WebSocket s = ws; return s != null && s.isOpen(); }
+    boolean isWorkerHealthy() {
+        Thread watchdog = requestWatchdog;
+        return isAlive() && watchdog != null && watchdog.isAlive();
+    }
+
+    void writeHealth(Properties properties) {
+        WebSocket s = ws;
+        boolean connected = s != null && s.isOpen();
+        long age = s == null || s.lastResponseNanos == 0L ? -1L
+            : Math.max(0L, (System.nanoTime() - s.lastResponseNanos) / 1000000L);
+        String state = !running ? "stopped" : !connected ? "disconnected"
+            : age < 0L ? "awaiting-response" : age > RESPONSE_FRESH_MS ? "unresponsive" : "ready";
+        properties.setProperty("ocpp.state", state);
+        properties.setProperty("ocpp.connected", String.valueOf(connected));
+        properties.setProperty("ocpp.responseAgeMs", String.valueOf(age));
+        properties.setProperty("ocpp.connections", String.valueOf(connections.get()));
+        properties.setProperty("ocpp.responseTimeouts", String.valueOf(responseTimeouts.get()));
+    }
 
     public void run() {
+        // Independent of both the reader and callers: a blocked socket write
+        // must not postpone recovery until the kernel's multi-minute timeout.
+        Thread watchdog = new Thread(new Runnable() {
+            public void run() {
+                while (running) {
+                    expireRequests();
+                    try { Thread.sleep(100L); } catch (InterruptedException ignored) {}
+                }
+            }
+        }, "qc45-ocpp-deadlines");
+        watchdog.setDaemon(true);
+        requestWatchdog = watchdog;
+        watchdog.start();
         long retry = 2000L;
-        while (running) {
+        try { while (running) {
+            WebSocket connection = new WebSocket(uri, username, password, caFile, insecure);
+            ws = connection;
             try {
-                ws = new WebSocket(uri, username, password, caFile, insecure);
-                ws.connect();
+                if (!running) break;
+                connection.connect();
+                connections.incrementAndGet();
                 System.out.println("[QC45] OCPP bridge connected: " + uri);
                 retry = 2000L;
-                while (running && ws.isOpen()) {
-                    String msg = ws.readText(1000);
+                while (running && connection.isOpen()) {
+                    String msg = connection.readText(1000);
                     if (msg != null) onMessage(msg);
                 }
             } catch (Throwable e) {
                 if (running) {
                     System.err.println("[QC45] OCPP bridge connection error: " + e);
-                    synchronized (pending) {
-                        for (Pending p : pending.values()) p.fail(String.valueOf(e));
-                        pending.clear();
-                    }
-                    try { Thread.sleep(retry); } catch (InterruptedException ignored) {}
-                    retry = Math.min(30000L, retry * 2L);
                 }
             } finally {
-                WebSocket s = ws; if (s != null) s.close(); ws = null;
+                invalidate(connection, "OCPP connection closed", false);
+                if (ws == connection) ws = null;
+            }
+            if (running) {
+                try { Thread.sleep(retry); } catch (InterruptedException ignored) {}
+                retry = Math.min(30000L, retry * 2L);
+            }
+        } } finally { running = false; watchdog.interrupt(); }
+    }
+
+    private void expireRequests() {
+        Pending[] requests;
+        synchronized (pending) { requests = pending.values().toArray(new Pending[pending.size()]); }
+        for (Pending request : requests) {
+            if (request.expired()) invalidate(request.connection,
+                "OCPP backend response timeout: " + request.action, true);
+        }
+    }
+
+    private void invalidate(WebSocket connection, String reason, boolean timeout) {
+        if (connection.abort()) {
+            if (timeout) responseTimeouts.incrementAndGet();
+            if (running && timeout) System.err.println("[QC45] " + reason + "; reconnecting transport");
+        }
+        synchronized (pending) {
+            for (Pending request : pending.values()) {
+                if (request.connection == connection) request.fail(reason);
             }
         }
     }
 
     /** Forward an OCPP CALL and wait for CALLRESULT/CALLERROR. */
     public String call(String action, String payload, int timeoutMs) throws Exception {
+        if (timeoutMs <= 0) throw new IllegalArgumentException("OCPP timeout must be positive");
         WebSocket s = ws;
         if (s == null || !s.isOpen()) throw new IOException("OCPP backend not connected");
         String uid = UUID.randomUUID().toString();
-        Pending p = new Pending();
+        Pending p = new Pending(s, action, timeoutMs);
         synchronized (pending) { pending.put(uid, p); }
         try {
             s.sendText("[2,\"" + uid + "\",\"" + json(action) + "\"," + payload + "]");
-            return p.await(timeoutMs);
+            return p.await();
+        } catch (ResponseTimeout timeout) {
+            invalidate(s, "OCPP backend response timeout: " + action, true);
+            throw timeout;
+        } catch (IOException transportError) {
+            // CALLERROR is a received backend response, not a broken transport.
+            if (!p.replied()) invalidate(s, "OCPP transport failed: " + action, false);
+            throw transportError;
         } finally {
             synchronized (pending) { pending.remove(uid); }
         }
@@ -135,8 +204,9 @@ public final class OcppBridgeClient extends Thread {
             Pending p;
             synchronized (pending) { p = pending.get(uid); }
             if (p != null) {
+                p.connection.lastResponseNanos = System.nanoTime();
                 if (type == 3) p.complete(arrayObject(msg, 2));
-                else p.fail("CALLERROR " + msg);
+                else p.reject("CALLERROR " + msg);
             }
             return;
         }
@@ -266,16 +336,30 @@ public final class OcppBridgeClient extends Thread {
     private void sendResult(String uid, String payload) throws IOException { ws.sendText("[3,\""+json(uid)+"\","+payload+"]"); }
     private void sendError(String uid, String code, String text) throws IOException { ws.sendText("[4,\""+json(uid)+"\",\""+json(code)+"\",\""+json(text)+"\",{}]"); }
 
+    private static final class ResponseTimeout extends IOException {
+        ResponseTimeout() { super("OCPP backend response timeout"); }
+    }
+
     private static final class Pending {
+        final WebSocket connection;
+        final String action;
+        final long deadlineNanos;
         private String result, error;
-        synchronized void complete(String r) { result=r; notifyAll(); }
-        synchronized void fail(String e) { error=e; notifyAll(); }
-        synchronized String await(int timeoutMs) throws Exception {
-            long end=System.currentTimeMillis()+timeoutMs;
+        private boolean responseReceived;
+        Pending(WebSocket connection, String action, int timeoutMs) {
+            this.connection = connection; this.action = action;
+            deadlineNanos = System.nanoTime() + timeoutMs * 1000000L;
+        }
+        synchronized void complete(String r) { if (result==null && error==null) { responseReceived=true; result=r; notifyAll(); } }
+        synchronized void reject(String e) { if (result==null && error==null) { responseReceived=true; error=e; notifyAll(); } }
+        synchronized void fail(String e) { if (result==null && error==null) { error=e; notifyAll(); } }
+        synchronized boolean replied() { return responseReceived; }
+        synchronized boolean expired() { return result==null && error==null && System.nanoTime()-deadlineNanos>=0L; }
+        synchronized String await() throws Exception {
             while(result==null && error==null) {
-                long left=end-System.currentTimeMillis();
-                if(left<=0) throw new IOException("OCPP backend response timeout");
-                wait(left);
+                long left=deadlineNanos-System.nanoTime();
+                if(left<=0) throw new ResponseTimeout();
+                wait(Math.max(1L, (left+999999L)/1000000L));
             }
             if(error!=null) throw new IOException(error);
             return result;
@@ -296,7 +380,11 @@ public final class OcppBridgeClient extends Thread {
     private static final class WebSocket {
         private static final SecureRandom RANDOM=new SecureRandom();
         private final URI uri; private final String user,pass,caFile; private final boolean insecure;
-        private SSLSocket socket; private InputStream in; private OutputStream out; private volatile boolean open;
+        private volatile SSLSocket socket;
+        private volatile Socket transport;
+        private InputStream in; private OutputStream out; private volatile boolean open;
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private volatile long lastResponseNanos;
         private ByteArrayOutputStream fragmented; private int fragmentedOpcode;
         WebSocket(URI u,String user,String pass,String caFile,boolean insecure){this.uri=u;this.user=user;this.pass=pass;this.caFile=caFile;this.insecure=insecure;}
         boolean isOpen(){return open;}
@@ -304,7 +392,10 @@ public final class OcppBridgeClient extends Thread {
             if(!"wss".equalsIgnoreCase(uri.getScheme()))throw new IllegalArgumentException("Only wss:// supported");
             String host=uri.getHost(); int port=uri.getPort()>0?uri.getPort():443;
             SSLSocketFactory f=sslFactory(caFile,insecure);
-            socket=(SSLSocket)f.createSocket(host,port); socket.setEnabledProtocols(new String[]{"TLSv1.2"}); socket.setSoTimeout(1000);
+            transport = new Socket();
+            if (closed.get()) { transport.close(); throw new IOException("OCPP connection closed"); }
+            transport.connect(new InetSocketAddress(host, port), 10000);
+            socket=(SSLSocket)f.createSocket(transport,host,port,true); socket.setEnabledProtocols(new String[]{"TLSv1.2"}); socket.setSoTimeout(10000);
             if(!insecure){SSLParameters p=socket.getSSLParameters();p.setEndpointIdentificationAlgorithm("HTTPS");socket.setSSLParameters(p);}
             socket.startHandshake();
             System.out.println("[QC45] OCPP bridge TLS " + socket.getSession().getProtocol()+" / "+socket.getSession().getCipherSuite());
@@ -314,11 +405,21 @@ public final class OcppBridgeClient extends Thread {
             String req="GET "+path+" HTTP/1.1\r\nHost: "+host+":"+port+"\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: "+key+"\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: ocpp1.6\r\nAuthorization: Basic "+auth+"\r\n\r\n";
             out.write(req.getBytes(UTF8));out.flush();String h=readHeader(in);if(h.indexOf(" 101 ")<0)throw new IOException("WebSocket upgrade failed: "+firstLine(h));
             String accept=header(h,"Sec-WebSocket-Accept");String exp=base64(MessageDigest.getInstance("SHA-1").digest((key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").getBytes(UTF8)));if(!exp.equals(accept))throw new IOException("Invalid Sec-WebSocket-Accept");if(!"ocpp1.6".equalsIgnoreCase(header(h,"Sec-WebSocket-Protocol")))throw new IOException("Backend did not select ocpp1.6 subprotocol");open=true;
+            if (closed.get()) { open=false; throw new IOException("OCPP connection closed during handshake"); }
         }
         synchronized void sendText(String s)throws IOException{sendFrame(1,s.getBytes(UTF8));}
         String readText(int timeout)throws IOException{if(!open)return null;socket.setSoTimeout(timeout);try{while(open){Frame f=readFrame();if(f.op==8){close();return null;}if(f.op==9){sendFrame(10,f.data);continue;}if(f.op==10)continue;if(f.op==1){if(fragmented!=null)throw new IOException("new text frame during fragmented message");if(f.fin)return new String(f.data,UTF8);fragmented=new ByteArrayOutputStream();fragmentedOpcode=1;appendFragment(f.data);continue;}if(f.op==0){if(fragmented==null||fragmentedOpcode!=1)throw new IOException("unexpected continuation frame");appendFragment(f.data);if(f.fin){String value=new String(fragmented.toByteArray(),UTF8);fragmented=null;fragmentedOpcode=0;return value;}continue;}if(f.op==2)throw new IOException("binary WebSocket messages are unsupported");}}catch(java.net.SocketTimeoutException e){return null;}return null;}
-        synchronized void close(){if(!open&&socket==null)return;try{if(open)sendFrame(8,new byte[0]);}catch(Throwable ignored){}open=false;try{if(socket!=null)socket.close();}catch(Throwable ignored){}}
-        private void sendFrame(int op,byte[] data)throws IOException{if(!open&&op!=8)throw new IOException("closed");ByteArrayOutputStream b=new ByteArrayOutputStream();b.write(0x80|op);int n=data.length;if(n<=125)b.write(0x80|n);else if(n<=65535){b.write(0x80|126);b.write((n>>>8)&255);b.write(n&255);}else{b.write(0x80|127);for(int i=7;i>=0;i--)b.write((int)(((long)n>>>(8*i))&255));}byte[] m=new byte[4];RANDOM.nextBytes(m);b.write(m);for(int i=0;i<n;i++)b.write(data[i]^m[i&3]);out.write(b.toByteArray());out.flush();}
+        void close(){abort();}
+        boolean abort() {
+            if (!closed.compareAndSet(false, true)) return false;
+            open = false;
+            // No send lock or graceful close write: this must unblock a stuck
+            // reader/writer even when the peer silently drops every packet.
+            try { if (transport != null) transport.close(); else if (socket != null) socket.close(); }
+            catch (IOException ignored) {}
+            return true;
+        }
+        private synchronized void sendFrame(int op,byte[] data)throws IOException{if(!open)throw new IOException("closed");ByteArrayOutputStream b=new ByteArrayOutputStream();b.write(0x80|op);int n=data.length;if(n<=125)b.write(0x80|n);else if(n<=65535){b.write(0x80|126);b.write((n>>>8)&255);b.write(n&255);}else{b.write(0x80|127);for(int i=7;i>=0;i--)b.write((int)(((long)n>>>(8*i))&255));}byte[] m=new byte[4];RANDOM.nextBytes(m);b.write(m);for(int i=0;i<n;i++)b.write(data[i]^m[i&3]);out.write(b.toByteArray());out.flush();}
         private void appendFragment(byte[] data)throws IOException{if(fragmented.size()+data.length>1024*1024)throw new IOException("fragmented message too large");fragmented.write(data,0,data.length);}
         private Frame readFrame() throws IOException {
             // A timeout before the first byte is ordinary idle. Once a frame

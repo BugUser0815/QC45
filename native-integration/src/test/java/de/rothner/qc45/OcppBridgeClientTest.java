@@ -3,6 +3,9 @@ package de.rothner.qc45;
 import java.io.*;
 import java.lang.reflect.*;
 import java.net.*;
+import java.util.Properties;
+import java.util.Map;
+import java.util.concurrent.*;
 import javax.net.ssl.*;
 import org.junit.Rule;
 import org.junit.Test;
@@ -50,6 +53,80 @@ public final class OcppBridgeClientTest {
         Object socket = socket(0x01, 2, 'h', 'e', -2, 0x80, 3, 'l', 'l', 'o');
         assertNull(read(socket));
         assertEquals("hello", read(socket));
+    }
+
+    @Test public void responseTimeoutClosesTheTransportAndMarksCommunicationDisconnected() throws Exception {
+        OcppBridgeClient client = client(new FakeStation());
+        Object socket = socket();
+        set(socket, "out", new ByteArrayOutputStream()); set(client, "ws", socket);
+        Properties before = new Properties(); client.writeHealth(before);
+        assertEquals("awaiting-response", before.getProperty("ocpp.state"));
+        try { client.call("Heartbeat", "{}", 30); fail("Missing reply must time out"); }
+        catch (IOException expected) { assertTrue(expected.getMessage().contains("timeout")); }
+        assertFalse(client.isConnected());
+        Properties after = new Properties(); client.writeHealth(after);
+        assertEquals("disconnected", after.getProperty("ocpp.state"));
+        assertEquals("1", after.getProperty("ocpp.responseTimeouts"));
+    }
+
+    @Test public void deadlineCanAbortAWriterHoldingTheWebSocketSendLock() throws Exception {
+        final OcppBridgeClient client = client(new FakeStation());
+        Object socket = socket();
+        final CountDownLatch writing = new CountDownLatch(1), closed = new CountDownLatch(1);
+        set(socket, "transport", new Socket() { public void close() { closed.countDown(); } });
+        set(socket, "out", new OutputStream() {
+            public void write(int value) throws IOException {
+                writing.countDown();
+                try { if (!closed.await(2, TimeUnit.SECONDS)) throw new IOException("test write stuck"); }
+                catch (InterruptedException e) { throw new IOException(e); }
+                throw new IOException("socket closed");
+            }
+        });
+        set(client, "ws", socket);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<String> call = executor.submit(new Callable<String>() {
+            public String call() throws Exception { return client.call("Heartbeat", "{}", 30); }
+        });
+        try {
+            assertTrue(writing.await(1, TimeUnit.SECONDS));
+            Thread.sleep(40L);
+            Method expire = OcppBridgeClient.class.getDeclaredMethod("expireRequests");
+            expire.setAccessible(true); expire.invoke(client);
+            try { call.get(1, TimeUnit.SECONDS); fail("Writer must fail"); }
+            catch (ExecutionException expected) { assertTrue(expected.getCause() instanceof IOException); }
+            assertFalse(client.isConnected());
+        } finally { closed.countDown(); executor.shutdownNow(); }
+    }
+
+    @Test public void backendCallErrorConfirmsConnectivityWithoutForcingReconnect() throws Exception {
+        final OcppBridgeClient client = client(new FakeStation());
+        Object socket = socket();
+        set(socket, "out", new ByteArrayOutputStream()); set(client, "ws", socket);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        Future<String> call = executor.submit(new Callable<String>() {
+            public String call() throws Exception { return client.call("Authorize", "{}", 2000); }
+        });
+        try {
+            Field field = OcppBridgeClient.class.getDeclaredField("pending"); field.setAccessible(true);
+            Map<?,?> pending = (Map<?,?>)field.get(client);
+            String uid = null;
+            long end = System.nanoTime() + 1000000000L;
+            while (uid == null && System.nanoTime() < end) {
+                synchronized (pending) { if (!pending.isEmpty()) uid = String.valueOf(pending.keySet().iterator().next()); }
+                if (uid == null) Thread.sleep(1L);
+            }
+            assertNotNull(uid);
+            Method receive = OcppBridgeClient.class.getDeclaredMethod("onMessage", String.class);
+            receive.setAccessible(true); receive.invoke(client, "[4,\""+uid+"\",\"NotSupported\",\"unsupported\",{}]");
+            try { call.get(1, TimeUnit.SECONDS); fail("CALLERROR must propagate"); }
+            catch (ExecutionException expected) { assertTrue(expected.getCause().getMessage().contains("CALLERROR")); }
+            assertTrue(client.isConnected());
+            Properties p = new Properties(); client.writeHealth(p);
+            assertEquals("ready", p.getProperty("ocpp.state"));
+            set(socket, "lastResponseNanos", System.nanoTime() - 121000000000L);
+            p.clear(); client.writeHealth(p);
+            assertEquals("unresponsive", p.getProperty("ocpp.state"));
+        } finally { client.shutdown(); executor.shutdownNow(); }
     }
 
     private OcppBridgeClient client(FakeStation station) throws Exception {
