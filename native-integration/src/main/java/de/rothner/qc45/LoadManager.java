@@ -153,9 +153,10 @@ public final class LoadManager extends Thread {
             // new KSEM-derived target.
             limits.reconcile();
 
+            ChargingLimitCoordinator.DcPermitState permit = limits.dcPermitState();
             int requestedDcMax = Math.min(maxDcKw, limits.requestedDcKw());
             boolean dcEligible = active.dcConnector > 0
-                && limits.dcPermitValid(now)
+                && permit != ChargingLimitCoordinator.DcPermitState.NONE
                 && (active.dcConnector != 2 || limits.isCcsAvailable())
                 && requestedDcMax >= minDcKw;
 
@@ -178,7 +179,7 @@ public final class LoadManager extends Thread {
                 // Do not pre-arm the unused CHAdeMO/CCS outputs with the full
                 // KSEM headroom. A new session starts at 5 kW and ramps up
                 // even if evcc previously granted a larger DC budget.
-                int idleDcKw = limits.dcPermitValid(now)
+                int idleDcKw = permit == ChargingLimitCoordinator.DcPermitState.FRESH
                     && requestedDcMax >= minDcKw ? minDcKw : 0;
                 int physicalIdleDcKw = idleDcKw > 0 ? idleDcKw : minDcKw;
                 limits.setGridTargetsAndPrearm(0, active.ac,
