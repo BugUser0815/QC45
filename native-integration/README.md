@@ -79,6 +79,28 @@ DC remains actively managed by the integration. The released system includes:
 
 The Type 2 read-only decision does not disable or weaken the DC control path.
 
+### Network failure during an authorized DC charge
+
+A failed KSEM read immediately limits DC to physical 5 kW Notladen. If evcc
+also stops refreshing its budget for 30 seconds, the budget drops to 5 kW
+instead of terminating the ongoing charge. The independent guard permits this
+continuation only for the same native transaction it previously observed with
+a valid positive evcc budget. It forgets that permission when the session ends;
+a replacement transaction cannot inherit it, even if no idle poll was seen.
+No continuation permission survives a JVM restart.
+
+Five valid KSEM reads qualify recovery. Normal ramping additionally requires a
+fresh positive evcc budget; recovery cannot restore a stale higher limit. A
+budget refresh received while a KSEM read is in progress is checked against
+time sampled under the coordinator lock, avoiding a false expired-permit drop.
+
+An explicit zero budget, a manual/backend stop, an actual limit-enforcement
+failure, emergency stop and grid hard-trip protection remain effective.
+AutoCharge still requires fresh backend authorization for every new vehicle
+connection, and an unconfirmed/rejected backend transaction is still aborted.
+Communication loss after transaction confirmation uses the existing native
+transaction lifecycle; final reporting must be verified when the backend returns.
+
 ## Modbus TCP
 
 The integration exposes station and connector telemetry to evcc and the local charging screen. The exact register map remains defined in `ModbusServer` and its tests.

@@ -31,6 +31,13 @@ wiederholt. Fremde Karten-/Remote-Sessions werden anhand des gespeicherten
 Start-Tags und des aktuellen nativen Benutzers geschützt. Ein Backend-Ausfall
 während einer bereits bestätigten Transaktion bleibt im vorhandenen nativen
 OCPP-Lebenszyklus; diese Erweiterung ist keine neue Offline-Abrechnungsqueue.
+Fällt während derselben laufenden Transaktion zusätzlich die KSEM- oder
+evcc-Verbindung aus, begrenzt die Regelung auf 5 kW Notladen. Ein fehlender
+evcc-Refresh beendet eine zuvor mit gültiger Freigabe beobachtete Transaktion
+nicht mehr. Diese Weiterladefreigabe gilt nur für dieselbe native Transaktion,
+erlischt beim Sitzungsende und überlebt keinen JVM-Neustart. Erst mit frischen
+KSEM-Werten und erneuerter evcc-Leistungsfreigabe wird wieder hochgeregelt.
+Ein ausdrücklicher Stopp und die echten Schutzabschaltungen bleiben wirksam.
 
 Für die Flottenauswertung werden die EVCCIDs im Backend den Fahrzeugen bzw.
 dem Firmenkonto zugeordnet. Auch eine dort noch nicht registrierte EVCCID wird

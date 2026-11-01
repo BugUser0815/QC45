@@ -27,6 +27,7 @@ public final class ChargingLimitCoordinator {
     public static final int NOTLADEN_KW = 5;
     public static final int AC_NOTLADEN_KW = 5;
     public static final long DC_REQUEST_TIMEOUT_MS = 30000L;
+    public enum DcPermitState { NONE, FRESH, NETWORK_FALLBACK }
 
     private final ChargingLimitIo io;
     private final boolean acManaged;
@@ -40,6 +41,7 @@ public final class ChargingLimitCoordinator {
     private int requestedAcKw;
     private boolean evccControlsDc;
     private long lastDcRequestAtMs;
+    private boolean dcNetworkFallback;
     private boolean evccControlsAc;
     private int gridDcKw;
     private int gridAcKw;
@@ -74,10 +76,9 @@ public final class ChargingLimitCoordinator {
         this.maxDcKw = maxDcKw;
         this.minAcKw = minAcKw;
         this.maxAcKw = maxAcKw;
-        // DC is fail-closed: KSEM may reduce a valid evcc request but must never
-        // create a charging entitlement. A JVM restart loses every old permit.
-        // Native zero is ambiguous on QC45, so the guard must also terminate
-        // DC transactions that have no current permit.
+        // No entitlement survives a JVM restart. A communication timeout can
+        // retain only 5 kW for the same previously permitted live transaction;
+        // the guard checks that identity independently of power allocation.
         this.requestedDcKw = 0;
         this.requestedAcKw = maxAcKw;
         this.stageDcCapKw = maxDcKw;
@@ -106,6 +107,7 @@ public final class ChargingLimitCoordinator {
         requestedAcKw = nextAcKw;
         evccControlsDc = true;
         lastDcRequestAtMs = System.currentTimeMillis();
+        dcNetworkFallback = false;
         evccControlsAc = true;
         apply(false);
     }
@@ -116,6 +118,7 @@ public final class ChargingLimitCoordinator {
         requestedDcKw = nextKw;
         evccControlsDc = true;
         lastDcRequestAtMs = System.currentTimeMillis();
+        dcNetworkFallback = false;
         apply(false);
     }
 
@@ -162,6 +165,11 @@ public final class ChargingLimitCoordinator {
         gridAcKw = acIsActive ? normalize(acKw, minAcKw, maxAcKw) : 0;
         prearmDcKw = dcConnector == 0
             ? normalize(idleDcKw, minDcKw, maxDcKw) : 0;
+        if (dcNetworkFallback) {
+            // Fresh KSEM readings alone cannot restore the old evcc budget.
+            gridDcKw = Math.min(gridDcKw, NOTLADEN_KW);
+            prearmDcKw = 0;
+        }
         prearmAcKw = acIsActive
             ? 0 : normalize(idleAcKw, minAcKw, maxAcKw);
         demandTransfer = transferringDemand && dcConnector > 0 && acIsActive;
@@ -237,21 +245,41 @@ public final class ChargingLimitCoordinator {
     public synchronized int requestedAcKw() { return requestedAcKw; }
     public synchronized boolean evccControlsDc() { return evccControlsDc; }
 
-    /** DC power requires a recent, explicit positive evcc Modbus request. */
+    /** Sample time under the same lock as permit renewal, after any meter I/O. */
+    public synchronized boolean dcPermitValid() {
+        return dcPermitValid(System.currentTimeMillis());
+    }
+
+    /** A fresh permit allows normal control; a timeout is a separate state. */
     public synchronized boolean dcPermitValid(long nowMs) {
-        return requestedDcKw >= minDcKw && lastDcRequestAtMs > 0
+        return !dcNetworkFallback && requestedDcKw >= minDcKw && lastDcRequestAtMs > 0
             && nowMs >= lastDcRequestAtMs
             && nowMs - lastDcRequestAtMs < DC_REQUEST_TIMEOUT_MS;
     }
 
-    /** Called by the independent guard even when evcc and KSEM stop responding. */
+    public synchronized boolean dcNetworkFallbackActive() { return dcNetworkFallback; }
+
+    /** Expiry and classification must be atomic, including the timeout boundary. */
+    public synchronized DcPermitState dcPermitState() throws Exception {
+        long now = System.currentTimeMillis();
+        expireDcRequestIfStale(now);
+        if (dcPermitValid(now)) return DcPermitState.FRESH;
+        return dcNetworkFallback ? DcPermitState.NETWORK_FALLBACK : DcPermitState.NONE;
+    }
+
+    public synchronized void expireDcRequestIfStale() throws Exception {
+        expireDcRequestIfStale(System.currentTimeMillis());
+    }
+
+    /** A missing refresh reduces power; it is not an explicit stop request. */
     public synchronized void expireDcRequestIfStale(long nowMs) throws Exception {
-        if (requestedDcKw < minDcKw || dcPermitValid(nowMs)) return;
-        requestedDcKw = 0;
+        if (dcNetworkFallback || requestedDcKw < minDcKw || dcPermitValid(nowMs)) return;
+        dcNetworkFallback = true;
+        requestedDcKw = NOTLADEN_KW;
         evccControlsDc = false;
-        gridDcKw = 0;
+        gridDcKw = Math.min(gridDcKw, NOTLADEN_KW);
         prearmDcKw = 0;
-        System.err.println("[QC45] DC EVCC PERMIT EXPIRED -> 0kW logical; stop unauthorized DC transactions");
+        System.err.println("[QC45] DC EVCC NETWORK TIMEOUT -> 5kW; continuation requires the same previously permitted transaction");
         apply(true);
     }
     public synchronized boolean evccControlsAc() { return evccControlsAc; }

@@ -346,7 +346,7 @@ public final class ChargingLimitCoordinatorTest {
     }
 
     @Test
-    public void expiredDcPermitCannotBeRestoredByKsemOrReboot() throws Exception {
+    public void expiredDcPermitRetainsOnlyFiveKwAndCannotBeRestoredByKsemOrReboot() throws Exception {
         FakeIo io = new FakeIo();
         ChargingLimitCoordinator limits = coordinator(io);
         limits.initializeNotladen();
@@ -357,12 +357,61 @@ public final class ChargingLimitCoordinatorTest {
         assertEquals(35, io.value[1]);
         limits.expireDcRequestIfStale(
             System.currentTimeMillis() + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
-        assertEquals(0, limits.requestedDcKw());
+        assertEquals(5, limits.requestedDcKw());
+        assertTrue(limits.dcNetworkFallbackActive());
+        assertFalse(limits.dcPermitValid());
         assertEquals(5, io.value[1]);
         assertEquals(5, io.value[2]);
         limits.setGridTargetsAndPrearm(0, false, 0, 0, 35, 0, false);
         assertEquals(5, io.value[1]);
         assertEquals(0, coordinator(new FakeIo()).requestedDcKw());
+    }
+
+    @Test
+    public void freshBudgetResumesControlFromFallbackWithoutRestoringOldGridTarget() throws Exception {
+        FakeIo io = new FakeIo();
+        ChargingLimitCoordinator limits = coordinator(io);
+        limits.initializeNotladen(); limits.setCcsAvailable(true);
+        limits.setBlocked(ChargingLimitCoordinator.STARTUP, false);
+        limits.requestDcBudget(35); limits.setGridTargets(2, false, 30, 0);
+        limits.expireDcRequestIfStale(System.currentTimeMillis()
+            + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
+        assertEquals(5, io.value[2]);
+        limits.setGridTargets(2, false, 35, 0);
+        assertEquals(5, io.value[2]);
+        limits.requestDcBudget(35);
+        assertFalse(limits.dcNetworkFallbackActive());
+        assertTrue(limits.dcPermitValid());
+        assertEquals("a fresh grid calculation is required before increasing", 5, io.value[2]);
+        limits.setGridTargets(2, false, 6, 0);
+        assertEquals(6, io.value[2]);
+    }
+
+    @Test
+    public void explicitZeroRevokesNetworkFallbackImmediately() throws Exception {
+        ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        limits.requestDcBudget(35);
+        limits.expireDcRequestIfStale(System.currentTimeMillis()
+            + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
+        assertTrue(limits.dcNetworkFallbackActive());
+        limits.requestDcBudget(0);
+        assertFalse(limits.dcNetworkFallbackActive());
+        assertFalse(limits.dcPermitValid());
+        assertEquals(0, limits.requestedDcKw());
+    }
+
+    @Test public void permitClassificationAppliesTimeoutBeforeReturningItsState() throws Exception {
+        ChargingLimitCoordinator limits = coordinator(new FakeIo());
+        assertEquals(ChargingLimitCoordinator.DcPermitState.NONE, limits.dcPermitState());
+        limits.requestDcBudget(35);
+        assertEquals(ChargingLimitCoordinator.DcPermitState.FRESH, limits.dcPermitState());
+        java.lang.reflect.Field last = ChargingLimitCoordinator.class.getDeclaredField("lastDcRequestAtMs");
+        last.setAccessible(true);
+        last.setLong(limits, System.currentTimeMillis() - ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS - 1L);
+        assertEquals(ChargingLimitCoordinator.DcPermitState.NETWORK_FALLBACK, limits.dcPermitState());
+        assertEquals(5, limits.requestedDcKw());
+        limits.requestDcBudget(0);
+        assertEquals(ChargingLimitCoordinator.DcPermitState.NONE, limits.dcPermitState());
     }
 
     @Test

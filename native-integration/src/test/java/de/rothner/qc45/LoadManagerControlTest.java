@@ -127,6 +127,57 @@ public final class LoadManagerControlTest {
     }
 
     @Test
+    public void permitRenewedDuringMeterReadMustNotCauseAFalseFiveKwDrop() throws Exception {
+        final Fixture f = new Fixture(1);
+        f.station.active[2] = true;
+        for (int i = 0; i < 12; i++) f.tick(10.0d, f.command());
+        final int before = f.command();
+        assertTrue(before >= 10);
+        f.meter.duringRead = new Runnable() {
+            public void run() {
+                try { f.limits.requestDcBudget(35); }
+                catch (Exception e) { throw new AssertionError(e); }
+            }
+        };
+        // Reproduce a cycle which began before evcc renewed while KSEM was read.
+        f.manager.runCycle(System.currentTimeMillis() - 100L);
+        assertTrue("fresh renewal cannot revoke a live permit", f.command() >= before);
+    }
+
+    @Test
+    public void aZeroBudgetReceivedDuringMeterReadStillWithdrawsPower() throws Exception {
+        final Fixture f = new Fixture(1);
+        f.station.active[2] = true;
+        for (int i = 0; i < 5; i++) f.tick(10.0d, 5);
+        f.meter.duringRead = new Runnable() {
+            public void run() {
+                try { f.limits.requestDcBudget(0); }
+                catch (Exception e) { throw new AssertionError(e); }
+            }
+        };
+        f.manager.runCycle(System.currentTimeMillis() - 100L);
+        assertEquals(0, f.limits.effectiveDcKw());
+        assertEquals(5, f.command());
+    }
+
+    @Test
+    public void evccTimeoutCapsRecoveredKsemAtFiveKwUntilAFreshBudgetArrives() throws Exception {
+        Fixture f = new Fixture(1);
+        f.station.active[2] = true;
+        for (int i = 0; i < 5; i++) f.tick(10.0d, 5);
+        f.limits.expireDcRequestIfStale(System.currentTimeMillis()
+            + ChargingLimitCoordinator.DC_REQUEST_TIMEOUT_MS + 1L);
+        f.meter.fail = true; f.tick(10.0d, 5, false);
+        f.meter.fail = false;
+        for (int i = 0; i < 10; i++) f.tick(5.0d, 5, false);
+        assertEquals(5, f.command());
+        assertTrue(f.limits.dcNetworkFallbackActive());
+        f.tick(5.0d, 5, true);
+        assertFalse(f.limits.dcNetworkFallbackActive());
+        assertTrue(f.command() > 5);
+    }
+
+    @Test
     public void delayedVehicleAndOneCycleDelayedMeterConvergeWithoutGuardSawtooth()
             throws Exception {
         // Rectifier reaction is five cycles late; KSEM is one sample late.
@@ -191,8 +242,10 @@ public final class LoadManagerControlTest {
     private static final class FakeMeter implements GridCurrentIo {
         double criticalA;
         boolean fail;
+        Runnable duringRead;
         public KsemClient.Currents readCurrents() throws Exception {
             if (fail) throw new IOException("simulated KSEM failure");
+            if (duringRead != null) duringRead.run();
             // L2 is deliberately the highest phase.
             return new KsemClient.Currents(Math.max(0.0d, criticalA - 3.0d), criticalA,
                 Math.max(0.0d, criticalA - 1.0d));
