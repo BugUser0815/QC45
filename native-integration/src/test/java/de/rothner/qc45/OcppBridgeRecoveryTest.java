@@ -3,9 +3,9 @@ package de.rothner.qc45;
 import java.io.*;
 import java.net.*;
 import java.security.*;
-import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.*;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -14,21 +14,37 @@ import static org.junit.Assert.*;
 /** Real TLS/WebSocket regression for the silent-network-loss incident. */
 public final class OcppBridgeRecoveryTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
+    private File keyFile;
 
-    @Test(timeout=20000) public void silentPeerIsReconnectedWithoutReplayingTransaction() throws Exception {
-        File keyFile = new File(temporary.getRoot(), "ephemeral-test-server.p12");
+    @Before public void createCertificate() throws Exception {
+        keyFile = new File(temporary.getRoot(), "ephemeral-test-server.p12");
         // Generate a new disposable key for each test; no key material is kept
-        // in the repository or reused by a deployed station.
+        // in the repository or reused by a deployed station. RSA generation on
+        // a Raspberry Pi must not consume the transport recovery time budget.
+        File output = new File(temporary.getRoot(), "keytool.log");
         Process keytool = new ProcessBuilder(
             new File(System.getProperty("java.home"), "bin/keytool").getPath(),
             "-genkeypair", "-alias", "test", "-keyalg", "RSA", "-keysize", "2048",
             "-storetype", "PKCS12", "-keystore", keyFile.getPath(),
             "-storepass", "test-password", "-keypass", "test-password",
             "-dname", "CN=localhost", "-validity", "1", "-noprompt")
-            .redirectErrorStream(true).start();
-        InputStream output = keytool.getInputStream();
-        try { while (output.read() >= 0) {} } finally { output.close(); }
-        assertEquals("Ephemeral test certificate generation", 0, keytool.waitFor());
+            .redirectErrorStream(true).redirectOutput(output).start();
+        try {
+            long deadline = System.nanoTime() + 60000000000L;
+            for (;;) {
+                try {
+                    assertEquals("Ephemeral test certificate generation", 0, keytool.exitValue());
+                    break;
+                } catch (IllegalThreadStateException running) {
+                    if (System.nanoTime() >= deadline)
+                        fail("Ephemeral test certificate generation exceeded 60 seconds");
+                    Thread.sleep(25L);
+                }
+            }
+        } finally { keytool.destroy(); }
+    }
+
+    @Test(timeout=40000) public void silentPeerIsReconnectedWithoutReplayingTransaction() throws Exception {
         Backend backend = new Backend(keyFile);
         OcppBridgeClient client = new OcppBridgeClient(new Station(),
             "wss://localhost:" + backend.port() + "/", "test", "test", "", true,
@@ -44,7 +60,7 @@ public final class OcppBridgeRecoveryTest {
             }
             awaitConnected(client, backend, 2);
             assertEquals("{\"currentTime\":\"2026-11-01T10:30:00Z\"}",
-                client.call("Heartbeat", "{}", 2000));
+                client.call("Heartbeat", "{}", 5000));
             assertEquals(1, backend.transactions.get());
             java.util.Properties p = new java.util.Properties();
             client.writeHealth(p);
@@ -57,9 +73,14 @@ public final class OcppBridgeRecoveryTest {
     }
 
     private static void awaitConnected(OcppBridgeClient client, Backend backend, int expected) throws Exception {
-        long end = System.nanoTime() + 7000000000L;
+        long end = System.nanoTime() + 10000000000L;
         while (backend.connections.get() < expected || !client.isConnected()) {
-            if (System.nanoTime() >= end) fail("No connection " + expected);
+            if (backend.failure != null) throw new AssertionError("TLS test backend failed", backend.failure);
+            if (System.nanoTime() >= end) {
+                java.util.Properties health = new java.util.Properties();
+                client.writeHealth(health);
+                fail("No connection " + expected + "; accepted=" + backend.connections.get() + "; " + health);
+            }
             Thread.sleep(10L);
         }
     }
