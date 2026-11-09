@@ -57,6 +57,7 @@ flowchart LR
 
 | Thema | Zweck | Status |
 |---|---|---|
+| [iPhone-App und Cloud-Anbindung](https://github.com/BugUser0815/QC45/blob/main/wiki/iPhone-App-und-Cloud-Anbindung.md) | Fernzugriff, Zugangsschutz, Hosting und laufende Kosten (Stand 09.11.2026) | ✅ dokumentiert |
 | [Lademonitor UI](Lademonitor-UI) | kW statt kWh, Ist/Soll, SoC und Sessiondaten | ✅ Modbus-Unterbau; UI als JAR-Artefakt |
 | [EVCSD Lag Monitor](EVCSD-Lag-Monitor) | Executor-Lag und sicherer Reboot | ✅ integriert |
 | [Build & Installation](Build-und-Installation) | Maven, Deployment, PeakShaving-Build | ✅ dokumentiert |
