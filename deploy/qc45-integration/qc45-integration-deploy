@@ -123,11 +123,15 @@ elif [[ -r "$deployed_input_file" ]] && [[ "$(<"$deployed_input_file")" == "$int
 fi
 
 work_dir=$(mktemp -d "${QC45_STATE_DIR}/work.XXXXXXXX")
-git -C "$repo_dir" archive --format=tar "$commit_sha" native-integration deploy/qc45-integration/qc45-integration-health-check | tar -xf - -C "$work_dir"
+git -C "$repo_dir" archive --format=tar "$commit_sha" native-integration \
+    deploy/qc45-integration/qc45-integration-health-check \
+    deploy/qc45-integration/qc45-integration-wait | tar -xf - -C "$work_dir"
 
 project_dir="$work_dir/native-integration"
 output_jar="$project_dir/target/qc45-integration-0.1.0.jar"
 health_check="$work_dir/deploy/qc45-integration/qc45-integration-health-check"
+# Use readiness helpers from the same source snapshot as the candidate JAR.
+source "$work_dir/deploy/qc45-integration/qc45-integration-wait"
 
 echo "Building and testing the native integration..."
 JAVA_HOME="$QC45_JAVA_HOME" PATH="$QC45_JAVA_HOME/bin:$PATH" \
@@ -206,26 +210,6 @@ wait_for_ssh_up() {
     while ((SECONDS < deadline)); do
         if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" true >/dev/null 2>&1; then
             return 0
-        fi
-        sleep 3
-    done
-    return 1
-}
-
-wait_for_integration() {
-    local expected_sha256=$1
-    local mode=${2:-ready}
-    local deadline=$((SECONDS + 180))
-    local stable_samples=0
-    local verify_command=""
-    verify_command=$(printf '/home/mobie/evcsd/scripts/status_evcsd.sh && sh -s -- %q %q %q %q' \
-        "$QC45_REMOTE_JAR" "$expected_sha256" "$QC45_REMOTE_HEALTH" "$mode")
-    while ((SECONDS < deadline)); do
-        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" "$verify_command" <"$health_check" >/dev/null 2>&1; then
-            ((stable_samples += 1))
-            if ((stable_samples >= 3)); then return 0; fi
-        else
-            stable_samples=0
         fi
         sleep 3
     done
@@ -325,6 +309,7 @@ fi
 echo "Waiting for EVCSD and the native integration..."
 if ! wait_for_integration "$jar_sha256"; then
     echo "The new integration did not become healthy after reboot" >&2
+    capture_startup_diagnostics || true
 
     if [[ -z "$backup_jar" || -z "$backup_sha256" ]]; then
         echo "No previous integration JAR is available for rollback" >&2

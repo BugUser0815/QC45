@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Sourced by the deployer; uses its SSH settings and exact readiness checker.
+wait_for_integration() {
+    local expected_sha256=$1
+    local mode=${2:-ready}
+    # EVCSD/Derby and Tomcat can take more than three minutes on the Geode.
+    local deadline=$((SECONDS + 600))
+    local stable_samples=0
+    local verify_command=""
+    verify_command=$(printf '/home/mobie/evcsd/scripts/status_evcsd.sh && sh -s -- %q %q %q %q' \
+        "$QC45_REMOTE_JAR" "$expected_sha256" "$QC45_REMOTE_HEALTH" "$mode")
+    echo "Waiting up to 600 seconds for EVCSD and three consecutive integration health checks..."
+    while ((SECONDS < deadline)); do
+        if ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" "$verify_command" <"$health_check" >/dev/null 2>&1; then
+            ((stable_samples += 1))
+            if ((stable_samples >= 3)); then return 0; fi
+        else
+            stable_samples=0
+        fi
+        sleep 3
+    done
+    return 1
+}
+
+capture_startup_diagnostics() {
+    local diagnostic_file="$QC45_STATE_DIR/failed-startup-$(date -u +%Y%m%dT%H%M%SZ).log"
+    # Preserve evidence before rollback removes the health file and reboots.
+    # No configuration, credentials or packet captures are collected.
+    ssh "${ssh_probe_args[@]}" "$QC45_SSH_TARGET" '
+        date -Is
+        cat /proc/sys/kernel/random/boot_id
+        echo "QC45 integration health:"
+        if test -r /home/mobie/evcsd/qc45-integration-health.properties; then
+            cat /home/mobie/evcsd/qc45-integration-health.properties
+        else
+            echo "Health file missing"
+        fi
+        echo "EVCSD process check:"
+        /home/mobie/evcsd/scripts/status_evcsd.sh
+        echo "Recent integration log:"
+        tail -n 80 /home/mobie/evcsd/qc45-integration.log
+        echo "Recent native EVCSD log:"
+        tail -n 60 /home/mobie/data/log/evcsd.log.0
+    ' >"$diagnostic_file" 2>&1 || true
+    if [[ -f "$diagnostic_file" ]]; then
+        cat "$diagnostic_file" >&2 || true
+        echo "Startup diagnostics saved to $diagnostic_file" >&2
+    else
+        echo "Could not save startup diagnostics; continuing with rollback" >&2
+    fi
+}
