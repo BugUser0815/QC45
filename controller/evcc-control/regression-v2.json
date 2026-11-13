@@ -1,0 +1,22 @@
+{
+  "enabled": {
+    "script": "dc_budget_kw >= 5;\n"
+  },
+  "enable": {
+    "script": "dcControlEnabled = enable;\ndcStopRequested = !enable;\nif (!enable) { dcTargetKw = 0; }\nenable;\n",
+    "out": [
+      {
+        "config": {
+          "set": {
+            "set": {
+              "script": "var active = dc_c1_session != 0 || dc_c2_session != 0;\nvar nowMs = Date.now();\nvar budgetKw = 0;\nif (dc_mode === \"off\") {\n  dcControlEnabled = false;\n  dcStopRequested = true;\n  dcTargetKw = 0;\n} else if (!active) {\n  dcControlEnabled = false;\n  dcStopRequested = false;\n  dcPendingSinceMs = 0;\n  budgetKw = dc_mode === \"now\" ? 5 : 0;\n} else if (typeof dcStopRequested !== \"undefined\" && dcStopRequested) {\n  budgetKw = 0;\n} else if (typeof dcControlEnabled !== \"undefined\" && dcControlEnabled) {\n  budgetKw = typeof dcTargetKw === \"number\" ? dcTargetKw : 5;\n} else {\n  if (typeof dcPendingSinceMs !== \"number\" || dcPendingSinceMs === 0) {\n    dcPendingSinceMs = nowMs;\n  }\n  budgetKw = dc_mode === \"now\" && nowMs - dcPendingSinceMs < 10000 ? 5 : 0;\n}\nMath.max(0, Math.min(35, budgetKw));\n"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "maxcurrent": {
+    "script": "dcTargetKw = maxcurrent > 0\n  ? Math.max(5, Math.min(35, Math.ceil(maxcurrent * Math.sqrt(3) * 400 / 1000)))\n  : 0;\ndcTargetKw;\n"
+  }
+}
