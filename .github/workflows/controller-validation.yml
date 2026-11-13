@@ -1,0 +1,36 @@
+name: controller-validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'controller/current-limit/**'
+      - 'controller/evcc-control/**'
+      - '.github/workflows/controller-validation.yml'
+  pull_request:
+    paths:
+      - 'controller/current-limit/**'
+      - 'controller/evcc-control/**'
+      - '.github/workflows/controller-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check CCS limits with address and undefined-behavior sanitizers
+        run: |
+          cc -std=c99 -O1 -g -Wall -Wextra -Werror \
+            -fsanitize=address,undefined \
+            controller/current-limit/test_current_limit.c \
+            -o "$RUNNER_TEMP/test-current-limit"
+          "$RUNNER_TEMP/test-current-limit"
+      - name: Check evcc enable, stop and reconnect transitions
+        run: node controller/evcc-control/test-control.mjs
+      - name: Check controller Python syntax
+        run: |
+          python3 -m py_compile controller/current-limit/deploy.py \
+            controller/current-limit/probe_abi.py
