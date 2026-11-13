@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 /** Reflection adapter around the live EVCSD objects. */
-public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIdentityIo, OcppBridgeClient.Station {
+public final class ReflectionQC45 implements ChargingLimitIo, ChargingSessionIdentityIo, OcppBridgeClient.Station, Ocpp15BridgeServer.Station {
     private static final long REMOTE_START_PENDING_GRACE_MS = 60000L;
 
     private final Class<?> centralClass;

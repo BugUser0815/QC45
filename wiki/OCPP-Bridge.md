@@ -67,7 +67,20 @@ Das alte EVCSD meldet Zustände nicht immer passend zur OCPP-1.6-Semantik. Die B
 - Leistung > 0 → `Charging`
 - aktive Transaktion, Limit = 0 → `SuspendedEVSE`
 - aktive Transaktion, keine Leistung, Limit > 0 → `SuspendedEV`
-- nach Stop → best effort `Finishing`
+- nach bestätigtem Stop: native Freimeldung → `Available`; ohne Freimeldung
+  bleibt konservativ `Finishing`
+
+Die Bridge merkt sich den ursprünglichen nativen Status getrennt vom abgeleiteten
+Status. EVCSD kann `Available` schon vor oder während `StopTransaction` melden.
+Nach der Backendantwort wird diese Freimeldung erneut gesendet, damit ein zuvor
+wegen der noch gemerkten Transaktion abgeleitetes `SuspendedEV` korrigiert wird.
+Ein bereits freier Anschluss wird nicht wieder auf `Finishing` gesetzt.
+
+Statusmeldungen werden pro Anschluss serialisiert. Eine während des Abschlusses
+neu gestartete Transaktion oder ein gemeldeter Fehler wird von der verspäteten
+Stop-Antwort nicht überschrieben. Beim nächsten Start wird die alte native
+Statusbeobachtung verworfen; eine frühere Freimeldung gilt nicht für die neue
+Sitzung. Fehlerdetails bleiben in der ursprünglichen Statusmeldung erhalten.
 
 Ein eingehendes OCPP-1.5-`Occupied` wird in Richtung 1.6 zunächst als `Preparing` behandelt.
 
