@@ -37,6 +37,17 @@ import org.xml.sax.SAXParseException;
 
 /** OCPP 1.5 SOAP -> OCPP 1.6 JSON bridge. */
 public final class Ocpp15BridgeServer {
+    interface Upstream {
+        String call(String action, String payload, int timeoutMs) throws Exception;
+        void rememberTransaction(int transactionId, int connector);
+        void forgetTransaction(int transactionId);
+    }
+
+    interface Station {
+        int powerKw(int connector) throws Exception;
+        boolean sessionActive(int connector) throws Exception;
+    }
+
     private static final String OCPP15_NS = "urn://Ocpp/Cs/2012/06/";
     private static final String SOAP_NS = "http://www.w3.org/2003/05/soap-envelope";
 
@@ -45,11 +56,13 @@ public final class Ocpp15BridgeServer {
     private final String path;
     private final int heartbeatInterval;
     private final int timeoutMs;
-    private final OcppBridgeClient upstream;
-    private final ReflectionQC45 station;
+    private final Upstream upstream;
+    private final Station station;
     private final ChargingLimitCoordinator limits;
     private final Map<Integer,Integer> activeTransactions = new HashMap<Integer,Integer>();
     private final Map<Integer,String> lastForwardedStatus = new HashMap<Integer,String>();
+    private final Map<Integer,String> lastNativeStatus = new HashMap<Integer,String>();
+    private final Object[] statusLocks = { new Object(), new Object(), new Object(), new Object() };
     private final Set<Integer> endingConnectors = new HashSet<Integer>();
     private volatile FleetAutoCharge autoCharge;
     private HttpServer server;
@@ -59,6 +72,13 @@ public final class Ocpp15BridgeServer {
                               int timeoutMs, OcppBridgeClient upstream,
                               ReflectionQC45 station,
                               ChargingLimitCoordinator limits) {
+        this(bindAddress, port, path, heartbeatInterval, timeoutMs,
+            (Upstream) upstream, (Station) station, limits);
+    }
+
+    Ocpp15BridgeServer(String bindAddress, int port, String path, int heartbeatInterval,
+                       int timeoutMs, Upstream upstream, Station station,
+                       ChargingLimitCoordinator limits) {
         if (bindAddress == null || bindAddress.trim().length() == 0
                 || port < 1 || port > 65535 || heartbeatInterval <= 0
                 || timeoutMs <= 0 || upstream == null || station == null
@@ -168,24 +188,34 @@ public final class Ocpp15BridgeServer {
         }
         if ("statusNotification".equals(op)) {
             int connector = intText(xml, "connectorId", 0);
-            String incoming = elementText(xml, "status");
-            if ("Occupied".equalsIgnoreCase(incoming)) incoming = "Preparing";
-            String status = translatedStatus(connector, incoming);
-            String json = "{" + n("connectorId", connector) + ","
-                + q("status", status.length() == 0 ? "Unavailable" : status) + ","
-                + q("errorCode", emptyDefault(elementText(xml, "errorCode"), "NoError"))
-                + opt(xml, "info") + opt(xml, "timestamp") + opt(xml, "vendorId") + opt(xml, "vendorErrorCode") + "}";
-            upstream.call("StatusNotification", json, timeoutMs);
-            rememberStatus(connector, status);
-            if (!status.equalsIgnoreCase(incoming)) {
-                System.out.println("[QC45] OCPP status corrected connector=" + connector + " " + incoming + " -> " + status);
+            synchronized (statusLock(connector)) {
+                String incoming = elementText(xml, "status");
+                if ("Occupied".equalsIgnoreCase(incoming)) incoming = "Preparing";
+                synchronized (lastNativeStatus) {
+                    lastNativeStatus.put(Integer.valueOf(connector), incoming);
+                }
+                String status = translatedStatus(connector, incoming);
+                String json = "{" + n("connectorId", connector) + ","
+                    + q("status", status.length() == 0 ? "Unavailable" : status) + ","
+                    + q("errorCode", emptyDefault(elementText(xml, "errorCode"), "NoError"))
+                    + opt(xml, "info") + opt(xml, "timestamp") + opt(xml, "vendorId") + opt(xml, "vendorErrorCode") + "}";
+                upstream.call("StatusNotification", json, timeoutMs);
+                rememberStatus(connector, status);
+                if (!status.equalsIgnoreCase(incoming)) {
+                    System.out.println("[QC45] OCPP status corrected connector=" + connector + " " + incoming + " -> " + status);
+                }
+                return emptyResponse("statusNotificationResponse");
             }
-            return emptyResponse("statusNotificationResponse");
         }
         if ("startTransaction".equals(op)) {
             int connector = intText(xml, "connectorId", 1);
             String idTag = elementText(xml, "idTag").trim();
             if (idTag.length() == 0) throw new IllegalArgumentException("StartTransaction missing idTag");
+            synchronized (statusLock(connector)) {
+                synchronized (lastNativeStatus) {
+                    lastNativeStatus.remove(Integer.valueOf(connector));
+                }
+            }
             String ts = elementText(xml, "timestamp"); if (ts.length() == 0) ts = utcNow();
             String json = "{" + n("connectorId", connector) + "," + q("idTag", idTag) + ","
                 + q("timestamp", ts) + "," + n("meterStart", longText(xml, "meterStart", 0))
@@ -204,13 +234,15 @@ public final class Ocpp15BridgeServer {
             String authorization = nestedIdTagField(result, "status", "Invalid");
             if ("Accepted".equalsIgnoreCase(authorization) && tx >= 0) {
                 upstream.rememberTransaction(tx, connector);
-                synchronized (activeTransactions) {
-                    activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector));
+                synchronized (statusLock(connector)) {
+                    synchronized (activeTransactions) {
+                        activeTransactions.put(Integer.valueOf(tx), Integer.valueOf(connector));
+                    }
+                    synchronized (endingConnectors) {
+                        endingConnectors.remove(Integer.valueOf(connector));
+                    }
+                    sendDerivedStatusBestEffort(connector);
                 }
-                synchronized (endingConnectors) {
-                    endingConnectors.remove(Integer.valueOf(connector));
-                }
-                sendDerivedStatusBestEffort(connector);
             }
             return soapEnvelope("<startTransactionResponse xmlns=\"" + OCPP15_NS + "\">"
                 + value("transactionId", String.valueOf(tx)) + (tx >= 0 ? idTagInfoXml(result, "Invalid")
@@ -234,8 +266,12 @@ public final class Ocpp15BridgeServer {
                 connector = activeTransactions.remove(Integer.valueOf(tx));
             }
             if (connector != null && connector.intValue() > 0) {
-                synchronized (endingConnectors) {
-                    endingConnectors.add(connector);
+                synchronized (statusLock(connector.intValue())) {
+                    if (!hasActiveTransaction(connector.intValue())) {
+                        synchronized (endingConnectors) {
+                            endingConnectors.add(connector);
+                        }
+                    }
                 }
             }
             upstream.forgetTransaction(tx);
@@ -247,7 +283,7 @@ public final class Ocpp15BridgeServer {
             String result = upstream.call("StopTransaction", json, timeoutMs);
             FleetAutoCharge policy = autoCharge;
             if (policy != null) policy.transactionEnded(tx);
-            if (connector != null && connector.intValue() > 0) sendFinishingBestEffort(connector.intValue());
+            if (connector != null && connector.intValue() > 0) sendStoppedStatusBestEffort(connector.intValue());
             if (result.indexOf("idTagInfo") >= 0) {
                 return soapEnvelope("<stopTransactionResponse xmlns=\"" + OCPP15_NS + "\">" + idTagInfoXml(result, "Accepted") + "</stopTransactionResponse>");
             }
@@ -303,20 +339,22 @@ public final class Ocpp15BridgeServer {
 
     private void sendDerivedStatusBestEffort(int connector) {
         if (connector <= 0) return;
-        if (isEnding(connector)) return;
-        try {
-            boolean active = hasActiveTransaction(connector) || liveTransactionActive(connector);
-            if (!active && station.powerKw(connector) <= 0) return;
-            String status = derivedStatus("Available", station.powerKw(connector),
-                active, limits.effectiveConnectorKw(connector));
-            synchronized (lastForwardedStatus) {
-                String previous = lastForwardedStatus.get(Integer.valueOf(connector));
-                if (status.equals(previous)) return;
+        synchronized (statusLock(connector)) {
+            if (isEnding(connector)) return;
+            try {
+                boolean active = hasActiveTransaction(connector) || liveTransactionActive(connector);
+                if (!active && station.powerKw(connector) <= 0) return;
+                String status = derivedStatus("Available", station.powerKw(connector),
+                    active, limits.effectiveConnectorKw(connector));
+                synchronized (lastForwardedStatus) {
+                    String previous = lastForwardedStatus.get(Integer.valueOf(connector));
+                    if (status.equals(previous)) return;
+                }
+                sendStatus(connector, status);
+                System.out.println("[QC45] OCPP derived status connector=" + connector + " status=" + status);
+            } catch (Throwable e) {
+                System.err.println("[QC45] OCPP derived status failed connector=" + connector + ": " + e);
             }
-            sendStatus(connector, status);
-            System.out.println("[QC45] OCPP derived status connector=" + connector + " status=" + status);
-        } catch (Throwable e) {
-            System.err.println("[QC45] OCPP derived status failed connector=" + connector + ": " + e);
         }
     }
 
@@ -357,9 +395,33 @@ public final class Ocpp15BridgeServer {
             || status == null || status.length() == 0;
     }
 
-    private void sendFinishingBestEffort(int connector) {
-        try { sendStatus(connector, "Finishing"); }
-        catch (Throwable e) { System.err.println("[QC45] OCPP Finishing notification failed connector=" + connector + ": " + e); }
+    private Object statusLock(int connector) {
+        return statusLocks[connector >= 1 && connector <= 3 ? connector : 0];
+    }
+
+    private void sendStoppedStatusBestEffort(int connector) {
+        synchronized (statusLock(connector)) {
+            // StopTransaction may finish after another worker has forwarded
+            // Available, a fault, or the start of the next transaction.
+            if (hasActiveTransaction(connector)) return;
+            String nativeStatus;
+            synchronized (lastNativeStatus) {
+                nativeStatus = lastNativeStatus.get(Integer.valueOf(connector));
+            }
+            // Preserve non-charging states and their original error details.
+            if (nativeStatus != null && (!isNormalChargeStatus(nativeStatus)
+                    || "Preparing".equalsIgnoreCase(nativeStatus))) return;
+            // EVCSD also reports Available BEFORE StopTransaction. Replay that
+            // release now that the ending transaction no longer affects it.
+            // With no native release, retain the conservative Finishing state.
+            String status = "Available".equalsIgnoreCase(nativeStatus) ? "Available" : "Finishing";
+            try {
+                sendStatus(connector, status);
+                System.out.println("[QC45] OCPP stopped status connector=" + connector + " status=" + status);
+            } catch (Throwable e) {
+                System.err.println("[QC45] OCPP stopped notification failed connector=" + connector + ": " + e);
+            }
+        }
     }
 
     private static String soapEnvelope(String inner) {

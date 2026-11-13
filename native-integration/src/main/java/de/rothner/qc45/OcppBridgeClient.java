@@ -15,7 +15,7 @@ import java.util.regex.*;
 import javax.net.ssl.*;
 
 /** OCPP 1.6 JSON/WSS endpoint used by the legacy OCPP 1.5 SOAP bridge. */
-public final class OcppBridgeClient extends Thread {
+public final class OcppBridgeClient extends Thread implements Ocpp15BridgeServer.Upstream {
     interface Station {
         void remoteStart(String idTag, int connector) throws Exception;
         void remoteStop(int connector) throws Exception;
