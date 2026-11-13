@@ -23,6 +23,10 @@ gestartet**. Ein reiner Prüflauf ohne Quelländerung löst keinen Reboot aus.
 - vollständiger Systemneustart der QC45
 - Prüfung einer geänderten Kernel-Boot-ID
 - Warten auf SSH, EVCSD und drei aufeinanderfolgende erfolgreiche Statusprüfungen
+- bis zu zehn Minuten für EVCSD/Derby, Tomcat und die Integration nach Rückkehr
+  von SSH; der alte Geode kann länger als drei Minuten benötigen
+- bei erfolgloser Startprüfung: Health-Datei, Prozessprüfung und begrenzte
+  Stationslogs vor dem Rollback sichern und ausgeben
 - automatisches JAR-Rollback mit erneutem Komplettneustart, wenn der neue Stand
   nicht sauber startet
 - Aufbewahrung der fünf neuesten Sicherungen
@@ -85,6 +89,14 @@ höchstens zehn Sekunden alten `ready`-Status für die aktuelle Boot-ID, eine
 lebende JVM und die erwartete JAR. Gestorbene Schutz-/Steuerthreads oder ein
 fehlgeschlagener erforderlicher Bootstrap verhindern damit den Deployment-Erfolg.
 Ein gültiger Netzschutz-Stopp ist für sich kein Software-Startfehler.
+
+Die Wartezeit auf die vollständige Anwendung beträgt nach Rückkehr von SSH
+zehn Minuten und gilt auch für den Rollback. Die Prüfung von aktueller Boot-ID,
+JVM, erwarteter JAR, frischem `ready`-Status und drei stabilen Ergebnissen bleibt
+unverändert. Ein langsamer Start wird dadurch nicht als Erfolg gewertet, bevor
+alle Kriterien erfüllt sind. Bei Ablauf wird vor dem Rollback eine begrenzte
+Diagnose unter `~/.local/state/qc45-integration-deployer/failed-startup-*.log`
+gesichert und im Terminal ausgegeben. Sie enthält keine Konfigurationsdateien.
 
 Die zusätzlichen `ocpp.*`-Felder zeigen den tatsächlichen Kommunikationszustand,
 das Alter der letzten Backendantwort, Verbindungsaufbauten und Antwort-Timeouts.
