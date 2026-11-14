@@ -53,6 +53,10 @@ des realen Abnahmetests.
   SessionSetup. Er liest keine alte Bildschirmdatei und sucht nicht nach
   Bytefolgen in beliebigen Paketen. Signed-/Notification-Header und
   Sitzungswiederaufnahme mit einer nichtnull SessionID werden abgewiesen.
+  Für einen neuen DIN-Verbindungsaufbau werden eine leere SessionID (wie beim
+  beobachteten BMW i3) oder bis zu acht Nullbytes akzeptiert. Die EVCCID muss
+  weiterhin genau sechs gültige Unicast-Bytes enthalten; eine leere SessionID
+  erlaubt weder Wiederaufnahme noch die Übernahme einer alten Autorisierung.
 - Die Sitzung erhält einen zufälligen Token je TCP-Verbindung. Die V2G-
   SessionID wird nicht als eindeutige Identität verwendet.
 - Mehrdeutige parallele Verbindungen, veraltete Beobachtungen, FIN/RST und
@@ -214,9 +218,20 @@ python3 -m unittest discover -s controller/autocharge/tests -v
 ```
 
 Die EXI-Testdaten sind synthetisch, unabhängig mit EXIficient EXICodec 1.55
-erzeugt und wieder dekodiert. Der passive Parser wurde zusätzlich auf beiden
+erzeugt und wieder dekodiert; der zusätzliche Fall mit leerer Start-SessionID
+wurde mit dem unabhängigen DIN-Encoder von EVerest/libcbv2g erzeugt und bytegleich
+zurückkodiert. Segmentierung, frischer TCP-/SAP-Start, neue Verbindungstokens und
+der authentisierte Beobachterkanal werden auch mit diesem Fall geprüft.
+Der passive Parser wurde zusätzlich auf beiden
 vorliegenden Panda-PCAPs geprüft und erkennt jeweils genau die dort dekodierte
 SessionSetup-EVCCID. Das ersetzt den beschriebenen Live-OCPP-Abnahmetest nicht.
+
+Die Erweiterung für eine leere Start-SessionID wurde am 14.11.2026 mit einem
+BMW i3 im kontrollierten Live-Test geprüft: frischer Anschluss ohne Karte,
+automatische Erkennung, akzeptierte Backend-Autorisierung und genau eine
+bestätigte native Transaktion mit fortlaufender Ladung. Die 17 Beobachtertests
+bestanden auf dem Host und unter Python 2.7 auf dem Controller. Echte Kennungen,
+Mitschnitte und die Rückfallsicherung bleiben im privaten Installationsordner.
 
 Referenzen:
 

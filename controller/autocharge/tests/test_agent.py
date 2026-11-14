@@ -27,6 +27,17 @@ def v2g(payload):
     return struct.pack('!BBHI', 1, 254, 0x8001, len(payload)) + payload
 
 
+def setup_variant(session=b'', identity=b'\x02\x00\x00\x00\x00\x03', header_event=2):
+    """Build malformed/boundary variants; positive fixtures use independent codecs."""
+    fields = [(0x80, 8), (77, 7), (0, 1), (0, 1), (0, 1), (len(session), 8)]
+    fields += [(value, 8) for value in bytearray(session)] + [(0, 1), (header_event, 2)]
+    fields += [(0, 1), (29, 6), (0, 1), (0, 1), (len(identity), 8)]
+    fields += [(value, 8) for value in bytearray(identity)] + [(0, 1)] * 4
+    bits = ''.join(format(value, '0%db' % count) for value, count in fields)
+    bits += '0' * (-len(bits) % 8)
+    return binascii.unhexlify(('%0*x' % (len(bits) // 4, int(bits, 2))).encode('ascii'))
+
+
 def packet(sequence=100, flags=16, data=b'', inbound=True, vlan=False, extension=False):
     src, dst = (IP_CAR, IP_STATION) if inbound else (IP_STATION, IP_CAR)
     sport, dport = (49153, 50000) if inbound else (50000, 49153)
@@ -54,27 +65,66 @@ class ObserverTest(unittest.TestCase):
         return self.observer.packet(packet(101, data=self.sap + self.setup))
 
     def test_synthetic_codec_fixtures_decode_and_other_protocols_fail_closed(self):
+        self.assertEqual('020000000003', agent.session_setup_evccid(exi('din-empty')))
         self.assertEqual('020000000001', agent.session_setup_evccid(exi('din-short')))
         self.assertEqual('020000000002', agent.session_setup_evccid(exi('din-eight')))
         self.assertIsNone(agent.session_setup_evccid(exi('iso2')))
         self.assertIsNone(agent.session_setup_evccid(exi('din-resume')))
         self.assertIsNone(agent.session_setup_evccid(exi('sap')))
-        for length in range(len(exi('din-short'))):
-            self.assertIsNone(agent.session_setup_evccid(exi('din-short')[:length]))
-        self.assertIsNone(agent.session_setup_evccid(exi('din-short') + b'\x00'))
+        for name in ('din-short', 'din-empty'):
+            for length in range(len(exi(name))):
+                self.assertIsNone(agent.session_setup_evccid(exi(name)[:length]))
+            self.assertIsNone(agent.session_setup_evccid(exi(name) + b'\x00'))
+
+    def test_empty_session_keeps_resume_header_and_identity_rejections(self):
+        self.assertEqual(exi('din-empty'), setup_variant())
+        for size in range(1, 9):
+            for index in range(size):
+                session = bytearray(size)
+                session[index] = 1
+                self.assertIsNone(agent.session_setup_evccid(setup_variant(bytes(session))))
+        self.assertIsNone(agent.session_setup_evccid(setup_variant(b'\x00' * 9)))
+        for header_event in (0, 1, 3):
+            self.assertIsNone(agent.session_setup_evccid(setup_variant(header_event=header_event)))
+        for identity in (b'', b'\x00' * 6, b'\xff' * 6, b'\x03' + b'\x00' * 5,
+                         b'\x02' + b'\x00' * 4, b'\x02' + b'\x00' * 6):
+            self.assertIsNone(agent.session_setup_evccid(setup_variant(identity=identity)))
+        bad_padding = bytearray(exi('din-empty'))
+        bad_padding[-1] |= 1
+        self.assertIsNone(agent.session_setup_evccid(bytes(bad_padding)))
 
     def test_each_tcp_segmentation_including_bytewise_delivery(self):
-        data = self.sap + self.setup
+        for name, identity in (('din-short', '020000000001'), ('din-empty', '020000000003')):
+            self.assert_segmentation(v2g(exi(name)), identity)
+
+    def assert_segmentation(self, setup, identity):
+        data = self.sap + setup
         for split in range(1, len(data)):
             self.observer.reset()
             self.connect()
             self.assertIsNone(self.observer.packet(packet(101, data=data[:split])))
-            self.assertEqual('020000000001', self.observer.packet(packet(101 + split, data=data[split:])))
+            self.assertEqual(identity, self.observer.packet(packet(101 + split, data=data[split:])))
         self.observer.reset()
         self.connect()
         for index in range(len(data)):
             found = self.observer.packet(packet(101 + index, data=data[index:index + 1]))
-        self.assertEqual('020000000001', found)
+        self.assertEqual(identity, found)
+
+    def test_empty_session_still_needs_new_syn_sap_and_connection_token(self):
+        data = self.sap + v2g(exi('din-empty'))
+        self.assertIsNone(self.observer.packet(packet(101, data=data)))
+        self.connect()
+        self.assertIsNone(self.observer.packet(packet(101, data=v2g(exi('din-empty')))))
+        self.assertIsNone(self.observer.current())
+        self.observer.reset()
+        self.connect()
+        self.assertEqual('020000000003', self.observer.packet(packet(101, data=data)))
+        token = self.observer.current()[0]
+        self.observer.reset()
+        self.assertIsNone(self.observer.packet(packet(101, data=data)))
+        self.connect(200)
+        self.assertEqual('020000000003', self.observer.packet(packet(201, data=data)))
+        self.assertNotEqual(token, self.observer.current()[0])
 
     def test_out_of_order_and_overlapping_retransmission(self):
         data = self.sap + self.setup
@@ -161,6 +211,11 @@ class ObserverTest(unittest.TestCase):
                 list(agent.pcap_packets(io.BytesIO(data[:-1])))
 
     def test_real_observation_link_authenticates_and_discards_old_vehicle(self):
+        for name, identity in (('din-short', '020000000001'), ('din-empty', '020000000003')):
+            self.setup = v2g(exi(name))
+            self.assert_observation_link(identity)
+
+    def assert_observation_link(self, identity):
         self.identify()
         old_token = self.observer.current()[0]
         listener = socket.socket()
@@ -190,7 +245,7 @@ class ObserverTest(unittest.TestCase):
             self.identify()
             new_token = self.observer.current()[0]
             self.assertNotEqual(old_token, new_token)
-            self.assertEqual(('VEHICLE ' + new_token + ' 020000000001\n').encode('ascii'), stream.readline())
+            self.assertEqual(('VEHICLE ' + new_token + ' ' + identity + '\n').encode('ascii'), stream.readline())
             self.observer.reset()
             self.assertEqual(b'IDLE\n', stream.readline())
         finally:

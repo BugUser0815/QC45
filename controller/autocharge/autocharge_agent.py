@@ -75,7 +75,9 @@ def session_setup_evccid(data):
         bits.expect(7, 77)  # DIN V2G_Message
         bits.expect(1, 0)  # Header
         bits.expect(1, 0)  # SessionID
-        session = bits.binary(1, 8)
+        # New DIN sessions may use an empty SessionID (observed on BMW i3).
+        # Only empty/all-zero starts are eligible; nonzero resumptions stay rejected.
+        session = bits.binary(0, 8)
         if any(session):  # no automatic authorization of session resumption
             return None
         bits.expect(2, 2)  # Header EE; no Notification / Signature
