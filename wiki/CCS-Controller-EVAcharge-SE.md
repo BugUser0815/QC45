@@ -1,6 +1,14 @@
 # CCS-Controller EVAcharge SE: Zugang und Panda-Fehlersuche
 
-**Stand: 24.10.2026 (Europe/Berlin), Untersuchung vom 23. auf den 24.10.2026.**
+**Stand: 15.11.2026 (Europe/Berlin); historische Panda-Untersuchung vom 23./24.10.2026.**
+
+## Ergänzung vom 15.11.2026: Kona-Live-Test
+
+Der EVAcharge SE betreibt inzwischen den [CCS-Stromgrenzen-Fix v6](https://github.com/BugUser0815/QC45/tree/main/controller/current-limit). Er berechnet `EVSEMaximumCurrentLimit` dynamisch aus Leistungsbudget und Ausgangsspannung und begrenzt zusätzlich den Netzteil-Zielstrom. Die ursprünglichen 125 A bleiben als Hardwareobergrenze erhalten; das Java-Feld `quickChargeMaxCurrent` ist nicht die im DIN-Dialog wirksame Stromgrenze.
+
+Der frühere Hyundai-Kona-Fehler ist mit diesem Stand **im Live-Test offensichtlich behoben**: frischer Autocharge-Start ohne Karte, genau eine bestätigte Transaktion und 150 s laufende Ladung bis etwa 24 kW ohne beobachteten Abbruch. Der passende v6-Fix wurde im laufenden Prozess bestätigt. Die dynamische Stromgrenze ist eine plausible Ursache, wurde aber nicht isoliert gegen das frühere 125-A-Verhalten getestet. Details und offene Prüfungen: [Kona-Leistungsbegrenzung](Hyundai-Kona-CCS-Leistungsbegrenzung).
+
+Die nachfolgenden Panda-Befunde beschreiben die Untersuchung vom 23./24.10.2026 und bleiben als historischer Diagnosebeleg erhalten.
 
 ## Ergebnis und Belegstand
 

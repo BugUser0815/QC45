@@ -49,7 +49,7 @@ flowchart LR
 |---|---|---|
 | [CCS-Controller EVAcharge SE](CCS-Controller-EVAcharge-SE) | Controllerzugang, Diagnoseverfahren und Abbruch nach Parameterabfrage (23./24.10.2026) | 🟠 Controller bestätigt; Ursache offen |
 | [CCS QuickCharge V3](CCS-QuickCharge-V3) | internes EFACEC-Protokoll und `maxPower` | ✅ analysiert |
-| [EVSE-Leistungsgrenzen: Kona & weitere Fahrzeuge](Hyundai-Kona-CCS-Leistungsbegrenzung) | Fahrzeugfälle, Stack-Fälle, Schutzlogik und Verifikation | 🟠 QC45-HW-Verifikation offen |
+| [EVSE-Leistungsgrenzen: Kona & weitere Fahrzeuge](Hyundai-Kona-CCS-Leistungsbegrenzung) | Dynamische CCS-Stromgrenze, Fahrzeugfälle und Verifikation | ✅ Kona im Live-Test offensichtlich behoben (15.11.2026); Stufentest offen |
 | [CCS Raw Tracing](CCS-Raw-Tracing) | physischer TX/RX-Nachweis | ✅ integriert |
 | [Reverse Engineering](Reverse-Engineering) | EVCSD-JAR, AVR-Firmware, A19/EVAcharge | 🟠 fortlaufend |
 

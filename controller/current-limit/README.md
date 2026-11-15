@@ -79,8 +79,10 @@ and the vehicle remained charging. Full evidence and rollback are private under
 
 The first timed capture expired before the reconnect, so this is a midstream
 measurement, not a fresh-handshake capture. It includes the complete controlled
-33-to-5-to-33 sequence. Other vehicles, a cold start after power loss and other
-firmware images remain outside this live validation.
+33-to-5-to-33 sequence. The detailed power-step results above apply to that
+eSprinter session.
+A cold start after power loss and other firmware images remain outside that
+validation; the later Kona observation is described separately below.
 
 Existing grid and load-management targets remain effective. A scheduled site
 limit constrained the initial high-power plateau; the measured 33-kW window
@@ -109,6 +111,28 @@ LD_LIBRARY_PATH=/home/evacom LD_PRELOAD="$PWD/libqc45_current_limit.so" \
 `probe_abi.py` loads the actual transport ELF and checks symbol binding,
 interposition in its actual vtable, and the new getters on a fake object. It
 performs no hardware I/O. Offline tests do not replace a real vehicle test.
+
+## Hyundai Kona follow-up (2026-11-15)
+
+The earlier Kona fault appears resolved in the observed live test with v6:
+a fresh cardless Autocharge connection received backend acceptance, exactly one
+native transaction was confirmed, and charging continued for 150 seconds,
+reaching about 24 kW. No protection stop, emergency stop or controller fault
+was observed. The v6 SHA-256 listed above was verified in the running controller.
+
+Dynamic `EVSEMaximumCurrentLimit` in place of the former effective 125-A limit
+is a plausible explanation, together with the independent PSU-request clamp.
+This was not an A/B test of those mechanisms. The original 125-A hardware cap
+remains; the Geode diagnostic `quickChargeMaxCurrent` is a separate field that
+is not serialized as a current limit by CCS V3.
+
+An initial 5-kW permission produced about 4 kW, followed by a higher external
+evcc request and the later 24-kW observation. This does not establish constant
+5-kW compliance or a complete Kona power-step validation. No new DIN capture
+was taken to measure the Kona response limit numerically. Further limit-step
+and sleep/reconnect tests remain open. See the [Kona test report and historical
+analysis](../../wiki/Hyundai-Kona-CCS-Leistungsbegrenzung.md).
+Vehicle identifiers, transaction numbers and raw evidence remain private.
 
 ## Installation and rollback
 

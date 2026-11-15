@@ -1,16 +1,34 @@
 # 🚗 Hyundai Kona und weitere Fahrzeuge – CCS-Leistungsgrenzen
 
 > [!IMPORTANT]
-> **Aktueller Hauptverdacht:** Die QC45 setzt die gewünschte Leistung auf EVCSD-/QuickCharge-Ebene korrekt. Der Fehler liegt sehr wahrscheinlich **danach**, auf dem CCS-HLC-Pfad: Der Kona kann `EVSEMaximumPowerLimit` ignorieren, während `EVSEMaximumCurrentLimit` offenbar nicht dynamisch genug reduziert wird.
+> **Im Live-Test am 15.11.2026 offensichtlich behoben:** Der getestete Hyundai Kona startete mit dem aktuellen CCS-Controller-Fix ohne Karte über Autocharge und lud im beobachteten Fenster ohne den früheren Abbruch. Die dynamische Stromgrenze im EVAcharge-SE-Controller ist die plausible Erklärung; ein isolierter Ursachennachweis steht noch aus.
 
 | | |
 |---|---|
-| **Status** | 🟠 Ursache stark eingegrenzt |
+| **Status** | ✅ Im geprüften Kona-Live-Test offensichtlich behoben |
+| **Korrektur** | EVACom-v6-Fix im EVAcharge SE: dynamisches `EVSEMaximumCurrentLimit` und Begrenzung des Netzteil-Zielstroms |
 | **Betroffener Pfad** | EFACEC QC45 → EVCSD → QuickCharge → CCS → DIN SPEC 70121 |
-| **Reproduzierbar** | Ja, beim Hyundai Kona |
-| **Weitere Fälle** | VW e-Up, MINI SE, BMW iX3, Kia Soul EV, Tesla sowie Stack-/Interop-Fälle dokumentiert |
-| **Nächster Beweis** | physisches V3-TX-Paket + A19/CCS-Controller identifizieren |
-| **Stand** | 23.08.2026 |
+| **Live-Nachweis** | Start ohne Karte, eine bestätigte Transaktion, 150 s Ladung, zuletzt etwa 24 kW |
+| **Offen** | isolierter 125-A-Vergleich und vollständige Kona-Leistungsstufenprüfung |
+| **Stand** | 15.11.2026 |
+
+## Live-Test und Bewertung vom 15.11.2026
+
+- Der Betreiber bestätigte einen frischen CCS-Anschluss ohne Karte und ohne manuellen Ladestart.
+- Autocharge erhielt eine neue Backend-Freigabe; genau ein nativer Transaktionsstart und genau eine Backend-Bestätigung wurden beobachtet.
+- Die Ladung lief bis zum Abschluss der Beobachtung 150 s weiter. Zuletzt meldete evcc etwa 24 kW; es gab keinen beobachteten Schutzstopp oder Abbruch. Der native CCS-Status meldete Fehlercode 0 und keinen aktiven Nothalt.
+- Bei der anfänglichen 5-kW-Freigabe wurden etwa 4 kW beobachtet. Später stieg die externe evcc-Anforderung; die anschließenden etwa 24 kW gehören zur erhöhten Freigabe. Dies war keine durchgehend konstante 5-kW-Prüfung.
+- Der geladene Controller-Fix wurde per Dateihash und Prozessabbild bestätigt: EVACom v6, SHA-256 `e650fe75d09bd59f9c0847cc6fc88df1244695d2deacab49a6ae0de0a7e70c68`.
+
+**Vermutete Ursache der Behebung:** Der CCS-Controller gibt dem Fahrzeug inzwischen ein aus dem aktuellen Leistungsbudget und der gemessenen Ausgangsspannung berechnetes `EVSEMaximumCurrentLimit` vor, statt das ursprüngliche Hardwaremaximum von 125 A als wirksame Fahrzeuggrenze stehen zu lassen. Zusätzlich begrenzt der Fix die an das Netzteil weitergereichte Stromanforderung. Beides passt zum früheren Kona-Fehlerbild bei einer alleinigen Leistungsgrenze. Ohne A/B-Versuch lassen sich diese beiden Wirkungen und weitere zwischenzeitliche Korrekturen nicht voneinander trennen.
+
+Das weiterhin im Geode-Log sichtbare `quickChargeMaxCurrent=125A` ist ein anderes Feld: Es wird im internen CCS-V3-START nicht als Stromgrenze serialisiert und widerlegt die dynamische DIN-Stromgrenze nicht. Das originale Hardwaremaximum bleibt als zusätzliche Obergrenze erhalten.
+
+Implementierung und Umrechnung einschließlich Spannungsreserve und zusätzlicher Reserve bis 5 kW: [CCS-Controller-Fix auf main](https://github.com/BugUser0815/QC45/tree/main/controller/current-limit). Der heutige Kona-Test enthielt keinen neuen DIN-Rohmitschnitt zur zahlenmäßigen Prüfung des gesendeten Stromlimits. Ein vollständiger 5-/10-/15-/20-kW-Stufentest, ein Vergleich mit festem 125-A-Limit und Schlaf-/Wiederansteckzyklen bleiben offen. Echte Fahrzeugkennungen, Transaktionsnummern und Rohbelege bleiben privat.
+
+## Historische Diagnose und Referenzfälle
+
+Die folgenden Abschnitte 1–11 dokumentieren den früheren Untersuchungsstand und allgemeine Referenzfälle. Dort beschriebene Verdachtsmomente und geplante Schritte sind zusammen mit dem aktuellen Live-Ergebnis oben zu lesen.
 
 ---
 
@@ -550,7 +568,7 @@ Zu jedem Lauf gehören synchronisierte Zeitstempel aus LoadManager, Java/EVCSD, 
 Die belastbare Kernaussage bleibt daher eng: **Mindestens ein dokumentierter Hyundai Kona (2019) ignorierte `EVSEMaximumPowerLimit`; ein dynamisches `EVSEMaximumCurrentLimit` ist der besser belegte Fahrzeughebel, und die EVSE muss die physische Ausgangsleistung trotzdem selbst sicher begrenzen.**
 
 ---
-# 12. Offene Punkte
+# 12. Erledigte und offene Prüfungen (Stand 15.11.2026)
 
 - [ ] Aktuelles TX-Paket bei 5 kW als `... 05 ...` bestätigen
 - [ ] A19 als EFACEC 20090007 / EVAcharge SE bestätigen
@@ -558,7 +576,8 @@ Die belastbare Kernaussage bleibt daher eng: **Mindestens ein dokumentierter Hyu
 - [ ] A5/A19/A21-Verkabelung dokumentieren
 - [ ] Protokoll zum CCS-Controller rekonstruieren
 - [ ] tatsächliches `EVSEMaximumCurrentLimit` während Kona-Ladung bestimmen
-- [ ] dynamische Stromgrenze implementieren
+- [x] dynamische Stromgrenze und Netzteil-Zielstrombegrenzung im EVAcharge SE implementieren und geladenen v6-Fix bestätigen
+- [x] frischen Kona-Autocharge-Start ohne Karte und 150 s laufende Ladung prüfen
 - [ ] Kona mit 5 / 10 / 15 / 20 kW Sollwert testen
 - [ ] Gegenprobe mit Mini / Tesla durchführen
 
@@ -596,6 +615,6 @@ Die belastbare Kernaussage bleibt daher eng: **Mindestens ein dokumentierter Hyu
 
 ## Fazit
 
-> **Der LoadManager ist nach aktuellem Kenntnisstand nicht der Hauptfehler.** Die QC45 transportiert den kW-Sollwert korrekt bis zur proprietären EFACEC-V3-Schnittstelle. Der wahrscheinlichste Fehler liegt danach: Der CCS-Controller muss zusätzlich einen dynamisch passenden `EVSEMaximumCurrentLimit` an das Fahrzeug kommunizieren.
+> **Der frühere Kona-Fehler ist im Live-Test vom 15.11.2026 offensichtlich behoben.** Der CCS-Controller verwendet inzwischen eine dynamische DIN-Stromgrenze und begrenzt den Netzteil-Zielstrom. Das ist die plausible technische Erklärung für den Erfolg; der heutige Start- und Ladetest allein beweist weder die isolierte Ursache noch die vollständige Einhaltung aller Leistungsstufen.
 
 [[← Zurück zur Startseite|Home]]
